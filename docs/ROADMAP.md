@@ -68,9 +68,3 @@ Recovery thresholds: < 0.5 m and < 5° — nothing; 0.5–15 m — soft converge
 | MudRunner-style cargo delivery | Fairly easy | Cargo as an object/trailer, load and unload points, jobs and rewards — mostly logic and UI on top of existing cars; cargo sync over LAN is extra work. |
 | Getting out of the car on foot | Hard | The game has no on-foot character: model, animations, controller, camera, world interaction and LAN sync would all be new. |
 | Hoverboard car | Medium | Different physics (no wheel grip) on top of the vehicle physics, own controls, CarSync compatibility. |
-
----
-
-*По-русски:* дорожная карта — что уже сделано в 0.1.7 и i18n, что ещё не проверено вживую (несколько ПК через Radmin,
-реальные игроки, SmartScreen, смена языка руками в меню игры) и что дальше (новые переводы — один JSON-файл,
-визуальная экстраполяция чужих машин, диагностика поиска лобби).

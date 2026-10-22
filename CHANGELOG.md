@@ -78,8 +78,3 @@ gate — PASS. Not verified: two PCs over Radmin with real players, SmartScreen 
 
 Direct-IP LAN mode (F7/F8/F9/F10), host-assigned player slots with rejoin, version gate with code-signature checks
 for untested game builds, ping label, CarSync smoothing, installer with full uninstall.
-
----
-
-*По-русски:* список изменений по версиям. Главное в i18n: все тексты мода следуют языку игры и переключаются сразу;
-русский и английский полные, остальные языки игры показываются по-английски.
