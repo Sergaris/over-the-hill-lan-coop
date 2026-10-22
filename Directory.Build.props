@@ -1,0 +1,7 @@
+<Project>
+  <!-- Public tree: build the public flavour by default (self-test autopilot compiled out, no bundled Unity libraries).
+       Developers can still pass -p:OthLanPublic=false to compile the self-test harness in. -->
+  <PropertyGroup>
+    <OthLanPublic Condition="'$(OthLanPublic)' == ''">true</OthLanPublic>
+  </PropertyGroup>
+</Project>

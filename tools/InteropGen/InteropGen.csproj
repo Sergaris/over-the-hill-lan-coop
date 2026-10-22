@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Generates Il2CppInterop assemblies on Linux exactly like BepInEx be.788 does in-game
+       (Cpp2IL AttributeInjector -> AsmResolver dummy DLLs -> Il2CppInterop generator).
+       References the DLLs shipped inside the pinned BepInEx build so versions match. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <RollForward>Major</RollForward>
+    <BepInExCore>$(MSBuildThisFileDirectory)../../third_party/bepinex-be788/BepInEx/core</BepInExCore>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(BepInExCore)/Cpp2IL.Core.dll" />
+    <Reference Include="$(BepInExCore)/LibCpp2IL.dll" />
+    <Reference Include="$(BepInExCore)/AsmResolver.dll" />
+    <Reference Include="$(BepInExCore)/AsmResolver.DotNet.dll" />
+    <Reference Include="$(BepInExCore)/AsmResolver.PE.dll" />
+    <Reference Include="$(BepInExCore)/AsmResolver.PE.File.dll" />
+    <Reference Include="$(BepInExCore)/AssetRipper.Primitives.dll" />
+    <Reference Include="$(BepInExCore)/AssetRipper.CIL.dll" />
+    <Reference Include="$(BepInExCore)/Il2CppInterop.Generator.dll" />
+    <Reference Include="$(BepInExCore)/Il2CppInterop.Common.dll" />
+    <Reference Include="$(BepInExCore)/Disarm.dll" />
+    <Reference Include="$(BepInExCore)/Iced.dll" />
+    <Reference Include="$(BepInExCore)/Gee.External.Capstone.dll" />
+    <Reference Include="$(BepInExCore)/WasmDisassembler.dll" />
+    <Reference Include="$(BepInExCore)/StableNameDotNet.dll" />
+    <Reference Include="$(BepInExCore)/Mono.Cecil.dll" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="6.0.0" />
+  </ItemGroup>
+</Project>

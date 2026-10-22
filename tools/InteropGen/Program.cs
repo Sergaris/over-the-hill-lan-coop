@@ -1,0 +1,36 @@
+// usage: InteropGen <GameAssembly.dll> <global-metadata.dat> <unityVersion> <unity-libs dir> <outDir>
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using AssetRipper.Primitives;
+using Cpp2IL.Core;
+using Cpp2IL.Core.Api;
+using Cpp2IL.Core.InstructionSets;
+using LibCpp2IL.Logging;
+using Cpp2IL.Core.OutputFormats;
+using Cpp2IL.Core.ProcessingLayers;
+using Il2CppInterop.Generator;
+using Il2CppInterop.Generator.Runners;
+using LibCpp2IL;
+using Microsoft.Extensions.Logging;
+
+var (ga, meta, ver, libs, outDir) = (args[0], args[1], args[2], args[3], args[4]);
+var sw = Stopwatch.StartNew();
+Cpp2IL.Core.Logging.Logger.InfoLog += (m, s) => Console.Write($"[Cpp2IL/{s}] {m}");
+Cpp2IL.Core.Logging.Logger.WarningLog += (m, s) => Console.Write($"[Cpp2IL/{s}] WARN {m}");
+Cpp2IL.Core.Logging.Logger.ErrorLog += (m, s) => Console.Write($"[Cpp2IL/{s}] ERR {m}");
+InstructionSetRegistry.RegisterInstructionSet<X86InstructionSet>(DefaultInstructionSets.X86_32);
+InstructionSetRegistry.RegisterInstructionSet<X86InstructionSet>(DefaultInstructionSets.X86_64);
+LibCpp2IlBinaryRegistry.RegisterBuiltInBinarySupport();
+Cpp2IlApi.InitializeLibCpp2Il(ga, meta, UnityVersion.Parse(ver), false);
+var layers = new List<Cpp2IlProcessingLayer> { new AttributeInjectorProcessingLayer() };
+foreach (var l in layers) l.PreProcess(Cpp2IlApi.CurrentAppContext, layers);
+foreach (var l in layers) l.Process(Cpp2IlApi.CurrentAppContext);
+var asms = new AsmResolverDllOutputFormatDefault().BuildAssemblies(Cpp2IlApi.CurrentAppContext);
+LibCpp2IlMain.Reset();
+Cpp2IlApi.CurrentAppContext = null;
+Console.WriteLine($"Cpp2IL: {asms.Count} assemblies in {sw.Elapsed}");
+var opts = new GeneratorOptions { GameAssemblyPath = null, Source = asms, OutputDir = outDir, UnityBaseLibsDir = libs };
+using var lf = LoggerFactory.Create(b => b.AddSimpleConsole().SetMinimumLevel(LogLevel.Information));
+Il2CppInteropGenerator.Create(opts).AddInteropAssemblyGenerator().Run();
+Console.WriteLine($"done in {sw.Elapsed}");

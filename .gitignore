@@ -1,0 +1,10 @@
+# Game-derived artifacts: never commit (EULA s.10/12; ГК РФ 1280 interoperability only)
+/interop/
+/dump/
+/unity-libs/
+/third_party/bepinex-be788/
+/third_party/*.zip
+bin/
+obj/
+/out/
+*.user

@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- BepInEx 6 be.788 IL2CPP plugin. Compiles against interop assemblies generated from the pinned game build
+       (tools/InteropGen -> ../../interop, never committed). -->
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>OthLan</AssemblyName>
+    <RootNamespace>OthLan</RootNamespace>
+    <Version>0.1.7</Version>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);NETSDK1138;CS8981</NoWarn>
+    <!-- Override with -p:BepInExCore=<dir> / -p:Interop=<dir> (or env vars) to point at your own copies. -->
+    <BepInExCore Condition="'$(BepInExCore)' == ''">$(MSBuildThisFileDirectory)../../third_party/bepinex-be788/BepInEx/core</BepInExCore>
+    <Interop Condition="'$(Interop)' == ''">$(MSBuildThisFileDirectory)../../interop</Interop>
+    <!-- Reproducible output without local paths: deterministic compile, source paths mapped to /_/ (also in the pdb path). -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <PathMap>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../..'))=/_/</PathMap>
+  </PropertyGroup>
+  <!-- Private/dev build: SELFTEST compiles in the self-test autopilot. Public build: dotnet build -p:OthLanPublic=true -->
+  <PropertyGroup Condition="'$(OthLanPublic)' != 'true'">
+    <DefineConstants>$(DefineConstants);SELFTEST</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(OthLanPublic)' == 'true'">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../manifest/supported-builds.json" LogicalName="supported-builds.json" />
+    <EmbeddedResource Include="Lang/*.json" LogicalName="lang.%(Filename).json" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="$(BepInExCore)/BepInEx.Core.dll" Private="false" />
+    <Reference Include="$(BepInExCore)/BepInEx.Unity.IL2CPP.dll" Private="false" />
+    <Reference Include="$(BepInExCore)/BepInEx.Unity.Common.dll" Private="false" />
+    <Reference Include="$(BepInExCore)/0Harmony.dll" Private="false" />
+    <Reference Include="$(BepInExCore)/Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(BepInExCore)/Il2CppInterop.Common.dll" Private="false" />
+    <Reference Include="$(BepInExCore)/MonoMod.RuntimeDetour.dll" Private="false" />
+    <Reference Include="$(BepInExCore)/Iced.dll" Private="false" />
+    <Reference Include="$(Interop)/Il2Cppmscorlib.dll" Private="false" />
+    <Reference Include="$(Interop)/Il2CppSystem.dll" Private="false" Condition="Exists('$(Interop)/Il2CppSystem.dll')" />
+    <Reference Include="$(Interop)/Fusion.Runtime.dll" Private="false" />
+    <Reference Include="$(Interop)/Fusion.Sockets.dll" Private="false" />
+    <Reference Include="$(Interop)/NanoSockets.dll" Private="false" Condition="Exists('$(Interop)/NanoSockets.dll')" />
+    <Reference Include="$(Interop)/Fusion.Common.dll" Private="false" />
+    <Reference Include="$(Interop)/Fusion.Realtime.dll" Private="false" />
+    <Reference Include="$(Interop)/Assembly-CSharp.dll" Private="false" />
+    <Reference Include="$(Interop)/Funselektor.FunCore.Runtime.dll" Private="false" />
+    <Reference Include="$(Interop)/UnityEngine.dll" Private="false" Condition="Exists('$(Interop)/UnityEngine.dll')" />
+    <Reference Include="$(Interop)/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(Interop)/UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="$(Interop)/UnityEngine.ScreenCaptureModule.dll" Private="false" />
+    <Reference Include="$(Interop)/UnityEngine.InputLegacyModule.dll" Private="false" />
+    <Reference Include="$(Interop)/UnityEngine.UIModule.dll" Private="false" />
+    <Reference Include="$(Interop)/UnityEngine.TextRenderingModule.dll" Private="false" />
+    <Reference Include="$(Interop)/UnityEngine.UI.dll" Private="false" />
+    <Reference Include="$(Interop)/Unity.TextMeshPro.dll" Private="false" />
+    <Reference Include="$(Interop)/Unity.InputSystem.dll" Private="false" />
+    <Reference Include="$(Interop)/com.rlabrecque.steamworks.net.dll" Private="false" />
+    <Reference Include="$(Interop)/UnityEngine.PhysicsModule.dll" Private="false" />
+    <Reference Include="$(Interop)/Fusion.Addons.Physics.dll" Private="false" />
+    <Reference Include="$(Interop)/Unity.Localization.dll" Private="false" />
+    <Reference Include="$(Interop)/Unity.ResourceManager.dll" Private="false" />
+  </ItemGroup>
+</Project>
