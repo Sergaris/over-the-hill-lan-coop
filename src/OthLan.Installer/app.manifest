@@ -2,8 +2,9 @@
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security><requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-      <!-- admin needed for the firewall rule and for Program Files Steam libraries -->
-      <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      <!-- 0.1.8: asInvoker. install/uninstall/verify and the GUI re-start themselves elevated (firewall rule, Program
+           Files libraries); "update" (started by the mod's in-game updater) replaces only the plugin DLL and needs no admin. -->
+      <requestedExecutionLevel level="asInvoker" uiAccess="false" />
     </requestedPrivileges></security>
   </trustInfo>
 </assembly>

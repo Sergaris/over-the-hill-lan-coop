@@ -174,6 +174,16 @@ All mod texts (F7 window, Local Co-op screen, ping label, dialogs) follow the la
 
 ---
 
+## Updates
+
+From 0.1.8 on, the mod checks this repository's latest release once per game start (5 s timeout, nothing happens when offline). When a newer version exists, the main menu offers **Install / Later / Skip this version**. Install downloads `OTH-LAN-<version>.zip` from the release, checks its sha256 against `SHA256SUMS.txt` of the same release, and copies the new plugin in after you quit the game; settings are kept and no administrator rights are needed. Only GitHub is contacted (api.github.com, github.com and its download hosts) and only files of this repository's releases are accepted. Switch it off in F7 ("Check for updates") or in the config (`[Update] CheckForUpdates = false`). Version 0.1.7 has no update check: install 0.1.8 by hand once.
+
+## Обновления
+
+Начиная с 0.1.8 мод раз за запуск игры проверяет последний релиз этого репозитория (таймаут 5 с, без интернета ничего не происходит). Если есть новая версия, главное меню предлагает **«Установить» / «Позже» / «Пропустить эту версию»**. «Установить» скачивает `OTH-LAN-<версия>.zip` из релиза, сверяет его sha256 с `SHA256SUMS.txt` того же релиза и копирует новый плагин после выхода из игры; настройки сохраняются, права администратора не нужны. Мод обращается только к GitHub (api.github.com, github.com и его серверы загрузки) и принимает только файлы из релизов этого репозитория. Выключается в F7 («Проверять обновления») или в конфиге (`[Update] CheckForUpdates = false`). В версии 0.1.7 проверки обновлений нет: 0.1.8 один раз установите вручную.
+
+---
+
 ## Uninstall
 
 Close the game, run `OTH-LAN-Setup.exe` and click **Uninstall**. It deletes every file it added, restores the backups and removes the firewall rule. Afterwards Steam's *Verify integrity of game files* should find nothing to fix.

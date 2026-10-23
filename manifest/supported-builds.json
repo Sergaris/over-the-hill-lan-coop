@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "mod": "OTH-LAN",
-  "modVersion": "0.1.7",
+  "modVersion": "0.1.8",
   "steamAppId": 2929250,
   "bepinex": {
     "version": "6.0.0-be.788+5b766a3",
@@ -62,13 +62,17 @@
         "FusionPlayer::BeforeClientPredictionReset()": "0xCF1940",
         "FusionPlayer::BeforeTick()": "0xCF1A40",
         "Fusion.Sockets.NetSocketNative::Send": "0x138BFC0",
-        "Fusion.Sockets.NetSocketNative::Receive": "0x138BDC0"
+        "Fusion.Sockets.NetSocketNative::Receive": "0x138BDC0",
+        "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)": "0x132EE00",
+        "Fusion.Addons.Physics.NetworkRigidbody`2::Render()": "0x24F2ED0",
+        "VehicleInput::OnInput(NetworkRunner,NetworkInput)": "0xD12920"
       },
       "optionalSig": {
         "FusionPlayer::BeforeClientPredictionReset()": "230:2e2742b37a543ae6",
         "FusionPlayer::BeforeTick()": "443:3a9e07a876db51d1",
         "Fusion.Sockets.NetSocketNative::Send": "380:0500eccc7ce24caa",
-        "Fusion.Sockets.NetSocketNative::Receive": "511:c8e4f6defba9621a"
+        "Fusion.Sockets.NetSocketNative::Receive": "511:c8e4f6defba9621a",
+        "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)": "483:c83042bc5b6b18b7"
       }
     }
   ],

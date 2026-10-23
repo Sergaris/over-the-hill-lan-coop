@@ -38,6 +38,7 @@ public class Overlay : MonoBehaviour
 
     static void OnUnityLog(string msg, string stack, LogType type)
     {
+        if (msg != null && LanState.Active != LanRole.Off) NetStats.OnUnityLog(msg);
         if (!LanState.Watching || msg == null) return;
         if (msg.Contains("StartGameAsync failed") || msg.Contains("StartGame failed") ||
             (type == LogType.Exception && LanState.StartGameSeenAt < 0))
@@ -57,9 +58,11 @@ public class Overlay : MonoBehaviour
         try { OwnCar.Tick(); } catch (Exception e) { LogOnce("owncar", e); }
         try { FreezeWatch.Tick(); } catch (Exception e) { LogOnce("freeze", e); }
         try { Diagnostics.Tick(); } catch (Exception e) { LogOnce("diag", e); }
+        try { NetStats.Tick(); } catch (Exception e) { LogOnce("netstats", e); }
         try { HostSlotsTick(); } catch (Exception e) { LogOnce("slots", e); }
         try { Autopilot.Tick(); } catch (Exception e) { LogOnce("autopilot", e); }
         try { CoopMenu.Tick(); } catch (Exception e) { LogOnce("coop", e); }
+        try { Updater.Tick(); } catch (Exception e) { LogOnce("update", e); }
         try
         {
             AutoTest();
@@ -78,7 +81,17 @@ public class Overlay : MonoBehaviour
     /// <summary>Host: mark reserved slots connected / release the slots of players who left (SlotAllocator).</summary>
     static void HostSlotsTick()
     {
-        if (LanState.Active != LanRole.Host || Time.realtimeSinceStartup < _nextSlotSync) return;
+        if (LanState.Active != LanRole.Host) return;
+        if (LanState.Slots.KickPending)
+        {   // every frame, not once a second: the reconnecting client connects within ~1-2 s
+            var rk = OverlandNetworkRunner.Instance?.NetworkRunner;
+            foreach (var k in LanState.Slots.TakeKicks())
+            {
+                try { if (rk != null && rk.IsRunning && rk.IsPlayerValid(Fusion.PlayerRef.FromIndex(k))) { rk.Disconnect(Fusion.PlayerRef.FromIndex(k)); Plugin.L.LogInfo($"[LAN] slot {k}: the same player is reconnecting; dropped its old connection"); } }
+                catch (Exception e) { Plugin.L.LogWarning($"[LAN] slot {k}: could not drop the old connection ({e.Message})"); }
+            }
+        }
+        if (Time.realtimeSinceStartup < _nextSlotSync) return;
         _nextSlotSync = Time.realtimeSinceStartup + 1f;
         if (!CoopMenu.LobbyNameSet) CoopMenu.InitLobbyName();
         var r = OverlandNetworkRunner.Instance?.NetworkRunner;
@@ -149,14 +162,23 @@ public class Overlay : MonoBehaviour
 
     // ---------- UI ----------
     bool _pingBroken, _carLabelsBroken;
+    void LateUpdate()
+    {
+        try { RemoteSmooth.LateTick(); } catch (Exception e) { LogOnce("remotesmooth", e); }
+    }
+
+    static float _offConfirmUntil = -1;
+    static bool OffWarnShown() => LanState.Active != LanRole.Off && !CarSync.Enabled && (LanState.Active == LanRole.Host || CarSync.HostFlag == 0);
     void OnGUI()
     {
+        try { NetStats.OnRepaint(); } catch { }
         if (!_pingBroken)
         {
             try { PingHud.OnGUI(_show && !_guiBroken); }
             catch (Exception e) { _pingBroken = true; Plugin.L.LogWarning($"[UI] ping label disabled: {e.Message}"); }
         }
         try { CoopMenu.OnGUI(); } catch (Exception e) { LogOnce("coop-gui", e); }
+        try { Updater.OnGUI(); } catch (Exception e) { LogOnce("update-gui", e); }
         if (!_carLabelsBroken)
         {
             try { LinkLabels.OnGUI(); }
@@ -172,7 +194,8 @@ public class Overlay : MonoBehaviour
         {
             _join ??= NetInfo.DemoIp != null ? "26.10.20.40:27015" : Plugin.JoinAddress.Value ?? "";
             var byUser = BuildGate.Outcome == GateLogic.Outcome.DisabledByUser;
-            _rect.height = 430 + Mathf.Max(0, CarSync.HostStats.Count - 2) * 18 + (byUser ? 32 : 0) + (LanState.Active == LanRole.Client ? 54 : 0);   // 3-4 players: grow instead of overlapping
+            _rect.height = 430 + Mathf.Max(0, CarSync.HostStats.Count - 2) * 18 + (byUser ? 32 : 0) + (LanState.Active == LanRole.Client ? 54 : LanState.Active == LanRole.Host ? 24 : 0) + 56
+                + (OffWarnShown() ? 40 : 0);   // 3-4 players: grow instead of overlapping
             GUI.Box(_rect, Loc.F("f7.title", Plugin.Version));
             float x = _rect.x + 10, y = _rect.y + 25, w = _rect.width - 20;
             var gate = BuildGate.Status();
@@ -219,6 +242,8 @@ public class Overlay : MonoBehaviour
             var csH = Mathf.Max(48f, 18f * csLines + 4f);
             GUI.Label(new Rect(x, y, w, csH), Loc.F("cs.caption", cs));
             y += csH + 2;
+            if (OffWarnShown())
+            { GUI.Label(new Rect(x, y, w, 40), Loc.T("cs.offWarn")); y += 40; }
             if (LanState.Active == LanRole.Client)
             {
                 var hs = CarSync.HostFlag < 0 ? "?" : CarSync.HostFlag == 1 ? Loc.T("common.on") : Loc.T("common.off");
@@ -229,14 +254,31 @@ public class Overlay : MonoBehaviour
                 var st = OwnCar.State == "client" ? Loc.T("own.client") : OwnCar.State == "soft" ? Loc.T("own.soft") : Loc.T("own.none");
                 GUI.Label(new Rect(x, y, w, 20), Loc.F("own.caption", st));
                 y += 20;
-                if (GUI.Button(new Rect(x, y, w, 26), Plugin.OwnCarAuthority.Value ? Loc.T("own.toggleOn") : Loc.T("own.toggleOff")))
-                {
-                    Plugin.OwnCarAuthority.Value = !Plugin.OwnCarAuthority.Value;
-                    Plugin.L.LogInfo($"[OwnCar] client-authoritative own car {(Plugin.OwnCarAuthority.Value ? "ON" : "OFF")} (F7)");
-                }
+                // 0.1.8: one switch (ping compensation, the host's). The separate client toggle is gone; what is left
+                // here is what the echo ping cannot show.
+                GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.netStats", NetStats.Gaps.Over500ms, NetStats.InputDropped, NetStats.Own.Over10cm));
+                y += 22;
             }
-            else if (GUI.Button(new Rect(x, y, w, 26), CarSync.LocalSetting ? Loc.T("cs.toggleOn") : Loc.T("cs.toggleOff")))
-                CarSync.UserToggle("F7 button");
+            else
+            {
+                // Turning compensation OFF lands everyone in vanilla Fusion (host-authoritative cars: thrown back by
+                // metres under loss, see DEV-0.1.8-LOG "Moment 15:06"): needs a second click within 4 s.
+                var confirming = CarSync.LocalSetting && Time.unscaledTime < _offConfirmUntil;
+                if (GUI.Button(new Rect(x, y, w, 26), confirming ? Loc.T("cs.confirmOff") : CarSync.LocalSetting ? Loc.T("cs.toggleOn") : Loc.T("cs.toggleOff")))
+                {
+                    if (CarSync.LocalSetting && !confirming) _offConfirmUntil = Time.unscaledTime + 4f;
+                    else { _offConfirmUntil = -1; CarSync.UserToggle("F7 button"); }
+                }
+                if (LanState.Active == LanRole.Host) { y += 30; GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.netStats", "-", "-", NetStats.Own.Over10cm)); }
+                y += 30;
+            }
+            // 0.1.8 updates
+            GUI.Label(new Rect(x, y, w, 20), Loc.F("upd.f7", Updater.StatusMsg()));
+            y += 22;
+            if (GUI.Button(new Rect(x, y, 245, 26), Plugin.UpdateCheck.Value ? Loc.T("upd.toggleOn") : Loc.T("upd.toggleOff")))
+            { Plugin.UpdateCheck.Value = !Plugin.UpdateCheck.Value; Plugin.L.LogInfo($"[Update] check for updates {(Plugin.UpdateCheck.Value ? "on" : "off")} (F7)"); if (!Plugin.UpdateCheck.Value) Updater.State = Updater.St.Off; }
+            if (GUI.Button(new Rect(x + 255, y, 245, 26), Updater.State == Updater.St.Available ? Loc.T("upd.install") : Loc.T("upd.checkNow")))
+            { if (Updater.State == Updater.St.Available) Updater.Install(); else Updater.CheckNow(); }
         }
         catch (Exception e) { _guiBroken = true; Plugin.L.LogWarning($"[UI] IMGUI unavailable ({e.Message}); use F8/F9/F10 + config"); }
     }
@@ -273,33 +315,45 @@ public class Overlay : MonoBehaviour
         return Loc.T("role.off");
     }
 
-    /// <summary>AreaInfo ScriptableObject by asset name (null name = first loaded).</summary>
+    /// <summary>AreaInfo ScriptableObject by asset name (null name = first loaded).
+    /// 0.1.8 (bug: "the host is on R1A3_Ridge, which you do not have (you have: )"): only AreaInfos already in memory were
+    /// searched; they are loaded when the game's server browser / area selection was opened. A client joining from our
+    /// Local Co-op screen right after start had none. The game's own resolver (BenchmarkBootRunner.ResolveArea: loads the
+    /// RegionsList addressable and looks the name up) used to be a self-test-only fallback, which is why the self-tests
+    /// passed. It is now always used.</summary>
     internal static AreaInfo FindArea(string name, out string available)
     {
-        var all = Resources.FindObjectsOfTypeAll<AreaInfo>();
-        AreaInfo first = null, hit = null;
         var names = new System.Collections.Generic.List<string>();
-        foreach (var a in all)
+        AreaInfo first = null, hit = null;
+        void Scan()
         {
-            if (a == null) continue;
-            names.Add(a.name);
-            first ??= a;
-            if (!string.IsNullOrEmpty(name) && a.name == name) hit = a;
+            names.Clear(); first = null; hit = null;
+            foreach (var a in Resources.FindObjectsOfTypeAll<AreaInfo>())
+            {
+                if (a == null) continue;
+                names.Add(a.name);
+                first ??= a;
+                if (!string.IsNullOrEmpty(name) && a.name == name) hit = a;
+            }
         }
-        available = string.Join(", ", names);
+        Scan();
         var res = string.IsNullOrEmpty(name) ? first : hit;
-        if (res == null && Autopilot.Active)
+        if (res == null)
         {
-            // Unattended instance never opened the server browser, so no AreaInfo is loaded yet: use the game's own
-            // resolver from its benchmark boot path (looks the name up in RegionsList).
+            var want = string.IsNullOrEmpty(name) ? (Autopilot.Active ? Autopilot.Area : null) : name;
             try
             {
-                var m = typeof(BenchmarkBootRunner).GetMethod("ResolveArea", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-                res = (AreaInfo)m.Invoke(null, new object[] { string.IsNullOrEmpty(name) ? Autopilot.Area : name });
-                Plugin.L.LogWarning($"[Autopilot] BenchmarkBootRunner.ResolveArea('{(string.IsNullOrEmpty(name) ? Autopilot.Area : name)}') -> {(res != null ? res.name : "null")}");
+                if (want != null)
+                {
+                    var m = typeof(BenchmarkBootRunner).GetMethod("ResolveArea", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                    res = (AreaInfo)m.Invoke(null, new object[] { want });
+                    Plugin.L.LogInfo($"[LAN] area '{want}' not loaded yet: the game's resolver (RegionsList) -> {(res != null ? res.name : "null")}");
+                }
             }
-            catch (Exception e) { Plugin.L.LogError($"[Autopilot] ResolveArea: {e}"); }
+            catch (Exception e) { Plugin.L.LogError($"[LAN] ResolveArea('{want}'): {e}"); }
+            if (res == null) Scan();   // the resolver loaded the regions list: report what exists now
         }
+        available = names.Count > 0 ? string.Join(", ", names) : "-";
         return res;
     }
 
@@ -336,11 +390,13 @@ public class Overlay : MonoBehaviour
             MaxPlayers = LanState.EffectivePlayers,
             // StartGameAsync dereferences both (AreaInfo.sceneReference + inventory check; RoomProperties in
             // GetSessionProperties): null => NullReferenceException and a stuck UI (seen in v0.1.0).
-            RoomProperties = new OverlandRoomProperties(),
+            // 0.1.8: the game's own mods flag (OverlandNetworkRunner.ModsAllowed reads it; false = "mods are disabled in
+            // this session"). Host: [LocalCoop] AllowMods; client: the host's value from its session properties.
+            RoomProperties = new OverlandRoomProperties { AllowMods = mode == Fusion.GameMode.Client ? _joinAllowMods : Plugin.AllowMods.Value },
             AreaInfo = area,
         };
         Plugin.L.LogInfo($"[LAN] start ctx built");
-        Plugin.L.LogInfo($"[LAN] start ctx: mode={mode} area={area.name} players={LanState.EffectivePlayers} region={ctx.ServerRegion ?? "null"}");
+        Plugin.L.LogInfo($"[LAN] start ctx: mode={mode} area={area.name} players={LanState.EffectivePlayers} region={ctx.ServerRegion ?? "null"} allowMods={ctx.RoomProperties.AllowMods}");
         BeginWatch(mode == Fusion.GameMode.Client ? LanRole.Client : LanRole.Host);
         HybridSingleton<GameStateManager>.Instance.PushState(new StateStartGame(ctx));
     }
@@ -382,6 +438,7 @@ public class Overlay : MonoBehaviour
     static volatile HostInfo.Info _queryResult;
     static volatile string _queryError;
     static int? _slotResult; static string _slotError;
+    static bool _joinAllowMods = true;
     static string _queryIp; static int _queryPort;
 
     /// <summary>Main thread: finish a Join once the host answered (or not).</summary>
@@ -401,6 +458,7 @@ public class Overlay : MonoBehaviour
                 Show(); return;
             }
             areaName = Plugin.JoinArea.Value;
+            _joinAllowMods = Plugin.AllowMods.Value;
             LanState.HostPlayers = 0; LanState.AssignedSlot = -1;
             Plugin.L.LogWarning($"[LAN] host info unavailable ({_queryError}); using config JoinArea={areaName}");
         }
@@ -420,6 +478,8 @@ public class Overlay : MonoBehaviour
             LanState.AssignedSlot = _slotResult ?? -1;
             Plugin.L.LogInfo(_slotResult.HasValue ? $"[LAN] host assigned player slot {_slotResult}" : $"[LAN] no slot from the host ({_slotError}); using the IP-derived slot");
             if (info.CarSync >= 0) CarSync.OnHostFlags(info.CarSync, ClientLink.Now);
+            _joinAllowMods = RoomPropsLogic.AllowMods(info.Props) ?? Plugin.AllowMods.Value;
+            Plugin.L.LogInfo($"[LAN] host session: mods {(_joinAllowMods ? "allowed" : "off")}");
         }
         var area = FindArea(areaName, out var avail);
         if (area == null)

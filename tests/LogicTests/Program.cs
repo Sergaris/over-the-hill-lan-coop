@@ -12,6 +12,179 @@ static class Program
         total++;
         if (!Equals(got, want)) { fails++; Console.WriteLine($"FAIL {what}: got {got}, want {want}"); }
     }
+    // ---------- 0.1.8 v3 remote-car smoothing (RemoteSmoother) ----------
+    static void Smooth()
+    {
+        var c = new RemoteSmoother.Cfg(); double dt = 1 / 60.0;
+        // constant speed 10 m/s: passes through untouched (no latency)
+        var s = new RemoteSmoother(); double maxDev = 0;
+        for (int i = 0; i < 120; i++) { var (x, _, _) = s.Step(i * dt * 10, 0, 0, dt, c, false); maxDev = Math.Max(maxDev, Math.Abs(x - i * dt * 10)); }
+        Eq(maxDev < 1e-9, true, "smooth: steady motion untouched");
+        // stall: Fusion freezes for 0.4 s, then resumes from the frozen point (Fusion clamps to the newest snapshot)
+        s = new RemoteSmoother(); double fx = 0, prevDrawn = 0, maxStep = 0; int i2 = 0;
+        for (; i2 < 60; i2++) { fx += 10 * dt; prevDrawn = s.Step(fx, 0, 0, dt, c, false).x; }
+        for (int k = 0; k < 24; k++) { var d = s.Step(fx, 0, 0, dt, c, true).x; maxStep = Math.Max(maxStep, Math.Abs(d - prevDrawn)); prevDrawn = d; }
+        Eq(Math.Abs(prevDrawn - (fx + 0.4 * 10)) < 0.05, true, $"smooth: extrapolated through a 0.4 s stall ({prevDrawn - fx:0.00} m ahead)");
+        Eq(s.Last, RemoteSmoother.State.Extrapolate, "smooth: state extrapolate");
+        // snapshots resume with a 2 m catch-up jump forward (time re-sync): drawn pose stays continuous
+        fx += 4 + 2; var dj = s.Step(fx, 0, 0, dt, c, false).x; Eq(Math.Abs(dj - prevDrawn) < 0.5, true, $"smooth: resume jump absorbed (step {dj - prevDrawn:0.00} m)");
+        prevDrawn = dj; maxStep = 0;
+        for (int k = 0; k < 120; k++) { fx += 10 * dt; var d = s.Step(fx, 0, 0, dt, c, false).x; maxStep = Math.Max(maxStep, Math.Abs(d - prevDrawn - 10 * dt)); prevDrawn = d; }
+        Eq(maxStep <= (c.MaxCorrection + c.SpeedFactor * 10) * dt + 1e-6, true, $"smooth: correction speed bounded ({maxStep / dt:0.0} m/s extra)");
+        Eq(s.OffsetLength < 0.01, true, $"smooth: offset gone after 2 s ({s.OffsetLength:0.000} m)");
+        // car stops against a wall (no stall): never extrapolated
+        s = new RemoteSmoother(); fx = 0;
+        for (int k = 0; k < 60; k++) { fx += 10 * dt; s.Step(fx, 0, 0, dt, c, false); }
+        var w = s.Step(fx, 0, 0, dt, c, false).x; Eq(Math.Abs(w - fx) < 0.2, true, $"smooth: real stop not extrapolated ({w - fx:0.00} m)");
+        // teleport: shown at once
+        var tp = s.Step(fx + 2400, 0, 0, dt, c, false).x; Eq(Math.Abs(tp - (fx + 2400)) < 1e-9, true, "smooth: teleport not smoothed");
+        Eq(s.Snaps, 1, "smooth: snap counted");
+        // long stall beyond ExtrapolateSeconds: holds, no runaway
+        s = new RemoteSmoother(); fx = 0;
+        for (int k = 0; k < 60; k++) { fx += 10 * dt; s.Step(fx, 0, 0, dt, c, false); }
+        double last = 0; for (int k = 0; k < 180; k++) last = s.Step(fx, 0, 0, dt, c, true).x;
+        Eq(last - fx <= 10 * c.ExtrapolateSeconds + 0.2, true, $"smooth: 3 s stall bounded ({last - fx:0.00} m ahead)");
+        Eq(s.Last, RemoteSmoother.State.Hold, "smooth: hold after the extrapolation window");
+        Eq(HostFollowLogic.ServoSpeed(1.0, 0.25, 6, 0.5, 0), 4.0, "servo: 1 m / 0.25 s = 4 m/s");
+        Eq(HostFollowLogic.ServoSpeed(10.0, 0.25, 6, 0.5, 10), 11.0, "servo: capped at 6 + 0.5 v");
+        Eq(HostFollowLogic.ServoSpeed(0, 0.25, 6, 0.5, 10), 0.0, "servo: no error, no correction");
+        Eq(RemoteSmoother.TauFor(0.1, c), c.Tau, "smooth: small error slow decay");
+        Eq(RemoteSmoother.TauFor(5, c), c.TauLarge, "smooth: big error fast decay");
+        Eq(RemoteSmoother.RotKeep(90, 0.1, 0.2, 180) > 0.79 && RemoteSmoother.RotKeep(90, 0.1, 0.2, 180) < 0.81, true, "smooth: rotation decay capped 180 deg/s");
+    }
+
+    // ---------- 0.1.8 update check (UpdateLogic) ----------
+    static void Updates()
+    {
+        Eq(UpdateLogic.TryParseVersion("0.1.8", out var v) && v == (0, 1, 8), true, "ver 0.1.8");
+        Eq(UpdateLogic.TryParseVersion("v0.1.10", out var v2) && v2 == (0, 1, 10), true, "ver v-prefix, two digits");
+        Eq(UpdateLogic.TryParseVersion("0.1.9-beta", out _), false, "prerelease suffix rejected");
+        Eq(UpdateLogic.TryParseVersion("0.1", out _), false, "two parts rejected");
+        Eq(UpdateLogic.TryParseVersion("0.1.x", out _), false, "non-digit rejected");
+        Eq(UpdateLogic.TryParseVersion("", out _), false, "empty rejected");
+        Eq(UpdateLogic.TryParseVersion("1.2.3.4", out _), false, "four parts rejected");
+        Eq(UpdateLogic.Compare("0.1.10", "0.1.9"), 1, "0.1.10 > 0.1.9 (numeric, not text)");
+        Eq(UpdateLogic.Compare("0.2.0", "0.1.99"), 1, "minor beats patch");
+        Eq(UpdateLogic.Compare("v0.1.8", "0.1.8"), 0, "equal with v");
+        Eq(UpdateLogic.IsNewer("0.1.9", "0.1.8"), true, "newer");
+        Eq(UpdateLogic.IsNewer("0.1.8", "0.1.8"), false, "same is not newer");
+        Eq(UpdateLogic.IsNewer("0.1.7", "0.1.8"), false, "older is not newer");
+        Eq(UpdateLogic.IsNewer("garbage", "0.1.8"), false, "garbage is not newer");
+        Eq(UpdateLogic.ShouldOffer("0.1.9", "0.1.8", ""), true, "offer");
+        Eq(UpdateLogic.ShouldOffer("0.1.9", "0.1.8", "0.1.9"), false, "skipped version not offered");
+        Eq(UpdateLogic.ShouldOffer("0.1.10", "0.1.8", "0.1.9"), true, "newer than skipped offered");
+        var h1 = new string('a', 64); var h2 = "0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef";
+        var sums = UpdateLogic.ParseSums($"{h1}  OTH-LAN-0.1.9.zip\r\n{h2} *OTH-LAN-Setup.exe\nnot a line\n{new string('z', 64)}  bad.zip\n{h1}  ../evil.zip\n");
+        Eq(sums.Count, 2, "sums: 2 valid lines");
+        Eq(sums.TryGetValue("OTH-LAN-0.1.9.zip", out var z) && z == h1, true, "sums: zip");
+        Eq(sums.TryGetValue("OTH-LAN-Setup.exe", out var e) && e == h2.ToLowerInvariant(), true, "sums: binary-mode star, lower-cased");
+        Eq(sums.ContainsKey("../evil.zip"), false, "sums: no paths");
+        Eq(UpdateLogic.HashEquals(h2, h2.ToLowerInvariant()), true, "hash compare ignores case");
+        Eq(UpdateLogic.HashEquals(h1, h2), false, "hash mismatch");
+        Eq(UpdateLogic.HashEquals("", ""), false, "empty hash never matches");
+        Eq(UpdateLogic.AllowedUrl("https://api.github.com/repos/x"), true, "api allowed");
+        Eq(UpdateLogic.AllowedUrl("https://objects.githubusercontent.com/a"), true, "objects allowed");
+        Eq(UpdateLogic.AllowedUrl("http://github.com/a"), false, "http refused");
+        Eq(UpdateLogic.AllowedUrl("https://github.com.evil.com/a"), false, "look-alike host refused");
+        Eq(UpdateLogic.AllowedUrl("https://user@github.com/a"), false, "user info refused");
+        Eq(UpdateLogic.AllowedUrl("https://github.com:8443/a"), false, "other port refused");
+        Eq(UpdateLogic.AllowedUrl("http://127.0.0.1:8765/x"), false, "loopback refused without test flag");
+        Eq(UpdateLogic.AllowedUrl("http://127.0.0.1:8765/x", true), true, "loopback allowed in self-test");
+        Eq(UpdateLogic.AllowedAssetUrl("https://github.com/Sergaris/over-the-hill-lan-coop/releases/download/v0.1.9/OTH-LAN-0.1.9.zip"), true, "asset of this repo");
+        Eq(UpdateLogic.AllowedAssetUrl("https://github.com/Other/over-the-hill-lan-coop/releases/download/v0.1.9/OTH-LAN-0.1.9.zip"), false, "asset of another repo refused");
+        Eq(UpdateLogic.ShortHash("b8b08fa1b43d18367afa8f9f1b8ad928e04ad900c3925df57ff94e0500000000"), "b8b08fa1…00000000", "short hash shows both ends");
+        Eq(UpdateLogic.ShortHash("abc"), "abc", "short hash of a short string");
+        string J(string tag, bool draft = false, bool pre = false, string repo = UpdateLogic.RepoPath) =>
+            "{\"tag_name\":\"" + tag + "\",\"draft\":" + (draft ? "true" : "false") + ",\"prerelease\":" + (pre ? "true" : "false") +
+            ",\"name\":\"OTH-LAN " + tag + "\",\"body\":\"## About\\nx\\n\\n## What's in 0.1.9\\n- **Faster** sync\\n  more text\\n- Fix `F7`\\n\\n## Что в 0.1.9\\n- Быстрее\\n\",\"assets\":[" +
+            "{\"name\":\"OTH-LAN-0.1.9.zip\",\"size\":123,\"browser_download_url\":\"https://github.com/" + repo + "/releases/download/" + tag + "/OTH-LAN-0.1.9.zip\"}," +
+            "{\"name\":\"SHA256SUMS.txt\",\"size\":9,\"browser_download_url\":\"https://github.com/" + repo + "/releases/download/" + tag + "/SHA256SUMS.txt\"}]}";
+        var rel = UpdateLogic.ParseRelease(J("v0.1.9"), out var why);
+        Eq(rel != null && rel.Version == "0.1.9" && rel.ZipSize == 123 && rel.SumsUrl.EndsWith("SHA256SUMS.txt"), true, "release parsed " + why);
+        Eq(UpdateLogic.ParseRelease(J("v0.1.9", draft: true), out var w1) == null && w1 == "draft", true, "draft skipped");
+        Eq(UpdateLogic.ParseRelease(J("v0.1.9", pre: true), out var w2) == null && w2 == "prerelease", true, "prerelease skipped");
+        Eq(UpdateLogic.ParseRelease(J("v0.1.9", repo: "Evil/over-the-hill-lan-coop"), out var w3) == null && w3.StartsWith("no OTH-LAN-0.1.9.zip"), true, "assets from another repo ignored");
+        Eq(UpdateLogic.ParseRelease("{not json", out var w4) == null && w4.StartsWith("bad JSON"), true, "bad JSON");
+        Eq(UpdateLogic.ParseRelease("{\"tag_name\":\"nightly\"}", out _) == null, true, "non-version tag");
+        Eq(UpdateLogic.ShortNotes(rel.Notes, "en"), "• Faster sync more text\n• Fix F7", "notes en");
+        Eq(UpdateLogic.ShortNotes(rel.Notes, "ru"), "• Быстрее", "notes ru");
+        var tp = "http://127.0.0.1:8765/";
+        var tj = "{\"tag_name\":\"v0.1.9\",\"assets\":[{\"name\":\"OTH-LAN-0.1.9.zip\",\"browser_download_url\":\"http://127.0.0.1:8765/d/OTH-LAN-0.1.9.zip\"},{\"name\":\"SHA256SUMS.txt\",\"browser_download_url\":\"http://127.0.0.1:8765/d/SHA256SUMS.txt\"}]}";
+        Eq(UpdateLogic.ParseRelease(tj, out _) == null, true, "loopback assets refused without test prefix");
+        Eq(UpdateLogic.ParseRelease(tj, out _, tp) != null, true, "loopback assets with test prefix");
+    }
+
+    // ---------- netcode v2 (0.1.8, docs/NETCODE-v2.md) ----------
+    static void NetcodeV2()
+    {
+        // reconnect while the old connection is still in the session (0.1.8): drop the old one, keep the slot
+        var rs = new SlotAllocator(4, 1);
+        Eq(rs.Request("A", 2, 0), 2, "rejoin: A -> 2");
+        rs.Sync(i => i == 2, 1);
+        Eq(rs.KickPending, false, "rejoin: nothing to drop on a normal join");
+        Eq(rs.Request("A", 2, 5), 2, "rejoin: A asks again while still connected -> same slot");
+        Eq(string.Join(",", rs.TakeKicks()), "2", "rejoin: old connection of slot 2 is dropped");
+        Eq(rs.TakeKicks().Count, 0, "rejoin: kick is taken once");
+        Eq(rs.Request("A", 2, 5.5), 2, "rejoin: a second ask while stale -> no second kick");
+        Eq(rs.KickPending, false, "rejoin: no duplicate kick");
+        Eq(rs.Describe(), "2:stale:A", "rejoin: slot shown as stale");
+        Eq(rs.Admit(2, SlotAllocator.Tag("A"), 6, out _), true, "rejoin: the reconnecting client is admitted");
+        Eq(rs.Admit(2, SlotAllocator.Tag("B"), 6, out _), false, "rejoin: others still refused");
+        Eq(rs.Sync(i => false, 6.5).Count, 0, "rejoin: old one gone -> slot kept (not released)");
+        Eq(rs.Describe(), "2:res:A", "rejoin: reserved for A");
+        rs.Sync(i => i == 2, 7); Eq(rs.Describe(), "2:in:A", "rejoin: new connection in");
+        var rt = new SlotAllocator(4, 1);
+        rt.Request("A", 2, 0); rt.Sync(i => i == 2, 1); rt.Request("A", 2, 2); rt.TakeKicks();
+        rt.Sync(i => i == 2, 3); Eq(rt.Describe(), "2:stale:A", "rejoin: index stays valid (new conn) -> wait");
+        rt.Sync(i => i == 2, 5.5); Eq(rt.Describe(), "2:in:A", "rejoin: after 3 s the slot is simply in use again");
+        Eq(rt.Request("A", 2, 9), 2, "rejoin: a later reconnect can drop the old connection again");
+        Eq(rt.KickPending, true, "rejoin: second kick queued");
+        // own car: take the host's pose only when very far away and not right after a link gap
+        Eq(OwnCarLogic.TakeHostPose(30, 10, 25, 4), true, "own: 30 m, no recent gap -> teleport, take host pose");
+        Eq(OwnCarLogic.TakeHostPose(30, 1, 25, 4), false, "own: 30 m right after a gap -> keep ours (host converges)");
+        Eq(OwnCarLogic.TakeHostPose(10, 100, 25, 4), false, "own: 10 m -> keep ours (0.1.7 took it after 3 s)");
+        Eq(OwnCarLogic.TakeHostPose(5, 100, 25, 4), false, "own: 5 m -> keep ours");
+        // input buffer: 8 s at 50 Hz = 400, never below the game's
+        Eq(OwnCarLogic.InputCapacity(8, 50, 50), 400, "input buffer 8 s @50 Hz");
+        Eq(OwnCarLogic.InputCapacity(0, 50, 50), 50, "input buffer 0 = game default");
+        Eq(OwnCarLogic.InputCapacity(0.5, 50, 50), 50, "input buffer never shrinks");
+        Eq(OwnCarLogic.InputCapacity(100, 60, 60), 1200, "input buffer capped at 20 s");
+        // host: OTAC only when the game moved the car away from the client's pose
+        Eq(HostFollowLogic.GameMovedCar(6, 0, 10, 0.016, 0.5, 6.4, 2, 2), true, "host: jump away from client pose = game teleport");
+        Eq(HostFollowLogic.GameMovedCar(4, 0, 10, 0.016, 4.2, 0.3, 2, 2), false, "host: jump toward client pose = correction, no OTAC");
+        Eq(HostFollowLogic.GameMovedCar(0.1, 0, 10, 0.016, 0.5, 0.5, 2, 2), false, "host: normal motion");
+        Eq(HostFollowLogic.GameMovedCar(0.5, 90, 1, 0.016, 0.5, 0.6, 5, 92), true, "host: reset upright (turned away) = game");
+        Eq(HostFollowLogic.GameMovedCar(0.5, 45, 1, 0.016, 0.5, 0.6, 50, 5), false, "host: turned toward client heading = correction");
+        var oc = new OutageLogic.Cfg();
+        Eq(HostFollowLogic.Recover(80, 5, false, 10, oc, out var cs), OutageLogic.Recovery.Snap, "host: link back 80 m (client drove on) -> snap to client, not hands off");
+        Eq(HostFollowLogic.Recover(6, 5, false, 10, oc, out cs) == OutageLogic.Recovery.Converge && cs > 0.3 && cs < 1.5, true, "host: link back 6 m -> converge");
+        // smoothness metric
+        var sm = new Smoothness();
+        for (int i = 0; i < 120; i++) sm.Add(i * 20.0 / 60, 0, 0, 1.0 / 60);      // 20 m/s steady
+        Eq(sm.Over10cm, 0, "smooth: steady 20 m/s has no hitches");
+        Eq(sm.Percentile(99) < 1e-6, true, "smooth: p99 ~0 for steady motion");
+        var sm2 = new Smoothness();
+        for (int i = 0; i < 120; i++) sm2.Add(i * 20.0 / 60 + (i == 60 ? 0.8 : 0), 0, 0, 1.0 / 60);   // one 0.8 m pop
+        Eq(sm2.Over50cm >= 1 && sm2.Max > 0.7, true, $"smooth: a 0.8 m pop is caught ({sm2.Describe()})");
+        var sm3 = new Smoothness();
+        for (int i = 0; i < 60; i++) sm3.Add(i < 30 ? i * 0.3 : 1000 + i * 0.3, 0, 0, 1.0 / 60);
+        Eq(sm3.Over2m, 0, "smooth: a teleport (> 50 m) is not counted as a hitch");
+        var gs = new GapStats(); gs.Add(0.02); gs.Add(0.3); gs.Add(0.8); gs.Add(4);
+        Eq((gs.Over250ms, gs.Over500ms, gs.Over1s, gs.Over3s), (3, 2, 1, 1), "gap histogram");
+        // room flags
+        Eq(RoomPropsLogic.AllowMods(new System.Collections.Generic.Dictionary<string, string> { ["RoomProperties"] = "i:0" }), (bool?)false, "room props i:0 -> mods off");
+        Eq(RoomPropsLogic.AllowMods(new System.Collections.Generic.Dictionary<string, string> { ["RoomProperties"] = "i:3" }), (bool?)true, "room props i:3 -> mods on");
+        Eq(RoomPropsLogic.AllowMods(new System.Collections.Generic.Dictionary<string, string>()), (bool?)null, "room props missing -> unknown");
+        // main-menu navigation: hidden entries are skipped, our button gets linked both ways
+        var nav = MenuNavLogic.Vertical(new[] { true, true, true, false, true }, false);   // single, multi, [coop], hidden, settings
+        Eq(nav[1].down, 2, "menu: Multiplayer down -> Local Co-op");
+        Eq(nav[2].up, 1, "menu: Local Co-op up -> Multiplayer");
+        Eq(nav[2].down, 4, "menu: Local Co-op down skips the hidden entry");
+        Eq(nav[0].up, -1, "menu: no wrap");
+        var navw = MenuNavLogic.Vertical(new[] { true, true, true }, true);
+        Eq((navw[0].up, navw[2].down), (2, 0), "menu: wrap kept when the game wraps");
+    }
+
     // ---------- i18n (0.1.8): string tables, language switching, no UI text outside the tables ----------
     static void I18n()
     {
@@ -391,6 +564,9 @@ static class Program
         }
 
         I18n();
+        NetcodeV2();
+        Updates();
+        Smooth();
         Console.WriteLine($"{total - fails}/{total} checks passed");
         return fails == 0 ? 0 : 1;
     }

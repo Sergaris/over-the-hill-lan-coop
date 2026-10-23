@@ -15,7 +15,8 @@ namespace OthLan;
 /// </summary>
 public sealed class SlotAllocator
 {
-    sealed class Entry { public string Id; public uint Tag; public double Expires; public bool Connected; }
+    sealed class Entry { public string Id; public uint Tag; public double Expires; public bool Connected, Stale; public double StaleSince; }
+    readonly List<int> _kick = new();
     readonly object _lock = new();
     readonly Dictionary<int, Entry> _slots = new();
     readonly Dictionary<string, int> _last = new();
@@ -55,7 +56,11 @@ public sealed class SlotAllocator
             foreach (var kv in _slots)
                 if (kv.Value.Id == clientId)
                 {
-                    if (!kv.Value.Connected) kv.Value.Expires = now + ReserveSeconds;
+                    // 0.1.8: the same client asks again while its old connection is still in the session (it crashed, lost
+                    // the link or rejoined before the host noticed). Fusion would give the new connection no state (seen in
+                    // the self-test: tick stuck at 0 until the old one timed out after 30 s), so the old one is dropped.
+                    if (kv.Value.Connected && !kv.Value.Stale) { kv.Value.Stale = true; kv.Value.StaleSince = now; _kick.Add(kv.Key); }
+                    kv.Value.Expires = now + ReserveSeconds;
                     return kv.Key;
                 }
             var free = Candidates().Where(i => !_slots.ContainsKey(i)).ToList();
@@ -98,6 +103,12 @@ public sealed class SlotAllocator
             foreach (var kv in _slots.ToList())
             {
                 var valid = playerValid(kv.Key);
+                if (kv.Value.Stale)
+                {   // waiting for the old connection to go: keep the reservation for the reconnecting client
+                    // (the new connection gets the same player index, so "valid" may never drop: 3 s is enough for Fusion)
+                    if (!valid || now - kv.Value.StaleSince > 3) { kv.Value.Stale = false; kv.Value.Connected = valid; kv.Value.Expires = now + ReserveSeconds; }
+                    continue;
+                }
                 if (valid) kv.Value.Connected = true;
                 else if (kv.Value.Connected) { _slots.Remove(kv.Key); released.Add(kv.Key); }
             }
@@ -106,9 +117,13 @@ public sealed class SlotAllocator
         return released;
     }
 
+    /// <summary>Slots whose old connection the host should drop now (main thread, Fusion API). Empties the list.</summary>
+    public bool KickPending { get { lock (_lock) return _kick.Count > 0; } }
+    public List<int> TakeKicks() { lock (_lock) { var k = new List<int>(_kick); _kick.Clear(); return k; } }
+
     public string Describe()
     {
-        lock (_lock) return string.Join(" ", _slots.OrderBy(k => k.Key).Select(kv => $"{kv.Key}:{(kv.Value.Connected ? "in" : "res")}:{kv.Value.Id}"));
+        lock (_lock) return string.Join(" ", _slots.OrderBy(k => k.Key).Select(kv => $"{kv.Key}:{(kv.Value.Stale ? "stale" : kv.Value.Connected ? "in" : "res")}:{kv.Value.Id}"));
     }
 
     public int Count { get { lock (_lock) return _slots.Count; } }

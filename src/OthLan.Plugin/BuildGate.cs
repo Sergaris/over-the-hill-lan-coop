@@ -128,6 +128,7 @@ internal static unsafe class BuildGate
     static void OptionalFeatures()
     {
         try { OwnCar.Install(); } catch (Exception e) { Plugin.L.LogError($"[OwnCar] install: {e}"); }
+        try { OwnRender.Install(); } catch (Exception e) { Plugin.L.LogError($"[OwnRender] install: {e}"); }
     }
 
     /// <summary>The dialog's buttons (and F7's "enable anyway"). Persists the answer for this GameAssembly hash.</summary>

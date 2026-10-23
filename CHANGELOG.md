@@ -2,8 +2,61 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
-## Unreleased (i18n)
+## 0.1.8
 
+Both players need 0.1.8: a 0.1.7 game is refused with a message that names both versions.
+
+### Network code (ping compensation)
+- High ping and lag spikes: your own car now runs on your PC's clock, like in single player. Fusion (the game's
+  network engine) stops simulating when the host's data is more than 1 s old, then catches up in one frame; at
+  600 ms ping that happened several times a second (car stops, then lurches). Your car now keeps driving with your
+  current controls while Fusion waits, and Fusion's catch-up is not applied to it a second time. Measured on one PC
+  at 600 ms ping, own-car jumps over 50 cm in about 3 minutes: 0.1.7 with compensation off 165, on 305, now 1-2;
+  with 5 % packet loss at 400 ms: 1, and no jump over 2 m. Config: `[Netcode] OwnLocalClock`, `OwnFreezeSmoothing`
+  (both on).
+- Other players' cars on a laggy PC are shown smoothly from Fusion's interpolation buffer instead of being predicted
+  and corrected: at 600 ms ping jumps over 50 cm 237 → 11, over 2 m 2 → 0. Collisions with them are approximate.
+  Config: `[Netcode] RemoteInterpolate` (on).
+- F7: turning ping compensation off needs a second click, and F7 warns while it is off: without it the game's own
+  netcode can throw cars back by metres when packets are lost.
+- Your own car is no longer pulled back to the host. After every server correction the mod puts back the full state of
+  your car: body, wheels, suspension, engine and gearbox (Vehicle Physics Pro state), before the game draws a frame.
+- The client's input buffer holds 8 s instead of 1 s. Throttle and steering no longer drop to zero when the host's
+  updates pause for a moment (the "could not add input, buffer was full" stutter).
+- The host follows each client's car in one continuous mode at any ping. The old fast/slow switch with snaps every
+  1.5 s at high ping is gone.
+- The client takes the host's position only when the game moved the car on purpose (respawn, rescue, jack, map change)
+  or when it is more than 25 m away. The old 30° rule and the false "host moved the car" signals at 200 ms are gone.
+- After a connection loss the host waits 3 s (was 1.5 s) before braking the client's car.
+- If the client's game freezes (after heavy packet loss) the host no longer snaps to its frozen position over and over
+  and no longer tells the client to take the host's position. It treats the frozen data as a connection loss.
+- Reconnecting right after a crash or a link loss works at once: the host drops the player's old connection instead
+  of leaving the new one without data until the old one times out (up to 30 s).
+- "Ping compensation" (F7, on by default) replaces the separate "own car without rollback" switch. Old configs are
+  migrated to on.
+- Other players' cars no longer jump by 2-3 m on your screen. Your game runs their cars a little ahead of the host.
+  When another driver brakes or turns, the game used to correct anything above 2 m in one frame. Now such corrections
+  are faded out over 0.25 s, and only jumps above 10 m (respawns, rescues) are shown at once. This changes only what
+  you see: collisions use the real position. Config: `[Netcode] RemoteProxySmoothingSeconds`, `RemoteProxySnapMeters`,
+  `RemoteProxySnapDegrees`.
+- When the game moves a client's car (respawn, rescue, jack, reset upright), the host marks it as a teleport, so
+  everyone sees it jump at once instead of sliding there. Config: `[CarSync] TeleportOnGameMove`.
+- The host follows a client's car by steering its speed toward the client's position instead of moving it there
+  each frame. Before, it could push the car into another car, an object or the ground, and the physics then pushed
+  it out in one step, a jump everyone saw. Config: `[CarSync] FollowByVelocity` (on), `Servo*`.
+
+### Menu and joining
+- The Local Co-op button in the main menu works with arrow keys and a gamepad. The buttons on the Local Co-op screen
+  respond to arrows, gamepad and Enter.
+- "Join" no longer fails with "The host is on map R1A3_Ridge and you do not have it". Maps are found by the game's own
+  lookup, as in a normal session.
+- New "Mods" button on the Local Co-op screen: the host chooses whether the session allows mods (on by default). The
+  "Mods are disabled in this session" message no longer appears by mistake.
+- Several game copies on one PC (Local Co-op with 2-4 players on one machine) no longer make OTH-LAN fail to load
+  in one of them ("dev.othlan.lan.cfg is being used by another process"): the settings file is written once at
+  start, with retries.
+
+### Language
 - **Mod UI follows the game's language.** Every user-visible text (F7 window, Local Co-op button and screen, ping
   label, "no link" car labels, dialogs, status lines) comes from string tables (`src/OthLan.Plugin/Lang/*.json`).
   The mod watches the game's selected locale and re-renders immediately, without a restart. English and Russian are
@@ -12,6 +65,101 @@ All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must 
   menu button's original text after a language change.
 - Installer: English or Russian by the Windows display language, `--lang en|ru` to override.
 - Build: `-p:Interop=<dir>` and `-p:BepInExCore=<dir>` point the build at your own interop / BepInEx copies.
+
+### Updates
+- The mod checks GitHub once per game start for a newer OTH-LAN (latest release of this repository, 5 s timeout,
+  silent when offline). If there is one, the main menu shows "OTH-LAN X.Y.Z is available" with the short release
+  notes and Install / Later / Skip this version (mouse, arrow keys, gamepad).
+- Install downloads the release zip, checks its sha256 against SHA256SUMS.txt of the same release and stops on any
+  mismatch. The new plugin is copied in after you quit the game ("Quit and update"); settings stay as they are, the
+  old DLL is kept in `OTH-LAN/backup-update-*`. No administrator rights are needed.
+- F7: "Check for updates" (on by default) and "Check now". Config: `[Update] CheckForUpdates`.
+- This works from 0.1.8 on: 0.1.7 has no update check, so install 0.1.8 by hand once.
+- The installer asks for administrator rights only for install and uninstall (it no longer requires them to start).
+
+### Diagnostics
+- F7 shows network statistics: Fusion stalls, inputs dropped, corrections. The ping label shows only the real UDP echo.
+- The BepInEx log gets a `[NetStats]` line every 30 s with these numbers.
+
+## 0.1.8 — изменения
+
+Обоим игрокам нужна 0.1.8: игра с 0.1.7 не пускается, в сообщении указаны обе версии.
+
+### Сетевой код (компенсация пинга)
+- Высокий пинг и подвисания: своя машина теперь идёт по часам твоего ПК, как в одиночной игре. Fusion (сетевой
+  движок игры) перестаёт считать физику, когда данным хоста больше 1 с, а потом догоняет за один кадр; на пинге
+  600 мс это случалось несколько раз в секунду (машина замирает, потом дёргается вперёд). Теперь машина едет дальше
+  с твоим текущим управлением, пока Fusion ждёт, и его догоняющие шаги к ней второй раз не применяются. Замер на
+  одном ПК, пинг 600 мс, рывков своей машины больше 50 см примерно за 3 минуты: 0.1.7 с выключенной компенсацией 165,
+  с включённой 305, теперь 1-2; при 5 % потерь на 400 мс: 1 и ни одного больше 2 м. Настройки: `[Netcode] OwnLocalClock`,
+  `OwnFreezeSmoothing` (обе включены).
+- Машины других игроков на лагающем ПК показываются плавно из буфера интерполяции Fusion, а не предсказываются с
+  поправками: на пинге 600 мс рывков больше 50 см 237 → 11, больше 2 м 2 → 0. Столкновения с ними приблизительные.
+  Настройка: `[Netcode] RemoteInterpolate` (включена).
+- F7: чтобы выключить компенсацию пинга, нужно нажать второй раз, и пока она выключена, F7 предупреждает: без неё
+  собственный сетевой код игры при потерях пакетов может откидывать машины на метры.
+- Своя машина больше не откатывается к хосту. После каждой поправки сервера мод возвращает полное состояние машины:
+  кузов, колёса, подвеску, двигатель и коробку (состояние Vehicle Physics Pro), до того как игра нарисует кадр.
+- Буфер ввода клиента вмещает 8 с вместо 1 с. Газ и руль больше не обнуляются, когда обновления от хоста ненадолго
+  замирают (рывки «could not add input, buffer was full»).
+- Хост ведёт машину каждого клиента в одном непрерывном режиме при любом пинге. Старое переключение быстрого и
+  медленного режима со snap каждые 1,5 с на высоком пинге убрано.
+- Клиент берёт позицию хоста, только когда игра сама переставила машину (возрождение, спасение, домкрат, смена карты)
+  или когда расхождение больше 25 м. Старое правило 30° и ложные сигналы «хост переставил машину» на 200 мс убраны.
+- После обрыва связи хост ждёт 3 с (было 1,5 с), прежде чем тормозить машину клиента.
+- Если игра клиента зависла (после сильной потери пакетов), хост больше не прыгает раз за разом к её застывшей позиции
+  и не велит клиенту взять позицию хоста. Застывшие данные считаются обрывом связи.
+- Повторный вход сразу после вылета или обрыва работает сразу: хост закрывает старое подключение игрока, а не
+  оставляет новое без данных, пока старое не отвалится по таймауту (до 30 с).
+- «Компенсация пинга» (F7, по умолчанию включена) заменяет отдельный переключатель «своя машина без отката». Старые
+  настройки переводятся во «вкл.».
+- Машины других игроков больше не прыгают у вас на 2-3 м. Ваша игра просчитывает их машины чуть вперёд хоста.
+  Когда другой водитель тормозит или поворачивает, раньше игра исправляла всё больше 2 м за один кадр. Теперь такие
+  поправки плавно исчезают за 0,25 с, а сразу видны только скачки больше 10 м (возрождение, эвакуация). Меняется
+  только картинка: столкновения считаются по настоящей позиции. Настройки: `[Netcode] RemoteProxySmoothingSeconds`,
+  `RemoteProxySnapMeters`, `RemoteProxySnapDegrees`.
+- Когда игра переносит машину клиента (возрождение, эвакуация, домкрат, постановка на колёса), хост помечает это как
+  телепорт, и все видят перенос сразу, а не плавный проезд. Настройка: `[CarSync] TeleportOnGameMove`.
+- Хост ведёт машину клиента, направляя её скорость к позиции клиента, а не переставляя машину туда каждый кадр.
+  Раньше он мог вдавить машину в другую машину, предмет или землю, и физика выталкивала её за один шаг: прыжок,
+  который видели все. Настройки: `[CarSync] FollowByVelocity` (вкл.), `Servo*`.
+
+### Меню и вход
+- Кнопка «Локальный кооп» в главном меню работает со стрелками и геймпадом. Кнопки экрана «Локальный кооп»
+  отвечают на стрелки, геймпад и Enter.
+- «Войти» больше не падает с «Хост на карте R1A3_Ridge, а у вас её нет». Карты ищутся штатным поиском игры, как в
+  обычной сессии.
+- Новая кнопка «Моды» на экране «Локальный кооп»: хост выбирает, разрешены ли моды в сессии (по умолчанию да).
+  Сообщение «В этой сессии моды отключены» больше не появляется по ошибке.
+- Несколько копий игры на одном ПК (локальный кооп на 2-4 игрока на одной машине) больше не приводят к тому, что
+  OTH-LAN не загружается в одной из них («dev.othlan.lan.cfg занят другим процессом»): файл настроек пишется один
+  раз при запуске, с повторами.
+
+### Язык
+- **Интерфейс мода следует языку игры.** Все видимые тексты (окно F7, кнопка и экран «Локальный кооп», метка
+  пинга, метки «нет связи» над машинами, диалоги, строки статуса) берутся из таблиц строк (`src/OthLan.Plugin/Lang/*.json`).
+  Мод следит за выбранным в игре языком и сразу перерисовывает тексты, без перезапуска. Английский и русский
+  готовы полностью; остальные языки игры показываются по-английски. Лог BepInEx остаётся на английском.
+- Кнопка и экран «Локальный кооп» сохраняют свои тексты, когда система локализации игры после смены языка
+  возвращает скопированной кнопке меню её исходный текст.
+- Установщик: английский или русский по языку Windows, `--lang en|ru` — выбрать вручную.
+- Сборка: `-p:Interop=<dir>` и `-p:BepInExCore=<dir>` указывают сборке ваши копии interop / BepInEx.
+
+### Обновления
+- Мод раз за запуск игры проверяет на GitHub, нет ли новой OTH-LAN (последний релиз этого репозитория, таймаут 5 с,
+  без интернета молча пропускается). Если есть, в главном меню появляется «Доступна OTH-LAN X.Y.Z» с кратким списком
+  изменений и кнопками «Установить» / «Позже» / «Пропустить эту версию» (мышь, стрелки, геймпад).
+- «Установить» скачивает zip релиза, сверяет его sha256 с SHA256SUMS.txt того же релиза и при любом расхождении
+  останавливается. Новый плагин копируется после выхода из игры («Выйти и обновить»); настройки не меняются, старая
+  DLL остаётся в `OTH-LAN/backup-update-*`. Права администратора не нужны.
+- F7: «Проверять обновления» (по умолчанию вкл.) и «Проверить сейчас». В конфиге: `[Update] CheckForUpdates`.
+- Это работает начиная с 0.1.8: в 0.1.7 проверки обновлений нет, поэтому 0.1.8 один раз нужно установить вручную.
+- Установщик просит права администратора только для установки и удаления (для запуска они больше не нужны).
+
+### Диагностика
+- F7 показывает сетевую статистику: замирания Fusion, потерянный ввод, поправки. Метка пинга показывает только
+  настоящий UDP-эхо.
+- В лог BepInEx раз в 30 с пишется строка `[NetStats]` с этими числами.
 
 ## 0.1.7
 

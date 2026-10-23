@@ -35,7 +35,8 @@ internal static class CoopMenu
     static TMP_Text _status, _header, _title;
     static readonly List<UIButtonSelector> _rows = new();
     static readonly List<DiscoveryLogic.Lobby> _shown = new();
-    static UIButtonSelector _playersBtn, _hostBtn, _addBtn, _backBtn;
+    static UIButtonSelector _playersBtn, _modsBtn, _hostBtn, _addBtn, _backBtn;
+    public static int NavFixes; public static string NavInfo = "";
     static int _players = 4, _maxPlayers = 4;
     static float _nextRefresh;
     static Msg _statusText = Msg.Raw("");
@@ -77,6 +78,7 @@ internal static class CoopMenu
                 AddButton();
             }
             else if (_button.WasCollected || _button == null) _button = null;
+            else if (_screen == null) CheckMenuNav();
 
         }
         catch (Exception e)
@@ -148,9 +150,77 @@ internal static class CoopMenu
         _button = b.gameObject;
         _buttonLabel = b.GetComponentInChildren<TMP_Text>(true);
         State = "button";
+        FixMenuNav("added");
         InitLobbyName();
         Plugin.L.LogInfo($"[Coop] 'Local Co-op' button added to the main menu (template label '{label}', font {(_templateText != null && _templateText.font != null ? _templateText.font.name : "?")}, lang {Loc.Lang})");
         MaxPlayersFromGame();
+    }
+
+    // ---- main-menu navigation (0.1.8 bug: "Local Co-op" unreachable with arrows / gamepad) ----
+    // The game links its menu buttons explicitly (StateMainMenu.Open -> UIUtilities.SetVerticalNavigation over its
+    // "selectables" list) BEFORE our clone exists, and the clone copied Multiplayer's links: Down from Multiplayer went
+    // straight to the next game button and nothing ever pointed at ours. We re-link the visible buttons in their order on
+    // screen and add ours to the game's list (in case the game re-links later); checked every 0.5 s.
+    static bool _menuWrap; static bool _wrapKnown;
+    static void CheckMenuNav()
+    {
+        var mp = _menu.MultiplayerButton; if (mp == null || _button == null) return;
+        var ours = _button.GetComponent<Selectable>(); if (ours == null) return;
+        if (!_button.activeInHierarchy || !mp.gameObject.activeInHierarchy) return;
+        if (mp.navigation.selectOnDown != ours || ours.navigation.selectOnUp != mp) FixMenuNav("re-check");
+    }
+
+    static void FixMenuNav(string why)
+    {
+        try
+        {
+            var c = _menu.buttonsContainer;
+            var list = new List<Selectable>();
+            for (int i = 0; i < c.childCount; i++)
+            {
+                var ch = c.GetChild(i); if (ch == null) continue;
+                var sel = ch.GetComponent<Selectable>(); if (sel == null) continue;
+                list.Add(sel);
+            }
+            var usable = new bool[list.Count];
+            for (int i = 0; i < list.Count; i++) usable[i] = list[i].gameObject.activeSelf && list[i].IsInteractable();
+            if (Array.IndexOf(usable, true) < 0) return;   // menu built but hidden (loading, notices): link it when shown
+            if (!_wrapKnown)
+            {   // keep the game's choice: does Up on its first button go to its last one?
+                int f = Array.IndexOf(usable, true), l = Array.LastIndexOf(usable, true);
+                var ours = _button.GetComponent<Selectable>();
+                if (f >= 0 && l > f) { var fu = list[f].navigation.selectOnUp; _menuWrap = fu != null && fu != ours && fu == list[l]; _wrapKnown = true; }
+            }
+            var links = MenuNavLogic.Vertical(usable, _menuWrap);
+            var names = new List<string>();
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (!usable[i]) continue;
+                var n = list[i].navigation;
+                n.mode = Navigation.Mode.Explicit;
+                n.selectOnUp = links[i].up >= 0 ? list[links[i].up] : null;
+                n.selectOnDown = links[i].down >= 0 ? list[links[i].down] : null;
+                list[i].navigation = n;
+                names.Add(list[i].gameObject == _button ? "[LocalCoop]" : list[i].name);
+            }
+            // the game's own list (StateMainMenu.selectables), so a later re-link by the game includes us
+            try
+            {
+                var st = HybridSingleton<GameStateManager>.Instance?.PeekState()?.TryCast<StateMainMenu>();
+                var gl = st?.selectables;
+                var oursSel = _button.GetComponent<Selectable>();
+                if (gl != null && !gl.Contains(oursSel))
+                {
+                    var at = gl.IndexOf(_menu.MultiplayerButton.GetComponent<Selectable>());
+                    if (at >= 0) gl.Insert(at + 1, oursSel); else gl.Add(oursSel);
+                }
+            }
+            catch (Exception e) { if (NavFixes == 0) Plugin.L.LogInfo($"[Coop] game's menu list not updated ({e.Message}); explicit links are enough"); }
+            NavFixes++;
+            NavInfo = string.Join(" > ", names) + (_menuWrap ? " (wraps)" : "");
+            if (NavFixes <= 3 || why != "re-check") Plugin.L.LogInfo($"[Coop] main-menu navigation linked ({why}): {NavInfo}");
+        }
+        catch (Exception e) { Plugin.L.LogWarning($"[Coop] main-menu navigation: {e.Message}"); }
     }
 
     /// <summary>The game's own "max players" choices (create-server screen) if that prefab is loaded; else 4.</summary>
@@ -241,13 +311,15 @@ internal static class CoopMenu
             _rows.Add(r);
         }
         float by = -300;
-        _playersBtn = Button(p, "Players", new Vector2(-470, by), new Vector2(290, 60));
+        _playersBtn = Button(p, "Players", new Vector2(-548, by), new Vector2(250, 60));
         _playersBtn.add_OnPointerClickOrSubmit(Click(() => { _players = _players >= _maxPlayers ? 2 : _players + 1; Labels(); }));
-        _hostBtn = Button(p, "Host", new Vector2(-160, by), new Vector2(310, 60));
+        _modsBtn = Button(p, "Mods", new Vector2(-282, by), new Vector2(262, 60));
+        _modsBtn.add_OnPointerClickOrSubmit(Click(() => { Plugin.AllowMods.Value = !Plugin.AllowMods.Value; Labels(); Plugin.L.LogInfo($"[Coop] mods in hosted sessions: {(Plugin.AllowMods.Value ? "allowed" : "off")}"); }));
+        _hostBtn = Button(p, "Host", new Vector2(-4, by), new Vector2(274, 60));
         _hostBtn.add_OnPointerClickOrSubmit(Click(BecomeHost));
-        _addBtn = Button(p, "AddIp", new Vector2(160, by), new Vector2(310, 60));
+        _addBtn = Button(p, "AddIp", new Vector2(276, by), new Vector2(266, 60));
         _addBtn.add_OnPointerClickOrSubmit(Click(() => { _addOpen = true; _addText = ""; }));
-        _backBtn = Button(p, "Back", new Vector2(470, by), new Vector2(290, 60));
+        _backBtn = Button(p, "Back", new Vector2(540, by), new Vector2(242, 60));
         _backBtn.add_OnPointerClickOrSubmit(Click(() => Close(true)));
         _status = Text(p, "Status", new Vector2(0, -362), new Vector2(1280, 60), 22, TextAlignmentOptions.Center);
         _players = Math.Clamp(Plugin.PlayerCount.Value, 2, _maxPlayers);
@@ -266,6 +338,7 @@ internal static class CoopMenu
     static void Labels()
     {
         SetLabel(_playersBtn, Cap(Loc.F("coop.players", _players)));
+        SetLabel(_modsBtn, Cap(Plugin.AllowMods.Value ? Loc.T("coop.modsOn") : Loc.T("coop.modsOff")));
         SetLabel(_hostBtn, Cap(Loc.T("coop.host")));
         SetLabel(_addBtn, Cap(Loc.T("coop.addIp")));
         SetLabel(_backBtn, Cap(Loc.T("coop.back")));
@@ -353,7 +426,7 @@ internal static class CoopMenu
     {
         var sel = new List<Selectable>();
         foreach (var r in _rows) if (r.gameObject.activeSelf) sel.Add(r);
-        var bar = new Selectable[] { _playersBtn, _hostBtn, _addBtn, _backBtn };
+        var bar = new Selectable[] { _playersBtn, _modsBtn, _hostBtn, _addBtn, _backBtn };
         for (int i = 0; i < sel.Count; i++)
         {
             var n = new Navigation { mode = Navigation.Mode.Explicit };
@@ -367,7 +440,6 @@ internal static class CoopMenu
             n.selectOnLeft = i > 0 ? bar[i - 1] : null;
             n.selectOnRight = i + 1 < bar.Length ? bar[i + 1] : null;
             n.selectOnUp = sel.Count > 0 ? sel[sel.Count - 1] : null;
-            if (bar[i] == _playersBtn) { n.selectOnLeft = null; n.selectOnRight = _hostBtn; }
             bar[i].navigation = n;
         }
     }
@@ -459,8 +531,9 @@ internal static class CoopMenu
             RoomCode = "",
             ServerRegion = region,
             MaxPlayers = n,
-            RoomProperties = new OverlandRoomProperties(),
+            RoomProperties = new OverlandRoomProperties { AllowMods = Plugin.AllowMods.Value },   // 0.1.8: was always "mods off"
         };
+        Plugin.L.LogInfo($"[Coop] host session: mods {(Plugin.AllowMods.Value ? "allowed" : "off")}");
         Close(false);
         HybridSingleton<GameStateManager>.Instance.PushState(new StateRegionSelectionMenu(ctx));
     }
@@ -493,10 +566,41 @@ internal static class CoopMenu
     }
 
     /// <summary>Lobby name: cfg, else the Steam name, else the PC name (main thread, once).</summary>
+    /// <summary>0.1.8: the game's main menu is on screen (our button visible, Local Co-op screen closed).</summary>
+    public static bool MainMenuVisible { get { try { return _screen == null && _button != null && _button.activeInHierarchy; } catch { return false; } } }
     public static string StatusText => _statusText?.ToString() ?? "";
     public static string ButtonLabel { get { try { return _buttonLabel != null ? _buttonLabel.text ?? "" : ""; } catch { return ""; } } }
     public static void TestPlayers(int n) { _players = Math.Clamp(n, 2, _maxPlayers); if (_screen != null) Labels(); }
     public static void TestClickRow(int i) => RowClicked(i);
+    /// <summary>Self-test: objects for the keyboard/gamepad navigation check.</summary>
+    public static GameObject TestObj(string what)
+    {
+        try
+        {
+            return what switch
+            {
+                "multiplayer" => _menu?.MultiplayerButton?.gameObject,
+                "coop" => _button,
+                "host" => _hostBtn?.gameObject, "mods" => _modsBtn?.gameObject, "players" => _playersBtn?.gameObject,
+                "add" => _addBtn?.gameObject, "back" => _backBtn?.gameObject,
+                "row0" => _rows.Count > 0 ? _rows[0].gameObject : null,
+                "afterCoop" => NextUsableAfter(_button),
+                _ => null,
+            };
+        }
+        catch { return null; }
+    }
+    static GameObject NextUsableAfter(GameObject go)
+    {
+        if (go == null || _menu == null) return null;
+        var c = _menu.buttonsContainer;
+        for (int i = go.transform.GetSiblingIndex() + 1; i < c.childCount; i++)
+        {
+            var sel = c.GetChild(i).GetComponent<Selectable>();
+            if (sel != null && sel.gameObject.activeSelf && sel.IsInteractable()) return sel.gameObject;
+        }
+        return null;
+    }
     public static bool LobbyNameSet; public static string DemoName;
     public static void InitLobbyName()
     {

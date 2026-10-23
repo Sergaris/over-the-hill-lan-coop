@@ -11,7 +11,7 @@ namespace OthLan;
 internal static class Diagnostics
 {
     static IntPtr _loggedRunner, _loggedCarsRunner;
-    static float _next;
+    static float _next; static int _retries;
 
     public static void Tick()
     {
@@ -52,6 +52,10 @@ internal static class Diagnostics
                                          $"SnapAngle={nrb.CorrectionSnapAngle} UsePreciseRotation={nrb.UsePreciseRotation} SyncParent={nrb.SyncParent}");
                 }
             }
+        }
+        catch (InvalidOperationException e) when (_retries++ < 5)
+        {   // 0.1.8: read too early (Fusion's RuntimeConfig not set yet, seen in the 2026-10-22 log): try again in 3 s
+            _loggedRunner = IntPtr.Zero; Plugin.L.LogInfo($"[Diag] runner not ready yet ({e.Message}); retrying");
         }
         catch (Exception e) { Plugin.L.LogWarning($"[Diag] {e.Message}"); _loggedRunner = r.Pointer; _loggedCarsRunner = r.Pointer; }
     }

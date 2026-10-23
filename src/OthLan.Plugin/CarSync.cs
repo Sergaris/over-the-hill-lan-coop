@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using Fusion;
+using Fusion.Addons.Physics;
 using UnityEngine;
 
 namespace OthLan;
@@ -29,7 +30,8 @@ namespace OthLan;
 /// </summary>
 internal static class CarSync
 {
-    sealed class Latest { public CarSyncLogic.Pose Pose; public double ReceivedAt; public uint LastAppliedSeq; }
+    sealed class Latest { public CarSyncLogic.Pose Pose; public double ReceivedAt, AdvancedAt; public uint LastAppliedSeq; }
+    public static int FrozenClientPoses;
 
     static readonly object _lock = new();
     static readonly Dictionary<int, Latest> _poses = new();
@@ -43,7 +45,7 @@ internal static class CarSync
     const double SelfMoveHoldSeconds = 0.5;
     static readonly Dictionary<int, (Vector3 p, Quaternion q)> _lastHost = new();   // slot -> host pose after our step
     static readonly Dictionary<int, double> _jumpHoldUntil = new();
-    public static int HostJumps;
+    public static int HostJumps, JumpsTowardClient, LowConverges, Servos, Teleports;
     static readonly Dictionary<int, ushort> _acceptCtr = new();
     public static int AcceptsSent;
     /// <summary>Host: tell that player's client to take the host pose (phase 2 would otherwise undo the game's move).</summary>
@@ -131,8 +133,9 @@ internal static class CarSync
         CheckpointSeconds = Plugin.CarCheckpointSeconds.Value,
         DesyncSnapMeters = Plugin.CarDesyncMeters.Value,
         DesyncSnapDegrees = Plugin.CarDesyncDegrees.Value,
-        HighEnterMs = Plugin.CarHighPingMs.Value + Plugin.CarHysteresisMs.Value,
-        HighExitMs = Plugin.CarHighPingMs.Value - Plugin.CarHysteresisMs.Value,
+        // 0.1.8 netcode v2: one continuous follower for every ping (the 0.1.7 "High" checkpoint mode let the host copy
+        // drift and then snapped it; at Witness's 200 ms that meant frequent big corrections). HighPingMs is ignored.
+        HighEnterMs = double.MaxValue, HighExitMs = double.MaxValue,
         CheckpointMinMeters = CheckpointMinOverride >= 0 ? CheckpointMinOverride : Plugin.CarCheckpointMinMeters.Value,
         CheckpointMinDegrees = CheckpointMinOverride >= 0 ? CheckpointMinOverride : Plugin.CarCheckpointMinDegrees.Value,
         CheckpointSoftSeconds = Plugin.CarCheckpointSoftSeconds.Value,
@@ -327,7 +330,12 @@ internal static class CarSync
         lock (_lock)
         {
             if (_poses.TryGetValue(p.Slot, out var l) && !CarSyncLogic.AcceptSeq(p.Seq, l.Pose.Seq, now - l.ReceivedAt)) return; // reordered/old
-            _poses[p.Slot] = new Latest { Pose = p, ReceivedAt = now, LastAppliedSeq = l?.LastAppliedSeq ?? 0 };
+            // 0.1.8: a client whose Fusion tick stopped (freeze after heavy loss) keeps sending the same frozen pose over
+            // the side channel. That is not a live pose: treat it like no poses (extrapolate, then brake) instead of
+            // snapping to it every frame and asking the client to take our pose (an1: 80 snap loops, 84 OTAC).
+            var adv = l == null || p.Tick == 0 || p.Tick != l.Pose.Tick ? now : l.AdvancedAt;
+            if (adv != now) FrozenClientPoses++;
+            _poses[p.Slot] = new Latest { Pose = p, ReceivedAt = now, AdvancedAt = adv, LastAppliedSeq = l?.LastAppliedSeq ?? 0 };
             PosesReceived++;
         }
     }
@@ -451,7 +459,13 @@ internal static class CarSync
         var pings = HostPings.Snapshot();   // once per frame, not per car
         var hostTick = r.Tick.Raw; var tickDt = (double)r.DeltaTime;
         var work = _work;
+        try { HostApplyCars(r, work, cfg, ocfg, nowS, dt, pings, hostTick, tickDt); }
+        finally { NetTrace.FollowFlush(LastAction, dt); }
+    }
 
+    static void HostApplyCars(NetworkRunner r, List<(int slot, Latest l)> work, CarSyncLogic.Cfg cfg, OutageLogic.Cfg ocfg, double nowS, float dt,
+                              Dictionary<int, (double ms, bool timedOut, double loss, double noLinkS)> pings, int hostTick, double tickDt)
+    {
         foreach (var (slot, l) in work)
         {
             var pref = PlayerRef.FromIndex(slot);
@@ -462,17 +476,6 @@ internal static class CarSync
             if (car == null) { HostStats[slot] = new Msg("cs.slotNoCar", slot); continue; }
             var rb = Body(car); if (rb == null) continue;
             if (TestJumpSlot == slot) { TestJumpSlot = -1; rb.position += rb.rotation * new Vector3(0, 1.5f, 6f); Plugin.L.LogWarning($"[CarSync] self-test: host moved slot {slot} by 6 m"); }
-            if (_lastHost.TryGetValue(slot, out var lh)
-                && !(_selfMoveUntil.TryGetValue(slot, out var smu) && nowS < smu)
-                && CarSyncLogic.HostJumped(Vector3.Distance(rb.position, lh.p), Quaternion.Angle(rb.rotation, lh.q), rb.linearVelocity.magnitude, dt))
-            {
-                HostJumps++;
-                var hold = CarSyncLogic.JumpHoldSeconds(pings.TryGetValue(slot, out var hj) && !hj.timedOut ? hj.ms : double.NaN);
-                _jumpHoldUntil[slot] = nowS + hold;
-                Plugin.L.LogInfo($"[CarSync] slot {slot}: moved by the game on the host ({Vector3.Distance(rb.position, lh.p):0.0} m); hands off for {hold:0.00} s");
-                SendAccept(slot);
-            }
-            var jumpHold = _jumpHoldUntil.TryGetValue(slot, out var jh) && nowS < jh;
 
             // RTT = our UDP echo over the real link (same source as the ping label); Fusion RTT only if no echo yet.
             // Echo timed out => NaN => NextMode holds the current mode (no flapping to Low on a Fusion figure).
@@ -495,10 +498,35 @@ internal static class CarSync
             if (turn > 1e-5f) trot = Quaternion.AngleAxis(turn * Mathf.Rad2Deg, ang.normalized) * trot;
             var err = Vector3.Distance(rb.position, target);
             var errDeg = Quaternion.Angle(rb.rotation, trot);
+            if (_lastHost.TryGetValue(slot, out var lh)
+                && !(_selfMoveUntil.TryGetValue(slot, out var smu) && nowS < smu))
+            {
+                var moved = Vector3.Distance(rb.position, lh.p); var turned = Quaternion.Angle(rb.rotation, lh.q);
+                if (CarSyncLogic.HostJumped(moved, turned, rb.linearVelocity.magnitude, dt))
+                {
+                    if (HostFollowLogic.GameMovedCar(moved, turned, rb.linearVelocity.magnitude, dt,
+                            Vector3.Distance(lh.p, target), err, Quaternion.Angle(lh.q, trot), errDeg))
+                    {
+                        HostJumps++;
+                        if (Plugin.CarTeleportOnGameMove.Value)
+                        {   // v3e: Fusion's teleport flag, so observers do not smooth the jump (RemoteProxySnapMeters is 10 m)
+                            try { var nrb = car.GetComponent<NetworkRigidbody3D>(); if (nrb != null) { nrb.Teleport(new Il2CppSystem.Nullable<Vector3>(rb.position), new Il2CppSystem.Nullable<Quaternion>(rb.rotation)); Teleports++; } }
+                            catch (Exception e) { Plugin.L.LogWarning($"[CarSync] teleport flag: {e.Message}"); }
+                        }
+                        var hold = CarSyncLogic.JumpHoldSeconds(pings.TryGetValue(slot, out var hj) && !hj.timedOut ? hj.ms : double.NaN);
+                        _jumpHoldUntil[slot] = nowS + hold;
+                        Plugin.L.LogInfo($"[CarSync] slot {slot}: moved by the game on the host ({moved:0.0} m, {turned:0} deg, now {err:0.0} m from the client's pose); hands off for {hold:0.00} s");
+                        SendAccept(slot);
+                    }
+                    else { JumpsTowardClient++; if (JumpsTowardClient <= 5) Plugin.L.LogInfo($"[CarSync] slot {slot}: host copy jumped {moved:0.0} m / {turned:0} deg toward the client's pose (physics, not the game): no OTAC"); }
+                }
+            }
+            if (NetTrace.On) NetTrace.Pending[slot] = new NetTrace.FollowIn { Rb = rb, Pre = rb.position, Target = target, ClientVel = vel, Err = err, ErrDeg = errDeg, Age = age, Gap = nowS - l.AdvancedAt };
+            var jumpHold = _jumpHoldUntil.TryGetValue(slot, out var jh) && nowS < jh;
             Metrics[slot] = (mode.ToString(), rtt, err, errDeg, age);
             if (err > cfg.TeleportMeters && nowS - l.ReceivedAt <= cfg.MaxPoseAgeSeconds && l.LastAppliedSeq != p.Seq) TeleportsIgnored++;
             var winch = WinchInvolved(car, pref);
-            var g = nowS - l.ReceivedAt;                         // seconds without a fresh pose from this client
+            var g = nowS - l.AdvancedAt;                         // seconds without a fresh (tick advancing) pose from this client
             var st = OutOf(slot);
             var phase = OutageLogic.PhaseOf(g, ocfg);
             if (jumpHold) { _lastHost[slot] = (rb.position, rb.rotation); _lastCheckpoint[slot] = nowS; LastAction[slot] = "jump-hold";
@@ -508,6 +536,7 @@ internal static class CarSync
             if (winch && !(LastAction.TryGetValue(slot, out var la) && la == "winch")) WinchPauses++;
             if (contactNow) { if (!CarSyncLogic.ContactPaused(nowS, _lastContact.TryGetValue(slot, out var lc0) ? lc0 : 0, Plugin.CarContactHoldSeconds.Value)) ContactPauses++; _lastContact[slot] = nowS; }
             var paused = CarSyncLogic.ContactPaused(nowS, _lastContact.TryGetValue(slot, out var lc) ? lc : 0, Plugin.CarContactHoldSeconds.Value);
+            if (contactNow && NetTrace.Pending.TryGetValue(slot, out var tp)) { tp.Contact = true; NetTrace.Pending[slot] = tp; }
 
             // ---- 0.1.7: link outage (no fresh poses) -> extrapolate / physics only / brake ----
             if (phase != OutageLogic.Phase.Normal)
@@ -525,7 +554,7 @@ internal static class CarSync
             {   // first fresh pose after a gap
                 st.InGap = false; st.Phase = OutageLogic.Phase.Normal;
                 var hostUp = (rb.rotation * Vector3.up).y; var cliUp = (trot * Vector3.up).y;
-                var rec = OutageLogic.Decide(err, errDeg, paused, 0, rb.linearVelocity.magnitude, ocfg, out var T);
+                var rec = HostFollowLogic.Recover(err, errDeg, paused, rb.linearVelocity.magnitude, ocfg, out var T);
                 if (rec != OutageLogic.Recovery.Teleport && OutageLogic.KeepUpright(err, hostUp, cliUp)) rec = OutageLogic.Recovery.None;
                 Recoveries++; LastRecovery = $"{rec} gap {st.GapMax:0.00}s err {err:0.00}m {errDeg:0}°";
                 Plugin.L.LogInfo($"[CarSync] slot {slot}: link back after {st.GapMax:0.00} s, error {err:0.00} m / {errDeg:0} deg -> {rec}{(T > 0 ? $" over {T:0.00} s" : "")}");
@@ -579,6 +608,10 @@ internal static class CarSync
                 st.ConvStart = nowS; st.ConvT = 0.5; act = CarSyncLogic.Action.None;
             }
             if (act == CarSyncLogic.Action.Snap && OutageLogic.KeepUpright(err, (rb.rotation * Vector3.up).y, (trot * Vector3.up).y)) act = CarSyncLogic.Action.None;
+            if (act == CarSyncLogic.Action.Snap && err <= ocfg.SnapMeters)
+            {   // v2: a big but plausible error (after a stall) glides over 0.3..1.5 s instead of a jump others would see
+                st.ConvStart = nowS; st.ConvT = OutageLogic.ConvergeSeconds(err); st.TrackSince = nowS; st.TrackErr0 = err; act = CarSyncLogic.Action.None; LowConverges++;
+            }
             if (paused && ApplyEnabled) { _lastCheckpoint[slot] = nowS; _softUntil.Remove(slot); }   // no checkpoint burst right after
             LastAction[slot] = winch ? "winch" : paused ? "contact" : act.ToString();
             if (act == CarSyncLogic.Action.CheckpointOk) { _lastCheckpoint[slot] = nowS; CheckpointsSkipped++; }
@@ -591,6 +624,33 @@ internal static class CarSync
                 rb.rotation = Quaternion.Slerp(rb.rotation, trot, k);
                 rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, vel, k);
                 rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, ang, k);
+            }
+            else if (act == CarSyncLogic.Action.Blend && Plugin.CarFollowVelocity.Value)
+            {
+                // v3: drive the host copy through its velocity, never by moving the body (a position write can push it
+                // into another car, a prop or the ground; PhysX then pushes it out within one step = a jump everyone
+                // sees, and the next write pushes it in again). Collisions stay physical; the error decays with
+                // ServoTau, at most ServoMaxCorrection (+ half the client's speed) m/s faster than the client drives.
+                var e = target - rb.position; var el = e.magnitude;
+                var sv = (float)HostFollowLogic.ServoSpeed(el, Plugin.CarServoTau.Value, Plugin.CarServoMaxCorrection.Value, 0.5, vel.magnitude);
+                var want = vel + (el > 1e-4f ? e * (sv / el) : Vector3.zero);
+                var kv = (float)CarSyncLogic.BlendFactor(dt, Plugin.CarServoVelTau.Value);
+                rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, want, kv);
+                var qe = trot * Quaternion.Inverse(rb.rotation); qe.ToAngleAxis(out var qang, out var axis);
+                if (qang > 180) qang -= 360;
+                var wc = Vector3.zero;
+                if (!float.IsNaN(axis.x) && Mathf.Abs(qang) > 0.01f)
+                {
+                    var rad = qang * Mathf.Deg2Rad; var ws = Mathf.Min(Mathf.Abs(rad) / Plugin.CarServoTau.Value, Plugin.CarServoMaxTurn.Value);
+                    wc = axis * (Mathf.Sign(rad) * ws);
+                }
+                rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, ang + wc, kv);
+                // small direct terms (Unreal AngleLerp / PositionLerp): remove the last centimetres/degrees the servo
+                // leaves against friction; far too small to push a body into anything
+                var kr = (float)CarSyncLogic.BlendFactor(dt, Plugin.CarServoRotLerpTau.Value);
+                rb.rotation = Quaternion.Slerp(rb.rotation, trot, kr);
+                if (el < 0.5f) rb.position = Vector3.Lerp(rb.position, target, (float)CarSyncLogic.BlendFactor(dt, Plugin.CarServoPosLerpTau.Value));
+                Blends++; Servos++;
             }
             else if (act == CarSyncLogic.Action.Blend)
             {

@@ -27,6 +27,7 @@ namespace OthLan;
 ///   --othlan-toggle t:on|off,...          host: flip CarSync via CarSync.UserToggle (the F7 button's call)
 ///   --othlan-winch tAttach,tDetach        client: attach the own winch to the ground ~12 m ahead, detach later
 ///   --othlan-hostjump t                   host: move the client's car 6 m on the host once (like a game teleport)
+///   --othlan-ram t0:t1                    while driving, from t0 to t1 s: steer at the nearest other car (collision test)
 ///   --othlan-cpmin t:metres,...           host: checkpoint skip threshold override (-1 = config) to exercise soft snaps
 ///   --othlan-contactbox t:metres,...      host: force the car-contact test box (0 = real size) to exercise the contact pause
 ///   --othlan-f7 t1,...                    open the F7 window, screenshot it, close it
@@ -44,6 +45,8 @@ namespace OthLan;
 ///   --othlan-coop look|host:N|join|joinfull  (with --othlan-auto coop) drive the main-menu Local Co-op screen: screenshots
 ///                                         {tag}-coop-menu/-screen/-region/-area.png, then become host (game's own region/area
 ///                                         flow, submitted like the Enter key) or join the first lobby from the list
+///   --othlan-fnetem t:delayMs:jitterMs:stallEveryMs:stallMs,...  Fusion datagrams of this process from t on: delay+jitter
+///                                         per direction, incoming held for stallMs every stallEveryMs (0.1.8; 0:0:0:0:0 = off)
 ///   --othlan-own off|measure|suppress     own-car prediction reset: no hooks / vanilla but measured / phase 2 (default: config)
 ///   (always) {tag}-trace.csv at 20 Hz: outage state, own car, rollback, the host's view of client cars and their inputs
 /// While active it also: sets Application.runInBackground, suppresses the game's own save writes (OverlandSaver.SaveGame,
@@ -61,6 +64,7 @@ internal static unsafe class Autopilot
     static readonly List<(float t, bool on)> Toggles = new();
     static readonly List<(float t, float box)> ContactBoxes = new(); static int _nextBox;
     static float _hostJumpAt = -1;
+    static float _ramFrom = -1, _ramTo = -1, _ramSteer, _ramDist = -1; static bool _ramming; public static int RamContacts; static float _nextRamScan; static FusionPlayer[] _ramCars = Array.Empty<FusionPlayer>();
     static readonly List<(float t, float v)> CpMins = new(); static int _nextCpMin;
     static float _winchAt = -1, _winchOffAt = -1, _winchCheckAt = -1;
     static readonly List<float> F7Shots = new();
@@ -100,6 +104,7 @@ internal static unsafe class Autopilot
     static readonly List<(float t, float dur)> Outages = new(); static int _nextOutage = 0; static float _outageEnd = -1, _outageDelay;
     static readonly List<(float t, string name)> OutShots = new();
     static readonly List<(float t, float loss)> Losses = new(); static int _nextLoss;
+    static readonly List<(float t, int delay, int jitter, int every, int stall)> FNetem = new(); static int _nextFNetem;
     static StreamWriter _trace; static float _nextTrace; static FusionPlayer[] _tracePlayers = Array.Empty<FusionPlayer>(); static float _nextTraceScan;
 
     [DllImport("kernel32", CharSet = CharSet.Unicode)] static extern IntPtr GetCommandLineW();
@@ -156,6 +161,7 @@ internal static unsafe class Autopilot
             foreach (var part in cm.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); CpMins.Add((float.Parse(f[0], ci), float.Parse(f[1], ci))); }
         if (Arg("--othlan-hostjump") is { } hj) _hostJumpAt = float.Parse(hj, ci);
+        if (Arg("--othlan-ram") is { } rm) { var rq = rm.Split(':'); _ramFrom = float.Parse(rq[0], ci); _ramTo = float.Parse(rq[1], ci); }
         if (Arg("--othlan-contactbox") is { } cb)
             foreach (var part in cb.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); ContactBoxes.Add((float.Parse(f[0], ci), float.Parse(f[1], ci))); }
@@ -167,6 +173,7 @@ internal static unsafe class Autopilot
         if (Arg("--othlan-clientid") is { } cid) LanState.SelfTestClientId = cid;
         if (Arg("--othlan-rejoin") is { } rj) _rejoinAt = float.Parse(rj, ci);
         CoopAction = Arg("--othlan-coop");
+        UpdAction = Arg("--othlan-update");   // install | badhash | offline | uptodate | skip (0.1.8 updater, fake endpoint in cfg Update.TestApiUrl)
         if (Arg("--othlan-outage") is { } og)
             foreach (var part in og.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); Outages.Add((float.Parse(f[0], ci), float.Parse(f[1], ci))); }
@@ -176,7 +183,11 @@ internal static unsafe class Autopilot
             foreach (var part in ls.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); Losses.Add((float.Parse(f[0], ci), float.Parse(f[1], ci) / 100f)); }
         Losses.Sort((a, b) => a.t.CompareTo(b.t));
-        if (Outages.Count > 0 || Losses.Count > 0) OutageSim.Install();
+        if (Arg("--othlan-fnetem") is { } fn)
+            foreach (var part in fn.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            { var f = part.Split(':'); FNetem.Add((float.Parse(f[0], ci), int.Parse(f[1], ci), int.Parse(f[2], ci), int.Parse(f[3], ci), int.Parse(f[4], ci))); }
+        FNetem.Sort((a, b) => a.t.CompareTo(b.t));
+        if (Outages.Count > 0 || Losses.Count > 0 || FNetem.Count > 0) OutageSim.Install();
         if (Arg("--othlan-lang") is { } lg)   // realtime t:code[:f7],... : switch the GAME's language (what Settings > Language does), screenshot 1.5 s later
             foreach (var part in lg.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); LangSteps.Add((float.Parse(f[0], ci), f[1], f.Length > 2 && f[2] == "f7")); }
@@ -268,6 +279,12 @@ internal static unsafe class Autopilot
                 *(float*)(data + 8) = 0f;
                 *(float*)(data + 0xC) = 0.9f;
             }
+            else if (_ramming)
+            {   // collision test: full lock toward the nearest other car, steady throttle
+                *(float*)(data + 4) = _ramSteer;
+                *(float*)(data + 8) = 0.7f;
+                *(float*)(data + 0xC) = 0f;
+            }
             else
             {
                 *(float*)(data + 4) = 0.6f * Mathf.Sin(t * 0.5f);         // weave
@@ -343,6 +360,25 @@ internal static unsafe class Autopilot
             else _slowSince = -1;
         }
 
+        _ramming = Driving && rb != null && _ramFrom >= 0 && t >= _ramFrom && t < _ramTo;
+        if (_ramming)
+        {
+            if (now >= _nextRamScan) { _nextRamScan = now + 1f; try { _ramCars = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { } }
+            FusionPlayer best = null; float bd = float.MaxValue;
+            foreach (var fp in _ramCars)
+            {
+                try { if (fp == null || fp.WasCollected || fp.Object == null || fp.Object.HasInputAuthority) continue;
+                      var d = Vector3.Distance(fp.transform.position, rb.position); if (d < bd) { bd = d; best = fp; } } catch { }
+            }
+            if (best != null)
+            {
+                var local = rb.transform.InverseTransformPoint(best.transform.position);
+                _ramSteer = Mathf.Clamp(Mathf.Atan2(local.x, local.z) / 0.5f, -1f, 1f);
+                if (_ramDist >= 6f && bd < 6f) { RamContacts++; Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s ram: closing in on {best.gameObject.name} ({bd:0.0} m, {rb.linearVelocity.magnitude * 3.6f:0} km/h)"); }
+                _ramDist = bd;
+            }
+            else _ramSteer = 0;
+        }
         while (_nextNetem < Netem.Count && Netem[_nextNetem].t <= t)
         {
             var n = Netem[_nextNetem++];
@@ -429,6 +465,13 @@ internal static unsafe class Autopilot
             OutageSim.Loss = Losses[_nextLoss++].loss;
             Plugin.L.LogWarning($"[Autopilot] t={t:0.00}s LOSS {OutageSim.Loss * 100:0}% per direction (Fusion + side channel); lost so far out={OutageSim.LostOut} in={OutageSim.LostIn}");
         }
+        while (_nextFNetem < FNetem.Count && FNetem[_nextFNetem].t <= t)
+        {
+            var f = FNetem[_nextFNetem++];
+            OutageSim.DelayMs = f.delay; OutageSim.JitterMs = f.jitter; OutageSim.StallEveryMs = f.every; OutageSim.StallMs = f.stall;
+            Plugin.L.LogWarning($"[Autopilot] t={t:0.00}s FUSION NETEM delay {f.delay} ms + jitter {f.jitter} ms per direction, incoming stall {f.stall} ms every {f.every} ms; {NetStats.Describe()}");
+        }
+        OutageSim.Pump();
         if (_outageEnd >= 0 && t >= _outageEnd)
         {
             OutageSim.Active = false; _outageEnd = -1;
@@ -483,8 +526,73 @@ internal static unsafe class Autopilot
         if (_menuHideAt >= 0 && now >= _menuHideAt && _menuShotAt < 0) { Overlay.SetShownForTest(false); _menuHideAt = -1; }
         if (_menuQuit >= 0 && now >= _menuQuit) Finish("menu quit (gate-only run)");
         if (CoopAction != null) CoopSteps(now);
+        if (UpdAction != null) UpdSteps(now);
         LangTick(now);
         Scrub(now);
+    }
+
+    // ---------- 0.1.8 updater ----------
+    public static string UpdAction;
+    static int _updStep; static float _updAt = -1;
+    static void UpdShot(string name) { var p = Path.Combine(OutDir, $"{Tag}-upd-{name}.png"); ScreenCapture.CaptureScreenshot(p); Plugin.L.LogWarning($"[Autopilot] update screenshot {p}"); }
+    static void UpdCheck(bool ok, string what) { (ok ? ref _passed : ref _failed)++; Checks.Add($"{(ok ? "PASS" : "FAIL")} update: {what}"); Plugin.L.LogWarning($"[Autopilot] update {(ok ? "PASS" : "FAIL")}: {what}"); }
+    static void UpdSteps(float now)
+    {
+        if (now < Delay) return;
+        var a = UpdAction;
+        if (_updStep == 0) { _updAt = now; _updStep = 1; Checks.Add($"INFO update test '{a}' running {Plugin.Version}"); return; }
+        if (a is "offline" or "uptodate")
+        {
+            var done = Updater.State is Updater.St.Offline or Updater.St.UpToDate or Updater.St.Failed or Updater.St.Available;
+            if (!done && now < _updAt + 45) return;
+            var want = a == "offline" ? Updater.St.Offline : Updater.St.UpToDate;
+            UpdCheck(Updater.State == want, $"state {Updater.State} ({Updater.Detail}), expected {want}");
+            UpdCheck(!Updater.PromptOpen && Updater.PromptFrame < 0, "no prompt");
+            UpdCheck(CoopMenu.MainMenuVisible, "main menu still usable (Local Co-op button visible)");
+            Overlay.SetShownForTest(true); _updStep = 50; _updAt = now + 1f; UpdAction = "_f7"; return;
+        }
+        if (a == "_f7") { if (now < _updAt) return; UpdShot("f7"); Overlay.SetShownForTest(false); UpdAction = null; Finish("update test done"); return; }
+        switch (_updStep)
+        {
+            case 1:
+                if (!Updater.PromptOpen) { if (now > _updAt + 60) { UpdCheck(false, $"prompt never shown (state {Updater.State}: {Updater.Detail})"); UpdAction = null; Finish("update test failed"); } return; }
+                _updStep = 2; _updAt = now + 1.5f; return;
+            case 2:
+                // ScreenCapture writes at the end of the frame: shoot first, act half a second later (0.1.8 u19: the
+                // "prompt" and "failed" shots showed the state after the button press)
+                if (now < _updAt) return;
+                UpdShot("prompt"); _updStep = 21; _updAt = now + 0.5f; return;
+            case 21:
+                if (now < _updAt) return;
+                UpdCheck(Updater.TestButtons() == "upd.install,upd.later,upd.skip", $"buttons {Updater.TestButtons()}");
+                UpdCheck(Updater.TestFocus == 0, $"keyboard/gamepad focus on the first button ({Updater.TestFocus})");
+                bool esOff; try { esOff = UnityEngine.EventSystems.EventSystem.current == null || !UnityEngine.EventSystems.EventSystem.current.enabled; } catch { esOff = true; }
+                UpdCheck(esOff, "game menu navigation paused behind the prompt");
+                if (a == "skip") { Updater.TestPress("upd.skip"); UpdCheck(Plugin.UpdateSkipped.Value == Updater.Latest?.Version, $"skipped version saved '{Plugin.UpdateSkipped.Value}'"); UpdAction = null; Finish("update test done"); return; }
+                Updater.TestPress("upd.install"); _updStep = 3; _updAt = now; return;
+            case 3:
+                if (Updater.State == Updater.St.Downloading && now < _updAt + 240) return;
+                _updStep = 31; _updAt = now + 0.5f; return;   // let the prompt redraw in its new state
+            case 31:
+                if (now < _updAt) return;
+                UpdShot(Updater.State == Updater.St.Ready ? "ready" : "failed"); _updStep = 32; _updAt = now + 0.5f; return;
+            case 32:
+                if (now < _updAt) return;
+                UpdCheck(Updater.PromptOpen, $"prompt shows the result ({Updater.State})");
+                if (a == "install")
+                {
+                    UpdCheck(Updater.State == Updater.St.Ready, $"downloaded + verified ({Updater.State}: {Updater.Detail})");
+                    UpdCheck(Updater.Started == 1, $"updater started ({Updater.Started})");
+                    UpdCheck(Updater.TestButtons() == "upd.quitUpdate,upd.later", $"ready buttons {Updater.TestButtons()}");
+                    UpdAction = null; Finish("update: quit and update"); return;
+                }
+                UpdCheck(Updater.State == Updater.St.Failed && Updater.Detail.Contains("sha256 mismatch"), $"bad hash refused ({Updater.State}: {Updater.Detail})");
+                UpdCheck(Updater.TestButtons() == "upd.retry,upd.later", $"failed buttons {Updater.TestButtons()}");
+                UpdCheck(Updater.Started == 0, $"nothing started ({Updater.Started})");
+                Updater.TestPress("upd.later");
+                UpdCheck(!Updater.PromptOpen && CoopMenu.MainMenuVisible, "prompt closed, menu usable");
+                UpdAction = null; Finish("update test done"); return;
+        }
     }
 
     // ---------- language switching (i18n) ----------
@@ -547,6 +655,27 @@ internal static unsafe class Autopilot
     static void CoopCheck(bool ok, string what) { (ok ? ref _passed : ref _failed)++; Checks.Add($"{(ok ? "PASS" : "FAIL")} coop: {what}"); Plugin.L.LogWarning($"[Autopilot] coop {(ok ? "PASS" : "FAIL")}: {what}"); }
     static string TopState() { try { return FunCore.Managers.HybridSingleton<FunCore.Managers.GameStateManager>.Instance?.PeekState()?.GetIl2CppType()?.Name ?? "null"; } catch { return "?"; } }
 
+    static bool _modsBefore;
+    static GameObject Sel() { try { return UnityEngine.EventSystems.EventSystem.current?.currentSelectedGameObject; } catch { return null; } }
+    static void Select(string what) { var go = CoopMenu.TestObj(what); try { UnityEngine.EventSystems.EventSystem.current?.SetSelectedGameObject(go); } catch { } }
+    static void NavCheck(string what, string expect)
+    {
+        var want = CoopMenu.TestObj(expect); var got = Sel();
+        CoopCheck(want != null && got != null && got.Pointer == want.Pointer, $"{what} (selected '{got?.name ?? "none"}', expected '{want?.name ?? "?"}')");
+    }
+    static void Move(UnityEngine.EventSystems.MoveDirection d)
+    {
+        var es = UnityEngine.EventSystems.EventSystem.current; var go = es?.currentSelectedGameObject; if (go == null) return;
+        var v = d switch { UnityEngine.EventSystems.MoveDirection.Up => new Vector2(0, 1), UnityEngine.EventSystems.MoveDirection.Down => new Vector2(0, -1), UnityEngine.EventSystems.MoveDirection.Left => new Vector2(-1, 0), _ => new Vector2(1, 0) };
+        var ev = new UnityEngine.EventSystems.AxisEventData(es) { moveDir = d, moveVector = v };
+        UnityEngine.EventSystems.ExecuteEvents.Execute<UnityEngine.EventSystems.IMoveHandler>(go, ev, UnityEngine.EventSystems.ExecuteEvents.moveHandler);
+    }
+    static void Submit()
+    {
+        var es = UnityEngine.EventSystems.EventSystem.current; var go = es?.currentSelectedGameObject; if (go == null) return;
+        UnityEngine.EventSystems.ExecuteEvents.Execute<UnityEngine.EventSystems.ISubmitHandler>(go, new UnityEngine.EventSystems.BaseEventData(es), UnityEngine.EventSystems.ExecuteEvents.submitHandler);
+    }
+
     static void CoopSteps(float now)
     {
         if (_coopStep == 0)
@@ -561,7 +690,52 @@ internal static unsafe class Autopilot
         {
             case 1:
                 CoopShot("menu"); CoopCheck(CoopMenu.ButtonLabel.ToLowerInvariant().Contains(Loc.T("coop.button").ToLowerInvariant()), $"Local Co-op button in the main menu (label '{CoopMenu.ButtonLabel}')");
-                _coopStep = 5; _coopAt = now + 1.5f; return;
+                _coopStep = 20; _coopAt = now + 1.5f; return;
+            // ---- 0.1.8: keyboard / gamepad navigation, through the same Move/Submit events the game's UI input module sends
+            case 20:
+                Select("multiplayer"); _coopStep = 21; _coopAt = now + 0.5f; return;
+            case 21:
+                NavCheck("main menu: Multiplayer selected", "multiplayer");
+                Move(UnityEngine.EventSystems.MoveDirection.Down); _coopStep = 22; _coopAt = now + 0.5f; return;
+            case 22:
+                NavCheck("main menu: Down from Multiplayer -> Local Co-op", "coop"); CoopShot("nav-selected");
+                Move(UnityEngine.EventSystems.MoveDirection.Down); _coopStep = 23; _coopAt = now + 0.5f; return;
+            case 23:
+                NavCheck("main menu: Down from Local Co-op -> next game button", "afterCoop");
+                Move(UnityEngine.EventSystems.MoveDirection.Up); _coopStep = 24; _coopAt = now + 0.5f; return;
+            case 24:
+                NavCheck("main menu: Up -> Local Co-op again", "coop");
+                Submit(); _coopStep = 25; _coopAt = now + 2f; return;
+            case 25:
+                CoopCheck(CoopMenu.Open, "Submit (Enter / gamepad A) on Local Co-op opens the screen");
+                if (!CoopMenu.Open) { CoopMenu.OpenScreen(); _coopStep = 2; _coopAt = now + 7f; _coopDeadline = now + 70f; return; }
+                NavCheck("screen: 'Become host' selected first", "host");
+                Move(UnityEngine.EventSystems.MoveDirection.Left); _coopStep = 26; _coopAt = now + 0.5f; return;
+            case 26:
+                NavCheck("screen: Left from 'Become host' -> Mods", "mods");
+                _modsBefore = Plugin.AllowMods.Value; Submit(); _coopStep = 27; _coopAt = now + 0.5f; return;
+            case 27:
+                CoopCheck(Plugin.AllowMods.Value != _modsBefore, $"screen: Submit on Mods toggles it ({_modsBefore} -> {Plugin.AllowMods.Value})"); CoopShot("mods-toggled");
+                Submit(); _coopStep = 28; _coopAt = now + 0.5f; return;
+            case 28:
+                CoopCheck(Plugin.AllowMods.Value == _modsBefore, $"screen: Submit again restores it ({Plugin.AllowMods.Value})");
+                Move(UnityEngine.EventSystems.MoveDirection.Left); _coopStep = 29; _coopAt = now + 0.5f; return;
+            case 29:
+                NavCheck("screen: Left -> Players", "players");
+                Move(UnityEngine.EventSystems.MoveDirection.Up); _coopStep = 30; _coopAt = now + 0.5f; return;
+            case 30:
+                CoopCheck(Sel() != null && Sel().name.StartsWith("Row"), $"screen: Up from the bar -> a lobby row ('{Sel()?.name}')");
+                Move(UnityEngine.EventSystems.MoveDirection.Down); _coopStep = 31; _coopAt = now + 0.5f; return;
+            case 31:
+                NavCheck("screen: Down from the last row -> 'Become host'", "host");
+                Move(UnityEngine.EventSystems.MoveDirection.Right); _coopStep = 32; _coopAt = now + 0.5f; return;
+            case 32:
+                NavCheck("screen: Right -> Add by IP", "add");
+                Move(UnityEngine.EventSystems.MoveDirection.Right); _coopStep = 33; _coopAt = now + 0.5f; return;
+            case 33:
+                NavCheck("screen: Right -> Back", "back"); CoopShot("nav-screen");
+                Move(UnityEngine.EventSystems.MoveDirection.Left); Move(UnityEngine.EventSystems.MoveDirection.Left);
+                _coopStep = 2; _coopAt = now + 5f; _coopDeadline = now + 70f; return;
             case 5:
                 CoopMenu.OpenScreen(); _coopStep = 2; _coopAt = now + 7f; _coopDeadline = now + 70f; return;
             case 2:
@@ -700,7 +874,7 @@ internal static unsafe class Autopilot
         C(l.xMin >= 0 && l.yMin >= 0 && l.xMax <= Screen.width && l.yMax <= Screen.height, $"label inside screen {Screen.width}x{Screen.height}: {R(l)}");
         var expect = PingLogic.ClassifyEcho(PingHud.SmoothedMs, PingHud.TimedOut, Plugin.PingYellowAboveMs.Value, Plugin.PingRedAboveMs.Value);
         C(expect == PingHud.LastLevel, $"colour {PingHud.LastLevel} for '{PingHud.LastText}' (expected {expect})");
-        var expText = PingLogic.LabelText(PingHud.SmoothedMs, PingHud.LossPct, Plugin.PingShowLossFromPct.Value);
+        var expText = PingLogic.LabelText(PingHud.SmoothedMs, PingHud.LossPct, Plugin.PingShowLossFromPct.Value, PingHud.NoLinkS); // 0.1.8 fo1: oracle ignored "no link N s"
         C(expText == PingHud.LastText, $"text '{PingHud.LastText}' (expected '{expText}', loss {PingHud.LossPct:0}%)");
     }
 
@@ -788,10 +962,15 @@ internal static unsafe class Autopilot
         sb.AppendLine($"gate: tier={BuildGate.Tier} outcome={BuildGate.Outcome} fusion={BuildGate.FusionVersion} buildKey={BuildGate.BuildKey} hooks={FusionHooks.Applied} reasons={string.Join(" | ", BuildGate.Reasons)}");
         sb.AppendLine($"slots: role={LanState.Active} clientId={LanState.ClientId} seen=[{string.Join(",", SlotsSeen)}] rejoins={Rejoins} hostTable=[{LanState.Slots.Describe()}]");
         sb.AppendLine($"carsync: local={CarSync.LocalSetting} hostFlag={CarSync.HostFlag} sent={CarSync.PosesSent} recv={CarSync.PosesReceived} rejected={CarSync.PosesRejected} teleportFramesIgnored={CarSync.TeleportsIgnored}");
-        sb.AppendLine($"carsync: snaps={CarSync.Snaps} snapLoopsBroken={CarSync.SnapLoopsBroken} softSnaps={CarSync.SoftSnaps} checkpointsSkipped={CarSync.CheckpointsSkipped} contactPauses={CarSync.ContactPauses} winchPauses={CarSync.WinchPauses} hostJumps={CarSync.HostJumps} blends={CarSync.Blends} modeSwitches={CarSync.ModeSwitches} {string.Join(" ", CarSync.HostStats.Select(kv => $"slot{kv.Key}: {kv.Value}"))}");
+        sb.AppendLine($"carsync: snaps={CarSync.Snaps} snapLoopsBroken={CarSync.SnapLoopsBroken} softSnaps={CarSync.SoftSnaps} checkpointsSkipped={CarSync.CheckpointsSkipped} contactPauses={CarSync.ContactPauses} winchPauses={CarSync.WinchPauses} hostJumps={CarSync.HostJumps} teleports={CarSync.Teleports} rams={RamContacts} blends={CarSync.Blends} servos={CarSync.Servos} modeSwitches={CarSync.ModeSwitches} {string.Join(" ", CarSync.HostStats.Select(kv => $"slot{kv.Key}: {kv.Value}"))}");
+        sb.AppendLine($"carsync v2: frozenClientPoses={CarSync.FrozenClientPoses} jumpsTowardClient={CarSync.JumpsTowardClient} lowConverges={CarSync.LowConverges} acceptsSent={CarSync.AcceptsSent} recoveries={CarSync.Recoveries} (quiet={CarSync.RecoverQuiet} converge={CarSync.RecoverConverge} snap={CarSync.RecoverSnap}) converge times=[{string.Join(",", CarSync.ConvergeTimes.Select(x => x.ToString("0.00", CultureInfo.InvariantCulture)))}]");
+        sb.AppendLine($"netstats: {NetStats.Describe()}");
+        sb.AppendLine($"fusion netem: delayed={OutageSim.Delayed} stalled={OutageSim.Stalled} lostOut={OutageSim.LostOut} lostIn={OutageSim.LostIn}");
+        sb.AppendLine($"menu nav: fixes={CoopMenu.NavFixes} order={CoopMenu.NavInfo}");
         sb.AppendLine(OthLan.FreezeWatch.Describe());
         sb.AppendLine($"owncar: mode={OthLan.OwnCar.Configured} hooks={OthLan.OwnCar.HooksOk} {OthLan.OwnCar.Describe()}");
         sb.AppendLine($"coop: action={CoopAction ?? "-"} state={CoopMenu.State} opens={CoopMenu.Opens} joins={CoopMenu.Joins} hosts={CoopMenu.Hosts} discovery rounds={Discovery.Rounds} replies={Discovery.Replies} via=[{string.Join(",", Discovery.RepliesVia.Select(kv => kv.Key + ":" + kv.Value))}] answered={HostInfo.DiscoveryAnswers} lobby='{HostInfo.LobbyName}' cur={HostInfo.CurPlayers}");
+        sb.AppendLine($"update: running={Plugin.Version} state={Updater.State} detail='{Updater.Detail}' latest={Updater.Latest?.Version ?? "-"} checks={Updater.Checks} started={Updater.Started} skipped='{Plugin.UpdateSkipped.Value}' promptFrame={Updater.PromptFrame}");
         sb.AppendLine($"optional hooks: {string.Join(" | ", OptionalHooks.Status.Select(kv => kv.Key + "=" + kv.Value))}");
         foreach (var c in Checks) sb.AppendLine(c);
         try { File.WriteAllText(Path.Combine(OutDir, $"{Tag}-summary.txt"), sb.ToString()); } catch { }

@@ -7,6 +7,14 @@ using UnityEngine;
 namespace OthLan;
 
 /// <summary>
+/// 0.1.8 netcode v2 (docs/NETCODE-v2.md): the restore moved from the first forward tick (BeforeTick, too late: Fusion had
+/// already copied the host-based state as "previous" for rendering = a visible jump per snapshot) to right after
+/// Simulation.Client.RunClientSideResimulationLoop, and now covers Vehicle Physics Pro's own state (VehicleBase networked
+/// words 0..338 + RestoreSnapshot) and the NetworkRigidbody3D words, not only the rigidbody. The host pose is taken only
+/// on a host-side game move (OTAC), &gt; AcceptMeters (not right after a link gap) or an invalid local state; the 0.1.7
+/// "turned &gt; 30 deg" and "stuck 8 m for 3 s" rules are gone (they were the rollbacks the reporter saw). The client's Fusion
+/// input buffer is enlarged (InputBufferSeconds) so stalls never drop inputs.
+///
 /// 0.1.7 client side, own car (ROADMAP 1.5, open item A).
 ///
 /// Vanilla Fusion (ClientPhysicsSimulation=SimulateAlways): on every server snapshot the client resets its own car to the
@@ -29,7 +37,70 @@ internal static unsafe class OwnCar
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void InstFn(IntPtr self, IntPtr mi);
     static InstFn _brOrig, _brHook, _btOrig, _btHook;
-    public static bool HooksOk;
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void ResimFn(IntPtr self, int ticks, IntPtr mi);
+    static ResimFn _rsOrig, _rsHook;
+    public static bool HooksOk, ResimHookOk;
+    internal static NetworkRunner Runner => _runner;
+    internal static Rigidbody Rb => _rb;
+    internal static FusionPlayer Own => _own;
+    internal static NetworkRigidbody3D Nrb => _nrb;
+
+    /// <summary>A full own-car state (rigidbody, VPP words, NetworkRigidbody words, previous-tick words).</summary>
+    internal sealed class Snap
+    {
+        public bool Ok; public Vector3 P, V, A; public Quaternion Q;
+        public int[] Vb = new int[VbWords], Nrb = new int[64], VbPrev = new int[VbWords], NrbPrev = new int[64];
+        public int VbN, NrbN, VbPrevN, NrbPrevN;
+    }
+    internal static void CaptureInto(Snap s)
+    {
+        s.Ok = false; if (_rb == null || _own == null) return;
+        s.P = _rb.position; s.Q = _rb.rotation; s.V = _rb.linearVelocity; s.A = _rb.angularVelocity;
+        s.VbN = s.NrbN = s.VbPrevN = s.NrbPrevN = 0;
+        if (_vb != null && _vb.Ptr != null && _vb.WordCount >= VbWords) { var src = _vb.Ptr; for (int i = 0; i < VbWords; i++) s.Vb[i] = src[i]; s.VbN = VbWords; }
+        if (_nrb != null && _nrb.Ptr != null) { var n = _nrb.WordCount; if (n > s.Nrb.Length) { s.Nrb = new int[n]; s.NrbPrev = new int[n]; } var src = _nrb.Ptr; for (int i = 0; i < n; i++) s.Nrb[i] = src[i]; s.NrbN = n; }
+        var pv = s.VbN == VbWords ? PrevPtr(_vb) : null; if (pv != null) { for (int i = 0; i < VbWords; i++) s.VbPrev[i] = pv[i]; s.VbPrevN = VbWords; }
+        var pn = s.NrbN > 0 ? PrevPtr(_nrb) : null; if (pn != null) { for (int i = 0; i < s.NrbN; i++) s.NrbPrev[i] = pn[i]; s.NrbPrevN = s.NrbN; }
+        s.Ok = true;
+    }
+    internal static void RestoreFrom(Snap s, bool prevToo)
+    {
+        if (!s.Ok || _rb == null || _own == null) return;
+        if (s.NrbN > 0 && _nrb != null && _nrb.Ptr != null && _nrb.WordCount == s.NrbN) { var d = _nrb.Ptr; for (int i = 0; i < s.NrbN; i++) d[i] = s.Nrb[i]; }
+        _rb.position = s.P; _rb.rotation = s.Q; _rb.linearVelocity = s.V; _rb.angularVelocity = s.A;
+        _own.transform.SetPositionAndRotation(s.P, s.Q);
+        if (s.VbN == VbWords && _vb != null && _vb.Ptr != null) { var d = _vb.Ptr; for (int i = 0; i < VbWords; i++) d[i] = s.Vb[i]; try { _vb.RestoreSnapshot(); } catch { } }
+        if (prevToo)
+        {
+            var pn = s.NrbPrevN > 0 && _nrb != null && _nrb.WordCount == s.NrbPrevN ? PrevPtr(_nrb) : null;
+            var pv = s.VbPrevN == VbWords && _vb != null ? PrevPtr(_vb) : null;
+            if (pn != null) for (int i = 0; i < s.NrbPrevN; i++) pn[i] = s.NrbPrev[i];
+            if (pv != null) for (int i = 0; i < VbWords; i++) pv[i] = s.VbPrev[i];
+        }
+    }
+    internal static bool AcceptingHostPose(double now) => now < _acceptUntil;
+    internal static void MarkRootDirty() { try { if (_nrb != null) _nrb._rootIsDirtyFromInterpolation = true; } catch { } }
+    const string K_Rs = "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)";
+    // VehicleBase (VPP) networked words: m_time .. vehicleSnapshot = [0, 339); words after that belong to subclasses
+    // (gameplay state the host owns) and are never touched.
+    const int VbWords = 339;
+    static int[] _vbBuf = new int[VbWords], _nrbBuf = new int[64];
+    // Fusion's render interpolation for a predicted object goes from meta.Previous (tick T-1) to the current words (T).
+    // The prediction reset copies the host snapshot into BOTH; Previous is refreshed only by the last forward tick of a
+    // frame. In a frame with a resimulation but no forward tick the car was drawn between the host's old pose and ours:
+    // one visible hitch per snapshot. So Previous is captured and put back as well.
+    static int[] _vbPrev = new int[VbWords], _nrbPrev = new int[64]; static int _vbPrevN, _nrbPrevN;
+    public static int PrevRestores, PrevUnavailable;
+    static unsafe int* PrevPtr(NetworkBehaviour b)
+    {
+        if (b == null || b.Ptr == null) return null;
+        if (!b.TryGetSnapshotsBuffers(out var from, out var to, out _)) return null;
+        // Only the local timeframe has to == the live words; then from is meta.Previous.
+        if (to._ptr != (IntPtr)b.Ptr || from._ptr == IntPtr.Zero || from._ptr == to._ptr) return null;
+        return (int*)from._ptr;
+    }
+    static int _vbN, _nrbN; static VehiclePhysics.VehicleBase _vb;
+    public static int LateFixes, ResimRestores, WordRestores, VppRestores, InputBufferPatched, AcceptsDistance, AcceptsOtac, DistanceIgnoredAfterGap;
     const string K_Br = "FusionPlayer::BeforeClientPredictionReset()";
     const string K_Bt = "FusionPlayer::BeforeTick()";
 
@@ -81,7 +152,11 @@ internal static unsafe class OwnCar
         if (pBr == IntPtr.Zero || pBt == IntPtr.Zero) { OptionalHooks.Apply<InstFn>(IntPtr.Zero, null, out _, pBr == IntPtr.Zero ? K_Br : K_Bt); return; }
         _brHook = BeforeResetDetour; _btHook = BeforeTickDetour;
         HooksOk = OptionalHooks.Apply(pBr, _brHook, out _brOrig, K_Br) && OptionalHooks.Apply(pBt, _btHook, out _btOrig, K_Bt);
-        Plugin.L.LogInfo($"[OwnCar] prediction-reset hooks {(HooksOk ? "installed" : "FAILED")}; mode={Configured}");
+        // 0.1.8: restore right after the re-simulation (before forward ticks and the render "previous" copy).
+        var pRs = OptionalHooks.Resolve(typeof(Simulation.Client), "NativeMethodInfoPtr_RunClientSideResimulationLoop_Private_Void_Int32_0", K_Rs);
+        _rsHook = ResimDetour;
+        ResimHookOk = HooksOk && OptionalHooks.Apply(pRs, _rsHook, out _rsOrig, K_Rs);
+        Plugin.L.LogInfo($"[OwnCar] prediction-reset hooks {(HooksOk ? "installed" : "FAILED")}, after-resim restore {(ResimHookOk ? "installed" : "unavailable (restore at the first forward tick, 0.1.7 style)")}; mode={Configured}");
     }
 
     /// <summary>Phase 2 really active right now (client in a LAN session with CarSync on, hooks ok, not in a fallback).</summary>
@@ -97,7 +172,7 @@ internal static unsafe class OwnCar
     /// <summary>Client: the game moved our car to its spawn point (spawn map done).</summary>
     public static bool SpawnSeen => _spawned;
 
-    static double Now => Time.realtimeSinceStartupAsDouble;
+    internal static double Now => Time.realtimeSinceStartupAsDouble;
 
     /// <summary>Main thread, every frame (Overlay.Update): find the own car, phase 1 boost, state text.</summary>
     public static void Tick()
@@ -109,6 +184,7 @@ internal static unsafe class OwnCar
         LastNoLinkAt();
         try { var tk = r.Tick.Raw; if (tk != _gapTick) { _gapTick = tk; _gapTickAt = Now; } else if (Now - _gapTickAt > 0.3) _noLinkAt = Now; } catch { }
         _runner = r;
+        try { PatchInputBuffer(r); } catch (Exception e) { if (_patchedSim == IntPtr.Zero) Plugin.L.LogWarning($"[OwnCar] input buffer: {e.Message}"); _patchedSim = (IntPtr)1; }
         if ((_own == null || _own.Object == null || _ownPtr == IntPtr.Zero) && Time.realtimeSinceStartup >= _nextFind)
         {
             Forget(); _nextFind = Time.realtimeSinceStartup + 1f;
@@ -120,6 +196,9 @@ internal static unsafe class OwnCar
                     _own = fp; _ownPtr = fp.Pointer; _rb = fp.rigidbody ?? fp.vehicleBase?.cachedRigidbody;
                     _spawned = false; _foundAt = Now;
                     _nrb = fp.GetComponent<NetworkRigidbody3D>();
+                    OwnRender.Forget(); OwnRender.OwnNrb = _nrb != null ? _nrb.Pointer : IntPtr.Zero;
+                    _vb = fp.vehicleBase;
+                    try { Plugin.L.LogInfo($"[OwnCar] networked words: VehicleBase {(_vb != null ? _vb.WordCount : -1)} (restoring {VbWords}), NetworkRigidbody3D {(_nrb != null ? _nrb.WordCount : -1)}"); } catch { }
                     if (_nrb != null) { _origSmooth = _nrb.CorrectionSmoothingTime; _origSnap = _nrb.CorrectionSnapDistance; }
                     Plugin.L.LogInfo($"[OwnCar] own car found; phase 2 {(Phase2Active(Now) ? "ACTIVE (client-authoritative)" : "inactive")}, smoothing {_origSmooth} s / snap {_origSnap} m");
                     break;
@@ -146,12 +225,15 @@ internal static unsafe class OwnCar
                 _boostUntil = -1; _nrb.CorrectionSmoothingTime = _origSmooth; _nrb.CorrectionSnapDistance = _origSnap;
             }
         }
+        try { OwnLocal.Frame(); } catch (Exception e) { Plugin.L.LogWarning($"[OwnLocal] {e.Message}"); }
     }
 
     static void Forget()
     {
+        OwnRender.Forget(); OwnLocal.Forget();
         if (_nrb != null && _origSmooth >= 0) { try { _nrb.CorrectionSmoothingTime = _origSmooth; _nrb.CorrectionSnapDistance = _origSnap; } catch { } }
-        _own = null; _ownPtr = IntPtr.Zero; _rb = null; _nrb = null; _captured = false; _boostUntil = -1; _origSmooth = -1;
+        _own = null; _ownPtr = IntPtr.Zero; _rb = null; _nrb = null; _vb = null; _captured = false; _boostUntil = -1; _origSmooth = -1;
+        _acceptUntil = -1; _fallbackUntil = -1; _bigSince = -1; _patchedSim = IntPtr.Zero;
     }
 
     static void BeforeResetDetour(IntPtr self, IntPtr mi)
@@ -160,10 +242,23 @@ internal static unsafe class OwnCar
         {
             if (self != IntPtr.Zero && self == _ownPtr && _rb != null)
             {
+                OwnLocal.RestoreSkip();
+                OwnRender.BeforeSim(_own.transform, _rb);
                 Resets++; LastResetAt = Now;
                 _cp = _rb.position; _cq = _rb.rotation; _cv = _rb.linearVelocity; _ca = _rb.angularVelocity;
                 _capTick = _runner != null ? _runner.Tick.Raw : 0;
+                _vbN = _nrbN = 0;
+                try
+                {
+                    if (_vb != null && _vb.Ptr != null && _vb.WordCount >= VbWords) { var src = _vb.Ptr; for (int i = 0; i < VbWords; i++) _vbBuf[i] = src[i]; _vbN = VbWords; }
+                    if (_nrb != null && _nrb.Ptr != null) { var n = _nrb.WordCount; if (n > _nrbBuf.Length) _nrbBuf = new int[n]; var src = _nrb.Ptr; for (int i = 0; i < n; i++) _nrbBuf[i] = src[i]; _nrbN = n; }
+                    _vbPrevN = _nrbPrevN = 0;
+                    var pv = _vbN == VbWords ? PrevPtr(_vb) : null; if (pv != null) { for (int i = 0; i < VbWords; i++) _vbPrev[i] = pv[i]; _vbPrevN = VbWords; }
+                    var pn = _nrbN > 0 ? PrevPtr(_nrb) : null; if (pn != null) { if (_nrbN > _nrbPrev.Length) _nrbPrev = new int[_nrbN]; for (int i = 0; i < _nrbN; i++) _nrbPrev[i] = pn[i]; _nrbPrevN = _nrbN; }
+                }
+                catch { _vbN = _nrbN = 0; }
                 _captured = true;
+                if (NetTrace.On) NetTrace.Own("R", _capTick, _capTick, 0, SrvTick(), RenderT(), _cp, _cp, _cv, 0, 0);
             }
         }
         catch { _captured = false; }
@@ -174,7 +269,30 @@ internal static unsafe class OwnCar
     {
         try
         {
+            if (self != IntPtr.Zero && self == _ownPtr && _rb != null) OwnRender.BeforeSim(_own.transform, _rb);
             if (_captured && self != IntPtr.Zero && self == _ownPtr && _rb != null && _runner != null && _runner.IsForward)
+            { LateFixes++; _lateNow = true; AfterResim(); _lateNow = false; }
+            if (self != IntPtr.Zero && self == _ownPtr && _rb != null && _runner != null && _runner.IsForward) OwnLocal.OnForwardTick();
+            if (NetTrace.On && self != IntPtr.Zero && self == _ownPtr && _rb != null && _runner != null)
+                NetTrace.Own(_runner.IsForward ? "F" : "f", _runner.Tick.Raw, _capTick, 0, SrvTick(), RenderT(), _rb.position, _rb.position, _rb.linearVelocity, 0, 0);
+        }
+        catch (Exception e) { _captured = false; Plugin.L.LogWarning($"[OwnCar] {e.Message}"); }
+        _btOrig(self, mi);
+    }
+
+    static void ResimDetour(IntPtr self, int ticks, IntPtr mi)
+    {
+        var t0 = _runner != null && NetTrace.On ? _runner.Tick.Raw : 0;
+        _rsOrig(self, ticks, mi);
+        if (NetTrace.On && _runner != null && _rb != null) NetTrace.Own("S", _runner.Tick.Raw, _capTick, ticks, SrvTick(), RenderT(), _rb.position, _rb.position, _rb.linearVelocity, t0, _captured ? 1 : 0);
+        try { if (_captured && _rb != null && _runner != null) { ResimRestores++; AfterResim(); } }
+        catch (Exception e) { _captured = false; Plugin.L.LogWarning($"[OwnCar] after resim: {e.Message}"); }
+    }
+
+    /// <summary>The re-simulation from the host's state is done: compare, then keep our own state (or take the host's).</summary>
+    static void AfterResim()
+    {
+        {
             {
                 _captured = false;
                 var now = Now;
@@ -185,16 +303,15 @@ internal static unsafe class OwnCar
                 if (!_spawned && err > Plugin.OwnAcceptMeters.Value)
                 { _spawned = true; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Plugin.L.LogInfo($"[OwnCar] spawn move {err:0} m seen: phase 2 from now on"); }
                 if (Phase2Active(now)) Decide(now, err, errDeg);
+                NetStats.OnOwnCorrection(err);
             }
         }
-        catch (Exception e) { _captured = false; Plugin.L.LogWarning($"[OwnCar] {e.Message}"); }
-        _btOrig(self, mi);
     }
 
     static void Decide(double now, double err, double errDeg)
     {
-        // Host asked us to take its pose (it moved the car itself: rescue, jack, teleport).
-        if (AcceptRequests != _acceptSeen) { _acceptSeen = AcceptRequests; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; Plugin.L.LogInfo($"[OwnCar] host moved the car: accepting its pose for {Plugin.OwnAcceptSeconds.Value:0.0} s"); }
+        // Host asked us to take its pose (the game moved the car on the host: respawn, rescue, jack, reset upright).
+        if (AcceptRequests != _acceptSeen) { _acceptSeen = AcceptRequests; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; AcceptsOtac++; Plugin.L.LogInfo($"[OwnCar] host moved the car: accepting its pose for {Plugin.OwnAcceptSeconds.Value:0.0} s"); }
         if (now < _acceptUntil) return;
         // Physics blow-up on our side: never keep such a state.
         var bad = !float.IsFinite(_cp.x) || !float.IsFinite(_cp.y) || !float.IsFinite(_cp.z) || _cv.magnitude > 150f || _ca.magnitude > 60f;
@@ -204,19 +321,63 @@ internal static unsafe class OwnCar
             Plugin.L.LogWarning($"[OwnCar] own physics state invalid (v {_cv.magnitude:0} m/s): host-authoritative (phase 1) for {Plugin.OwnFallbackSeconds.Value:0} s");
             return;
         }
-        // The host turned the car by a lot in one go (reset upright, game teleport): take it (else we would undo the reset).
-        // Not right after a link gap: then the host copy turned by itself (repeated input) and is converging back to us.
-        if (errDeg > Plugin.OwnAcceptDegrees.Value && now - LastNoLinkAt() < Plugin.OwnPostOutageSeconds.Value) { PostOutageTurnsIgnored++; }
-        else if (errDeg > Plugin.OwnAcceptDegrees.Value) { _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; Plugin.L.LogInfo($"[OwnCar] host pose turned {errDeg:0} deg: taking it (reset/teleport)"); return; }
-        // Game teleport on the host (huge jump) -> accept at once; host not converging for long -> accept for a moment.
-        if (err > Plugin.OwnAcceptMeters.Value) { _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; Plugin.L.LogInfo($"[OwnCar] host pose {err:0.0} m away: taking it (teleport/rescue)"); return; }
-        if (err > Plugin.OwnStuckMeters.Value) { if (_bigSince < 0) _bigSince = now; else if (now - _bigSince > Plugin.OwnStuckSeconds.Value) { _bigSince = -1; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; Plugin.L.LogWarning($"[OwnCar] host stayed {err:0.0} m away for {Plugin.OwnStuckSeconds.Value:0} s: taking its pose"); return; } }
-        else _bigSince = -1;
-        // Keep our own predicted state.
+        // Very far apart: a game teleport whose OTAC was lost. Not right after a link gap: then the host copy is simply
+        // behind (it braked / extrapolated) and converges to us; taking its pose would be exactly the rollback we avoid.
+        if (OwnCarLogic.TakeHostPose(err, now - LastNoLinkAt(), Plugin.OwnAcceptMeters.Value, Plugin.OwnPostOutageSeconds.Value))
+        { _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; AcceptsDistance++; Plugin.L.LogInfo($"[OwnCar] host pose {err:0.0} m away: taking it (teleport/rescue)"); return; }
+        if (err > Plugin.OwnAcceptMeters.Value) DistanceIgnoredAfterGap++;
+        Restore();
+    }
+
+    /// <summary>Put our own (pre-reset) state back: rigidbody + transform, NetworkRigidbody3D words, VPP state.</summary>
+    static bool _lateNow;
+    static int SrvTick() { try { return _runner != null ? _runner.Simulation.LatestServerTick.Raw : 0; } catch { return 0; } }
+    static float RenderT() { try { return _runner != null ? _runner.LocalRenderTime : -1; } catch { return -1; } }
+
+    static void Restore()
+    {
+        if (NetTrace.On && _runner != null) NetTrace.Own(_lateNow ? "L" : "P", _runner.Tick.Raw, _capTick, 0, SrvTick(), RenderT(), _cp, _rb.position, _cv, Vector3.Distance(_rb.position, _cp), 0);
+        if (_nrbN > 0 && _nrb != null && _nrb.Ptr != null && _nrb.WordCount == _nrbN) { var d = _nrb.Ptr; for (int i = 0; i < _nrbN; i++) d[i] = _nrbBuf[i]; WordRestores++; }
         _rb.position = _cp; _rb.rotation = _cq; _rb.linearVelocity = _cv; _rb.angularVelocity = _ca;
         _own.transform.SetPositionAndRotation(_cp, _cq);
+        if (_vbN == VbWords && _vb != null && _vb.Ptr != null)
+        {
+            var d = _vb.Ptr; for (int i = 0; i < VbWords; i++) d[i] = _vbBuf[i];
+            try { _vb.RestoreSnapshot(); VppRestores++; } catch (Exception e) { if (VppRestores == 0) Plugin.L.LogWarning($"[OwnCar] VPP restore: {e.Message}"); }
+        }
+        // Previous-tick words (render "from"), see _vbPrev.
+        try
+        {
+            var pn = _nrbPrevN > 0 && _nrb != null && _nrb.WordCount == _nrbPrevN ? PrevPtr(_nrb) : null;
+            var pv = _vbPrevN == VbWords && _vb != null ? PrevPtr(_vb) : null;
+            if (pn != null) { for (int i = 0; i < _nrbPrevN; i++) pn[i] = _nrbPrev[i]; PrevRestores++; } else PrevUnavailable++;
+            if (pv != null) for (int i = 0; i < VbWords; i++) pv[i] = _vbPrev[i];
+        }
+        catch { PrevUnavailable++; }
         if (_nrb != null) { try { _nrb.ResetCorrectionOffset(); } catch { } }
         Restores++;
+    }
+
+    // ---- input buffer (0.1.8): Fusion keeps unconfirmed inputs in a buffer of TickRate entries (1 s). A host-to-client
+    // stall of ~0.7 s at 200 ms ping filled it and Fusion dropped our inputs (Player.log "buffer was full").
+    static IntPtr _patchedSim;
+    public static int InputCapacity;
+    static void PatchInputBuffer(NetworkRunner r)
+    {
+        var secs = Plugin.InputBufferSeconds.Value;
+        if (secs <= 0) return;
+        var sim = r.Simulation; if (sim == null || sim.Pointer == _patchedSim) return;
+        _patchedSim = sim.Pointer;
+        var cl = sim.TryCast<Simulation.Client>(); if (cl == null) return;
+        var buf = cl._inputBuffer; if (buf == null) return;
+        var want = OwnCarLogic.InputCapacity(secs, r.TickRate, buf._capacity);
+        if (want > buf._capacity)
+        {
+            var arr = cl._inputArray;
+            if (arr == null || arr.Length < want + 8) cl._inputArray = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<SimulationInput>(want + 8);
+            var old = buf._capacity; buf._capacity = want; InputCapacity = want; InputBufferPatched++;
+            Plugin.L.LogInfo($"[OwnCar] Fusion input buffer {old} -> {want} ticks ({secs:0.#} s at {r.TickRate} Hz): stalls no longer drop inputs");
+        }
     }
 
     public static int PostOutageTurnsIgnored;
@@ -229,6 +390,6 @@ internal static unsafe class OwnCar
     }
 
     public static string Describe() =>
-        $"state={State} postOutageTurnsIgnored={PostOutageTurnsIgnored} resets={Resets} restores={Restores} accepts={Accepts} fallbacks={Fallbacks} boosts={Boosts} " +
+        $"state={State} resets={Resets} restores={Restores} (afterResim={ResimRestores} late={LateFixes} words={WordRestores} vpp={VppRestores} prev={PrevRestores} prevNA={PrevUnavailable}) accepts={Accepts} (otac={AcceptsOtac} dist={AcceptsDistance} distIgnoredAfterGap={DistanceIgnoredAfterGap}) fallbacks={Fallbacks} boosts={Boosts} inputCap={InputCapacity} " +
         $"rollback mean={(ErrSamples > 0 ? SumErr / ErrSamples : 0):0.000} m max={MaxErr:0.00} m >1m={ErrOver1m} >5m={ErrOver5m}";
 }
