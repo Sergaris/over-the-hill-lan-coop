@@ -8,13 +8,15 @@ Thresholds below are **[estimate]** unless stated otherwise.
 - **0.1.7** — ping colours and "no link" label, connection-loss compensation, client-authoritative own car, freeze
   watchdog with auto-rejoin, **Local Co-op** button and LAN lobby list. Verified with scripted runs of 2–4 game
   instances on one PC (outages 1–12 s, 50 % loss, rejoin, full lobby, version gate).
-- **Next (i18n)** — all mod texts follow the game's language live; EN and RU complete, other languages fall back to EN.
+- **0.1.8** — all mod texts follow the game's language live (EN and RU complete, other languages fall back to EN);
+  netcode v4: the client's own car runs on the local clock like single player, other players' cars come from Fusion's
+  interpolation buffer, short freezes are smoothed (all on by default); update checker; five 0.1.7 reports fixed.
+  Measured with scripted runs of 2–4 game instances on one PC with simulated ping and loss, **not yet on two real PCs**.
 
 ## 1. Still to verify in the real world
 
 - Sessions on two or more PCs over Radmin VPN / Hamachi / ZeroTier with real players (3–4 players, real ping
-  150–300 ms). Until then the CarSync "High" threshold stays at 150 ms (it might move to 200 ms to match the yellow
-  ping colour).
+  150–300 ms).
 - Whether LAN broadcast discovery reaches other PCs over each VPN (directed `26.255.255.255` on Radmin,
   `255.255.255.255`, Radmin's neighbour table); behaviour when Radmin falls back to a relay/TCP connection.
   **Add by IP** is the fallback.
@@ -24,12 +26,36 @@ Thresholds below are **[estimate]** unless stated otherwise.
   the same way the menu does).
 - Gamepad navigation on the Local Co-op screen; 1440p/4K UI scale.
 
-## 2. Next steps
+## 0.1.9: finish testing and the netcode (postponed from 0.1.8)
+
+### To test
+- Measurement runs cancelled before 0.1.8: 15 % and 30 % packet loss, 5 % loss with 1–2 s outages, 400 ms ping after
+  the last drawing fix. Repeat every netcode case 2–3 times (today 1–2 runs each; p99 varies up to ×1.5 between runs).
+- The same cases on 0.1.7 for a full comparison (remote view, 400 ms, loss); a solo drive on the same route as reference.
+- 4 players with the new defaults: other players' cars as each observer sees them.
+- Collisions and contact, winch and towing between players with the new modes (passed once each so far).
+- Respawn: moves by the game shorter than 10 m slide smoothly instead of jumping; needs explicit respawn detection.
+- Freeze watchdog and rejoin with the new modes; resimulation cost per frame on slow PCs.
+- Skipped before the 0.1.8 build: a short run with the final defaults, the public DLL in the game, the update check on
+  the final build, config migration from a real 0.1.7 config, the F7 off-confirmation and warning by hand.
+
+### To implement
+- Redundant client state stream with a jitter buffer on the host, Hermite playback and soft convergence, only if real
+  data shows the need (host view today: p99 9–17 cm, 0–3 jumps over 50 cm, none over 2 m).
+- Smoothing or extrapolation of other players' cars during long snapshot gaps (up to 2.3 s seen).
+- Remove or rebuild the unused remote smoothing path (OTH cars have no InterpolationTarget).
+- A safer fallback for F7 "compensation off" than vanilla Fusion, which can throw cars back by 5–16 m under loss.
+- Re-check the Fusion internals the mod depends on after every game update; fallback paths.
+
+### To verify live
+- A real session on two PCs over a virtual LAN, then 3–4 real players.
+- Installer: UAC elevation (install / uninstall / check), the self-contained setup in a real update, the real GitHub
+  download hosts, SmartScreen.
+
+## 2. Later
 
 - More translations: the game ships 16 languages; the mod has EN and RU. A translation is one JSON file
   (`src/OthLan.Plugin/Lang/<code>.json`), checked by the unit tests for missing keys and placeholders.
-- Visual-only extrapolation of other players' cars during short outages (up to 0.5 s, fading), instead of freezing
-  them. Medium risk: frame ordering with the network transform is unverified.
 - Contact box per car model (colliders are measured at runtime today; the config values are fallbacks).
 - Better diagnostics in F7 for "host not found" cases (which discovery channels answered).
 
