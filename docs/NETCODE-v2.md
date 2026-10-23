@@ -21,7 +21,7 @@ remote cars may be slightly off, never one's own car. Ping compensation is ON by
    interpolate from the host-based resimulated pose to the client pose: a visible jump per snapshot. Only the rigidbody
    was restored; Vehicle Physics Pro's own state (wheel spin, suspension, engine, gearbox: `VehicleBase` networked
    snapshot) stayed host-based, so the forces did not match the body.
-3. **Hard corrections by design.** Above 150 ms RTT (Witness's link is ~200 ms) CarSync ran the "High" mode: the host
+3. **Hard corrections by design.** Above 150 ms RTT (a tester's link is ~200 ms) CarSync ran the "High" mode: the host
    simulated freely and snapped every 1.5 s or at 3 m / 25°. The client then took the host pose on several rules
    (host turned > 30°, OTAC "host moved the car" from a jump heuristic, "> 8 m for 3 s"). The 15:12 BepInEx log shows
    11 "host moved the car" and 6 "host pose turned 31–84°" accepts: each is a rollback of the own car.

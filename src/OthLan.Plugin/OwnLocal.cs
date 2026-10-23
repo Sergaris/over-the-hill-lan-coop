@@ -73,6 +73,17 @@ internal static unsafe class OwnLocal
         catch (Exception e) { InputErrors++; if (InputErrors < 4) Plugin.L.LogWarning($"[OwnLocal] input: {e.Message}"); }
     }
 
+    /// <summary>0.1.8.1 live toggle (F7, main thread). Safe mid-session: a pending skipped tick is put back first, then
+    /// the local-clock debt and OwnRender's interpolation (whose tick basis changes with Enabled) start over.</summary>
+    public static void SetEnabled(bool on, string why)
+    {
+        if (Plugin.OwnLocalClock.Value == on) return;
+        try { RestoreSkip(); } catch (Exception e) { Plugin.L.LogWarning($"[OwnLocal] toggle restore: {e.Message}"); }
+        Forget(); OwnRender.Forget();
+        Plugin.OwnLocalClock.Value = on;
+        Plugin.L.LogInfo($"[OwnLocal] own car on the local clock {(on ? "on" : "off")} ({why})");
+    }
+
     public static void Forget() { HasPrev = false; Debt = 0; _skipPending = false; LastStepAt = -1; _lastFrameAt = -1; }
 
     static bool Active(double now) => Enabled && OwnCar.Phase2Active(now) && OwnCar.Rb != null && OwnCar.Own != null && !OwnCar.Rb.isKinematic && !OwnCar.AcceptingHostPose(now);

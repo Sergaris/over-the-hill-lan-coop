@@ -2,6 +2,30 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.1.8.1
+
+Both players need 0.1.8.1. From 0.1.8 or older, update by hand once (download the zip, run OTH-LAN-Setup.exe → Install).
+
+- Game update of 23 October 2026 (Steam build 26136884) is supported. 0.1.8 and 0.1.7 show "incompatible" on it and
+  keep LAN off.
+- F7 on the client: the "Own car without host rollback" switch is back, marked experimental. It turns
+  `[Netcode] OwnLocalClock` on or off for this PC only and works at once, even mid-race. If your own car twitches or
+  jumps, turn it off here.
+- Update check: four-part versions (0.1.8.1) are understood: 0.1.8 < 0.1.8.1 < 0.1.9. 0.1.8 cannot read them, which is
+  why the one manual update is needed.
+
+## 0.1.8.1 — изменения
+
+У обоих игроков должна быть 0.1.8.1. С 0.1.8 и более ранних версий обновитесь вручную один раз (скачайте zip, запустите OTH-LAN-Setup.exe → «Установить»).
+
+- Поддерживается обновление игры от 23 октября 2026 (сборка Steam 26136884). 0.1.8 и 0.1.7 показывают на ней
+  «несовместимо» и не включают LAN.
+- F7 у клиента: вернулся переключатель «Своя машина без отката к хосту», с пометкой «экспериментально». Он
+  включает и выключает `[Netcode] OwnLocalClock` только на этом ПК и действует сразу, даже посреди заезда. Если ваша
+  машина дёргается или прыгает, выключите его здесь.
+- Проверка обновлений: понимает версии из четырёх чисел (0.1.8.1): 0.1.8 < 0.1.8.1 < 0.1.9. 0.1.8 их не понимает,
+  поэтому и нужно одно ручное обновление.
+
 ## 0.1.8
 
 Both players need 0.1.8: a 0.1.7 game is refused with a message that names both versions.

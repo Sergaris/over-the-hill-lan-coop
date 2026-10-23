@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.othlan.lan";
     public const string Name = "OTH-LAN";
-    public const string Version = "0.1.8";
+    public const string Version = "0.1.8.1";
 
     internal static ManualLogSource L;
     internal static ConfigEntry<int> Port;
@@ -128,7 +128,7 @@ public class Plugin : BasePlugin
         }
         OwnFreezeSmoothing = Config.Bind("Netcode", "OwnFreezeSmoothing", true, "Client: when host data stalls, Fusion stops simulating after 1 s of prediction and then catches up in one frame (car stops, then lurches). On = your car keeps moving on screen with its last velocity and the catch-up is blended (render only, never toward the host). Works with ping compensation on and off.");
         RemoteInterpolate = Config.Bind("Netcode", "RemoteInterpolate", true, "Client: other players' cars are shown from Fusion's interpolation buffer (slightly in the past, smooth, never corrected) instead of being predicted. Collisions with them are approximate.");
-        OwnLocalClock = Config.Bind("Netcode", "OwnLocalClock", true, "Client, ping compensation on: your car is stepped by real time like in single player. When the host's data stalls and Fusion stops simulating, your car keeps driving with your last input; Fusion's catch-up ticks are then not applied to it.");
+        OwnLocalClock = Config.Bind("Netcode", "OwnLocalClock", true, "EXPERIMENTAL. Client, ping compensation on: your car is stepped by real time like in single player. When the host's data stalls and Fusion stops simulating, your car keeps driving with your last input; Fusion's catch-up ticks are then not applied to it. If your car twitches, turn this off (also in F7 on the client).");
         if (ConfigVersion.Value < 5)
         {
             // 0.1.8 netcode v4 (own car on the local clock, remote cars interpolated): on by default; dev/test cfgs may

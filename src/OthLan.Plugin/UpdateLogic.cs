@@ -23,32 +23,37 @@ public static class UpdateLogic
     public const int MaxNotes = 600;
     static readonly string[] Hosts = { "api.github.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com" };
 
-    /// <summary>MAJOR.MINOR.PATCH with optional leading v; a "-suffix" (prerelease) or anything else is rejected.</summary>
-    public static bool TryParseVersion(string s, out (int Major, int Minor, int Patch) v)
+    /// <summary>MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH.BUILD (0.1.8.1, since 0.1.8.1) with optional leading v; a missing
+    /// BUILD is 0 (0.1.8 == 0.1.8.0 &lt; 0.1.8.1 &lt; 0.1.9). A "-suffix" (prerelease) or anything else is rejected.</summary>
+    public static bool TryParseVersion(string s, out (int Major, int Minor, int Patch, int Build) v)
     {
         v = default;
         if (string.IsNullOrWhiteSpace(s)) return false;
         s = s.Trim();
         if (s.StartsWith("v", StringComparison.OrdinalIgnoreCase)) s = s.Substring(1);
         var p = s.Split('.');
-        if (p.Length != 3) return false;
-        var n = new int[3];
-        for (int i = 0; i < 3; i++)
+        if (p.Length != 3 && p.Length != 4) return false;
+        var n = new int[4];
+        for (int i = 0; i < p.Length; i++)
         {
             if (p[i].Length == 0 || p[i].Length > 5) return false;
             foreach (var c in p[i]) if (c < '0' || c > '9') return false;
             n[i] = int.Parse(p[i], CultureInfo.InvariantCulture);
         }
-        v = (n[0], n[1], n[2]);
+        v = (n[0], n[1], n[2], n[3]);
         return true;
     }
+
+    /// <summary>Canonical text: 3 parts, a 4th only when it is not 0 (tag v0.1.8.1 -> "0.1.8.1", v0.1.9 -> "0.1.9").</summary>
+    public static string Format((int Major, int Minor, int Patch, int Build) v) =>
+        v.Build != 0 ? $"{v.Major}.{v.Minor}.{v.Patch}.{v.Build}" : $"{v.Major}.{v.Minor}.{v.Patch}";
 
     /// <summary>-1 / 0 / 1; unparsable sorts lowest (never "newer").</summary>
     public static int Compare(string a, string b)
     {
         var okA = TryParseVersion(a, out var va); var okB = TryParseVersion(b, out var vb);
         if (!okA || !okB) return okA == okB ? 0 : okA ? 1 : -1;
-        return va.CompareTo(vb);
+        return Math.Sign(va.CompareTo(vb));
     }
 
     public static bool IsNewer(string candidate, string running) =>
@@ -116,7 +121,7 @@ public static class UpdateLogic
             if (B("prerelease")) { why = "prerelease"; return null; }
             var rel = new Release { Tag = S(r, "tag_name"), Name = S(r, "name"), Notes = S(r, "body") };
             if (!TryParseVersion(rel.Tag, out var v)) { why = $"tag '{Trunc(rel.Tag, 40)}' is not a version"; return null; }
-            rel.Version = $"{v.Major}.{v.Minor}.{v.Patch}";
+            rel.Version = Format(v);
             rel.ZipName = $"OTH-LAN-{rel.Version}.zip";
             if (r.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
                 foreach (var a in assets.EnumerateArray())

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Offline build check on the dev PC (game files never leave it): finds the manifest's hooked methods by name in a
+       new GameAssembly.dll + global-metadata.dat (LibCpp2IL), prints their RVAs and CodeSig, compares with a manifest build. -->
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net6.0</TargetFramework><Nullable>disable</Nullable><RollForward>Major</RollForward></PropertyGroup>
+  <PropertyGroup><BepInExCore>$(MSBuildThisFileDirectory)../../third_party/bepinex-be788/BepInEx/core</BepInExCore></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/OthLan.Plugin/CodeSig.cs" />
+    <Reference Include="$(BepInExCore)/Iced.dll" />
+    <Reference Include="$(BepInExCore)/LibCpp2IL.dll" />
+    <Reference Include="$(BepInExCore)/AssetRipper.Primitives.dll" />
+    <Reference Include="$(BepInExCore)/StableNameDotNet.dll" />
+    <Reference Include="$(BepInExCore)/WasmDisassembler.dll" />
+  </ItemGroup>
+</Project>

@@ -84,6 +84,8 @@
   "gate.unverifiedOn": "Game version not tested: enabled at your own risk.",
   "own.caption": "Own car: {0}",
   "own.client": "simulated on your PC, never pulled back (the host follows you)",
+  "own.localOn": "Own car without host rollback (experimental): ON  (click to turn off)",
+  "own.localOff": "Own car without host rollback (experimental): OFF  (click to turn on)",
   "own.none": "no car",
   "own.soft": "the host's corrections (ping compensation off)",
   "phase.brake": "braking",

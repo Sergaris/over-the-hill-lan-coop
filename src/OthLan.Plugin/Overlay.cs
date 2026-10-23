@@ -254,8 +254,11 @@ public class Overlay : MonoBehaviour
                 var st = OwnCar.State == "client" ? Loc.T("own.client") : OwnCar.State == "soft" ? Loc.T("own.soft") : Loc.T("own.none");
                 GUI.Label(new Rect(x, y, w, 20), Loc.F("own.caption", st));
                 y += 20;
-                // 0.1.8: one switch (ping compensation, the host's). The separate client toggle is gone; what is left
-                // here is what the echo ping cannot show.
+                // 0.1.8.1: the client's own toggle is back (experimental): OwnLocalClock, applied live (OwnLocal.SetEnabled
+                // puts back a pending skipped tick and resets the local clock + render interpolation).
+                if (GUI.Button(new Rect(x, y, w, 26), Plugin.OwnLocalClock.Value ? Loc.T("own.localOn") : Loc.T("own.localOff")))
+                    OwnLocal.SetEnabled(!Plugin.OwnLocalClock.Value, "F7 button");
+                y += 30;
                 GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.netStats", NetStats.Gaps.Over500ms, NetStats.InputDropped, NetStats.Own.Over10cm));
                 y += 22;
             }

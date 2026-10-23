@@ -134,7 +134,7 @@ internal static class CarSync
         DesyncSnapMeters = Plugin.CarDesyncMeters.Value,
         DesyncSnapDegrees = Plugin.CarDesyncDegrees.Value,
         // 0.1.8 netcode v2: one continuous follower for every ping (the 0.1.7 "High" checkpoint mode let the host copy
-        // drift and then snapped it; at Witness's 200 ms that meant frequent big corrections). HighPingMs is ignored.
+        // drift and then snapped it; at a tester's 200 ms that meant frequent big corrections). HighPingMs is ignored.
         HighEnterMs = double.MaxValue, HighExitMs = double.MaxValue,
         CheckpointMinMeters = CheckpointMinOverride >= 0 ? CheckpointMinOverride : Plugin.CarCheckpointMinMeters.Value,
         CheckpointMinDegrees = CheckpointMinOverride >= 0 ? CheckpointMinOverride : Plugin.CarCheckpointMinDegrees.Value,

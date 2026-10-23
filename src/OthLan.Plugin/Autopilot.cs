@@ -224,24 +224,23 @@ internal static unsafe class Autopilot
     static INativeDetour[] _detours;
     public static int SavesSuppressed, InputsInjected, HandbrakeReleases;
 
-    static IntPtr Fn(Type t, string field, long expectRva)
+    // 0.1.8.1: addresses come from the manifest (optionalRva per build, optionalSig on an unverified build) through
+    // OptionalHooks.Resolve, not from constants of one build. Missing/mismatching -> throw: the autopilot (self-test only,
+    // --othlan-auto) aborts and nothing is hooked.
+    static IntPtr Fn(Type t, string field, string key)
     {
-        var f = t.GetField(field, BindingFlags.NonPublic | BindingFlags.Static) ?? throw new MissingFieldException(t.FullName, field);
-        var mi = (IntPtr)f.GetValue(null);
-        if (mi == IntPtr.Zero) throw new InvalidOperationException(field + ": null MethodInfo");
-        var fn = *(IntPtr*)mi;
-        var rva = (long)fn - (long)GetModuleHandleW("GameAssembly.dll");
-        if (rva != expectRva) throw new InvalidOperationException($"{t.Name}.{field}: RVA 0x{rva:X} != expected 0x{expectRva:X}");
+        var fn = OptionalHooks.Resolve(t, field, key);
+        if (fn == IntPtr.Zero) throw new InvalidOperationException($"{key}: {(OptionalHooks.Status.TryGetValue(key, out var st) ? st : "unavailable")}");
         return fn;
     }
 
     static void InstallHooks()
     {
-        var pIn = Fn(typeof(VehicleInput), "NativeMethodInfoPtr_Fusion_INetworkRunnerCallbacks_OnInput_Private_Virtual_Final_New_Void_NetworkRunner_NetworkInput_0", 0xD12920);
-        var pSg = Fn(typeof(OverlandSaver), "NativeMethodInfoPtr_SaveGame_Public_Static_Void_0", 0x929380);
-        var pSs = Fn(typeof(OverlandSaver), "NativeMethodInfoPtr_SaveSettings_Public_Static_Void_0", 0x929750);
-        var pSj = Fn(typeof(OverlandSaver), "NativeMethodInfoPtr_SaveJson_Private_Static_Void_String_String_0", 0x929ED0);
-        var pFow = Fn(typeof(FogOfWarManager), "NativeMethodInfoPtr_SaveFogOfWarTexture_Public_Void_0", 0x918AD0);
+        var pIn = Fn(typeof(VehicleInput), "NativeMethodInfoPtr_Fusion_INetworkRunnerCallbacks_OnInput_Private_Virtual_Final_New_Void_NetworkRunner_NetworkInput_0", "VehicleInput::OnInput(NetworkRunner,NetworkInput)");
+        var pSg = Fn(typeof(OverlandSaver), "NativeMethodInfoPtr_SaveGame_Public_Static_Void_0", "OverlandSaver::SaveGame()");
+        var pSs = Fn(typeof(OverlandSaver), "NativeMethodInfoPtr_SaveSettings_Public_Static_Void_0", "OverlandSaver::SaveSettings()");
+        var pSj = Fn(typeof(OverlandSaver), "NativeMethodInfoPtr_SaveJson_Private_Static_Void_String_String_0", "OverlandSaver::SaveJson(string,string)");
+        var pFow = Fn(typeof(FogOfWarManager), "NativeMethodInfoPtr_SaveFogOfWarTexture_Public_Void_0", "FogOfWarManager::SaveFogOfWarTexture()");
         _inHook = OnInputDetour;
         _sgHook = mi => { SavesSuppressed++; };
         _ssHook = mi => { SavesSuppressed++; };

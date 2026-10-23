@@ -56,13 +56,28 @@ static class Program
     // ---------- 0.1.8 update check (UpdateLogic) ----------
     static void Updates()
     {
-        Eq(UpdateLogic.TryParseVersion("0.1.8", out var v) && v == (0, 1, 8), true, "ver 0.1.8");
-        Eq(UpdateLogic.TryParseVersion("v0.1.10", out var v2) && v2 == (0, 1, 10), true, "ver v-prefix, two digits");
+        Eq(UpdateLogic.TryParseVersion("0.1.8", out var v) && v == (0, 1, 8, 0), true, "ver 0.1.8");
+        Eq(UpdateLogic.TryParseVersion("v0.1.10", out var v2) && v2 == (0, 1, 10, 0), true, "ver v-prefix, two digits");
         Eq(UpdateLogic.TryParseVersion("0.1.9-beta", out _), false, "prerelease suffix rejected");
         Eq(UpdateLogic.TryParseVersion("0.1", out _), false, "two parts rejected");
         Eq(UpdateLogic.TryParseVersion("0.1.x", out _), false, "non-digit rejected");
         Eq(UpdateLogic.TryParseVersion("", out _), false, "empty rejected");
-        Eq(UpdateLogic.TryParseVersion("1.2.3.4", out _), false, "four parts rejected");
+        Eq(UpdateLogic.TryParseVersion("1.2.3.4", out var v4) && v4 == (1, 2, 3, 4), true, "four parts accepted (0.1.8.1)");
+        Eq(UpdateLogic.TryParseVersion("v0.1.8.1", out var v5) && v5 == (0, 1, 8, 1), true, "four parts with v");
+        Eq(UpdateLogic.TryParseVersion("0.1.8.1", out _), true, "running 0.1.8.1 (Plugin.Version) parses");
+        Eq(UpdateLogic.TryParseVersion("1.2.3.4.5", out _), false, "five parts rejected");
+        Eq(UpdateLogic.TryParseVersion("0.1.8.", out _), false, "empty 4th part rejected");
+        Eq(UpdateLogic.TryParseVersion("0.1.8.1-beta", out _), false, "4-part prerelease suffix rejected");
+        Eq(UpdateLogic.Compare("0.1.8", "0.1.8.1"), -1, "0.1.8 < 0.1.8.1");
+        Eq(UpdateLogic.Compare("0.1.8.1", "0.1.9"), -1, "0.1.8.1 < 0.1.9");
+        Eq(UpdateLogic.Compare("v0.1.8.1", "0.1.8.1"), 0, "0.1.8.1 == v0.1.8.1");
+        Eq(UpdateLogic.Compare("0.1.8.0", "0.1.8"), 0, "0.1.8.0 == 0.1.8");
+        Eq(UpdateLogic.Compare("0.1.8.10", "0.1.8.9"), 1, "4th part numeric");
+        Eq(UpdateLogic.IsNewer("0.1.8.1", "0.1.8"), true, "0.1.8.1 newer than 0.1.8");
+        Eq(UpdateLogic.IsNewer("0.1.8", "0.1.8.1"), false, "0.1.8 not newer than 0.1.8.1");
+        Eq(UpdateLogic.IsNewer("0.1.9", "0.1.8.1"), true, "0.1.9 newer than 0.1.8.1");
+        Eq(UpdateLogic.ShouldOffer("0.1.8.1", "0.1.8", "0.1.8.1"), false, "skipped 0.1.8.1 not offered");
+        Eq(UpdateLogic.ShouldOffer("0.1.9", "0.1.8.1", "0.1.8.1"), true, "newer than skipped offered");
         Eq(UpdateLogic.Compare("0.1.10", "0.1.9"), 1, "0.1.10 > 0.1.9 (numeric, not text)");
         Eq(UpdateLogic.Compare("0.2.0", "0.1.99"), 1, "minor beats patch");
         Eq(UpdateLogic.Compare("v0.1.8", "0.1.8"), 0, "equal with v");
@@ -101,6 +116,9 @@ static class Program
             "{\"name\":\"SHA256SUMS.txt\",\"size\":9,\"browser_download_url\":\"https://github.com/" + repo + "/releases/download/" + tag + "/SHA256SUMS.txt\"}]}";
         var rel = UpdateLogic.ParseRelease(J("v0.1.9"), out var why);
         Eq(rel != null && rel.Version == "0.1.9" && rel.ZipSize == 123 && rel.SumsUrl.EndsWith("SHA256SUMS.txt"), true, "release parsed " + why);
+        var rel4 = UpdateLogic.ParseRelease(J("v0.1.9").Replace("0.1.9", "0.1.8.1"), out var why4);
+        Eq(rel4 != null && rel4.Version == "0.1.8.1" && rel4.ZipName == "OTH-LAN-0.1.8.1.zip", true, "4-part release v0.1.8.1 parsed " + why4);
+        Eq(rel4 != null && UpdateLogic.ShouldOffer(rel4.Version, "0.1.8.1", ""), false, "v0.1.8.1 not offered to 0.1.8.1");
         Eq(UpdateLogic.ParseRelease(J("v0.1.9", draft: true), out var w1) == null && w1 == "draft", true, "draft skipped");
         Eq(UpdateLogic.ParseRelease(J("v0.1.9", pre: true), out var w2) == null && w2 == "prerelease", true, "prerelease skipped");
         Eq(UpdateLogic.ParseRelease(J("v0.1.9", repo: "Evil/over-the-hill-lan-coop"), out var w3) == null && w3.StartsWith("no OTH-LAN-0.1.9.zip"), true, "assets from another repo ignored");
