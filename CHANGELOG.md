@@ -2,6 +2,19 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.1
+
+Both players need 0.2.1. From 0.1.8.1+ the in-game updater offers this release.
+
+- Hotfix: OTC3 remote poses applied in LateUpdate after Fusion Render (0.2.0 drew too early).
+- Includes all 0.2.0 netcode changes (SimulateForward, CarRegistry, OTC3 stream).
+
+## 0.2.1 — изменения
+
+У обоих игроков должна быть 0.2.1. С 0.1.8.1+ обновление предложит меню.
+
+- Хотфикс: позы OTC3 в LateUpdate после Fusion Render (в 0.2.0 ставились слишком рано).
+- Все сетевые изменения 0.2.0 (SimulateForward, CarRegistry, поток OTC3).
 ## 0.2.0
 
 Both players need 0.2.0. From 0.1.8.1+ the in-game updater offers this release; from 0.1.8 or older install by hand once.
@@ -333,6 +346,7 @@ gate — PASS. Not verified: two PCs over Radmin with real players, SmartScreen 
 
 Direct-IP LAN mode (F7/F8/F9/F10), host-assigned player slots with rejoin, version gate with code-signature checks
 for untested game builds, ping label, CarSync smoothing, installer with full uninstall.
+
 
 
 

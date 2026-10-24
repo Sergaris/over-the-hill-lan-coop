@@ -35,10 +35,10 @@ internal static class NetFrame
         if (f == _afterFusionFrame) return;
         _afterFusionFrame = f;
         try { OwnClock.FrameAfterFusion(); } catch (Exception e) { LogOnce("ownclock", e); }
-        try { RemoteCarView.AfterFusionRender(); } catch (Exception e) { LogOnce("remoteview", e); }
+        // RemoteCarView must run AFTER NetworkRigidbody.Render (otherwise Fusion overwrites stream poses).
     }
 
-    /// <summary>Overlay.LateUpdate — remote view/wheels; AfterFusion fallback if Render hook did not run.</summary>
+    /// <summary>Overlay.LateUpdate — after Fusion Render: stream view, then wheels; AfterFusion fallback if hook missing.</summary>
     public static void Late()
     {
         if (_afterFusionFrame != Time.frameCount)
@@ -50,6 +50,7 @@ internal static class NetFrame
             }
             AfterFusion();
         }
+        try { RemoteCarView.AfterFusionRender(); } catch (Exception e) { LogOnce("remoteview", e); }
         try { RemoteSmooth.LateTick(); } catch (Exception e) { LogOnce("remotesmooth", e); }
         try { RemoteVisuals.LateTick(); } catch (Exception e) { LogOnce("remotevisuals", e); }
     }
