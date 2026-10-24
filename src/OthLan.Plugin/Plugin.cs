@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.othlan.lan";
     public const string Name = "OTH-LAN";
-    public const string Version = "0.1.9";
+    public const string Version = "0.1.9.1";
 
     internal static ManualLogSource L;
     internal static ConfigEntry<int> Port;
@@ -141,9 +141,9 @@ public class Plugin : BasePlugin
             ConfigVersion.Value = 5;
         }
         OwnLocalFreshInput = Config.Bind("Netcode", "OwnLocalFreshInput", true, "With OwnLocalClock: local steps use your current steering/throttle/brake (read from the game's input code) instead of the last input Fusion took.");
-        SuspendOnContact = Config.Bind("Netcode", "SuspendOnContact", true, "0.1.9: client pauses OwnLocalClock and phase-2 authority while your car touches another player's car, so both sides share the host's collision. Resumes after SuspendResumeSeconds clear.");
-        SuspendOnWinch = Config.Bind("Netcode", "SuspendOnWinch", true, "0.1.9: same pause while a winch involves your car.");
-        SuspendResumeSeconds = Config.Bind("Netcode", "SuspendResumeSeconds", 1f, "0.1.9: how long after the last contact/winch before OwnLocal/phase2 resume (also stretched by RTT).");
+        SuspendOnContact = Config.Bind("Netcode", "SuspendOnContact", true, "0.1.9.1: client pauses OwnLocalClock and phase-2 authority while your car touches another player's car, so both sides share the host's collision. Resumes after SuspendResumeSeconds clear.");
+        SuspendOnWinch = Config.Bind("Netcode", "SuspendOnWinch", true, "0.1.9.1: same pause while a winch involves your car.");
+        SuspendResumeSeconds = Config.Bind("Netcode", "SuspendResumeSeconds", 1f, "0.1.9.1: how long after the last contact/winch before OwnLocal/phase2 resume (also stretched by RTT).");
         OwnFreezeExtrapSeconds = Config.Bind("Netcode", "OwnFreezeExtrapSeconds", 0.5f, "Client: longest freeze your car is drawn moving through (longer freezes hold the last extrapolated pose).");
         OwnFreezeDecaySeconds = Config.Bind("Netcode", "OwnFreezeDecaySeconds", 0.1f, "Client: time constant of the blend after a freeze.");
         OwnFreezeSnapMeters = Config.Bind("Netcode", "OwnFreezeSnapMeters", 2f, "Client: differences larger than this (respawn, rescue) snap instead of blending.");
@@ -161,8 +161,8 @@ public class Plugin : BasePlugin
         RemoteProxySmoothing = Config.Bind("Netcode", "RemoteProxySmoothingSeconds", 0.25f, "Client: Fusion's correction smoothing time for the other players' cars (game default 0.1 s). Remote cars are predicted ahead of the host; when the other driver brakes or turns, the correction is drawn over this time instead of in one frame. 0 = game default.");
         RemoteProxySnapMeters = Config.Bind("Netcode", "RemoteProxySnapMeters", 10f, "Client: corrections of the other players' cars larger than this snap (game default 2 m; respawns and rescues are larger). 0 = game default.");
         RemoteProxySnapDegrees = Config.Bind("Netcode", "RemoteProxySnapDegrees", 90f, "Client: rotation corrections of the other players' cars larger than this snap (game default 30). 0 = game default.");
-        CarSendHz = Config.Bind("CarSync", "SendHz", 30f, "Client: own-car pose packets per second (0.1.9: was 20; higher rate shortens host follower lag).");
-        CarPosePlayback = Config.Bind("CarSync", "PosePlayback", true, "Host: jitter buffer + Hermite for the follower target (0.1.9). Play head holds the newest sample (tick-age still applied in CarSync); delay is jitter-only (~1 packet).");
+        CarSendHz = Config.Bind("CarSync", "SendHz", 30f, "Client: own-car pose packets per second (0.1.9.1: was 20; higher rate shortens host follower lag).");
+        CarPosePlayback = Config.Bind("CarSync", "PosePlayback", true, "Host: jitter buffer + Hermite for the follower target (0.1.9.1). Play head holds the newest sample (tick-age still applied in CarSync); delay is jitter-only (~1 packet).");
         CarHighPingMs = Config.Bind("CarSync", "HighPingMs", 150f, "RTT above which the host switches from continuous blending to checkpoints.");
         CarHysteresisMs = Config.Bind("CarSync", "HysteresisMs", 15f, "Switch to checkpoint mode above HighPingMs+this, back below HighPingMs-this.");
         CarCheckpointSeconds = Config.Bind("CarSync", "CheckpointSeconds", 1.5f, "High-ping mode: force-align every N seconds.");

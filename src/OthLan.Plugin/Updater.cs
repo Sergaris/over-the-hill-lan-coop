@@ -12,8 +12,9 @@ using UnityEngine;
 namespace OthLan;
 
 /// <summary>
-/// 0.1.8 in-game update: once per start (background, 5 s timeout, silent offline) ask GitHub for the latest release of
-/// the public repo; if newer, a prompt in the main menu (Install / Later / Skip this version; mouse, keyboard, gamepad).
+/// 0.1.8 in-game update: once per start (background, 5 s timeout) ask GitHub for the latest release of the public repo;
+/// if newer, a prompt in the main menu (Install / Later / Skip this version; mouse, keyboard, gamepad). 0.1.9.1: if the
+/// check fails (timeout / HTTP / parse), a one-shot Offline notice (Retry / Later) appears in the main menu too.
 /// Install: download OTH-LAN-x.y.z.zip + SHA256SUMS.txt of the same release, sha256 must match (zip and the Setup.exe
 /// inside it), unpack to %TEMP%, start that Setup.exe "update --wait-pid": it replaces the plugin DLL after the game has
 /// exited (the loaded DLL cannot be replaced in place). Rules and parsing: UpdateLogic.
@@ -27,7 +28,7 @@ internal static class Updater
     public static float Progress;                 // 0..1 while downloading
     public static bool PromptOpen => _prompt;
     public static int Checks, Fails, Started;
-    static bool _prompt, _dismissed, _readyShown;
+    static bool _prompt, _dismissed, _readyShown, _offlineShown;
     static int _focus;
     static string _testApi, _testPrefix;
     static UnityEngine.EventSystems.EventSystem _es;
@@ -52,7 +53,17 @@ internal static class Updater
     {
         if (State is St.Checking or St.Downloading) return;
         State = St.Checking; Checks++;
+        _offlineShown = false; // a fresh check may notify again if it still fails
         new Thread(() => CheckJob(delaySeconds).GetAwaiter().GetResult()) { IsBackground = true, Name = "othlan-update" }.Start();
+    }
+
+    /// <summary>F7 / dialog: re-run the GitHub check now.</summary>
+    public static void CheckNow()
+    {
+        Plugin.UpdateSkipped.Value = "";
+        _dismissed = false; _readyShown = false; _offlineShown = false;
+        if (_prompt) Close();
+        CheckAsync(0);
     }
 
     static async Task CheckJob(double delaySeconds)
@@ -225,6 +236,7 @@ internal static class Updater
     {
         St.Ready => new[] { "upd.quitUpdate", "upd.later" },
         St.Failed => new[] { "upd.retry", "upd.later" },
+        St.Offline => new[] { "upd.retry", "upd.later" },
         St.Downloading => new[] { "upd.later" },
         _ => new[] { "upd.install", "upd.later", "upd.skip" },
     };
@@ -233,7 +245,12 @@ internal static class Updater
     {
         switch (key)
         {
-            case "upd.install": case "upd.retry": Install(); _focus = 0; break;
+            case "upd.install": Install(); _focus = 0; break;
+            case "upd.retry":
+                if (State == St.Offline) CheckNow();
+                else Install();
+                _focus = 0;
+                break;
             case "upd.later": Later(); break;
             case "upd.skip": Skip(); break;
             case "upd.quitUpdate": QuitAndUpdate(); break;
@@ -247,6 +264,14 @@ internal static class Updater
         {
             // a finished download re-opens the prompt once (Quit and update), even after "Later" during the download
             if (State == St.Ready && !_readyShown && Latest != null && CoopMenu.MainMenuVisible) { _readyShown = true; _dismissed = false; }
+            else if (State == St.Offline && !_offlineShown && !_dismissed && CoopMenu.MainMenuVisible)
+            {
+                _offlineShown = true; _dismissed = false;
+                _prompt = true; _focus = 0;
+                try { _es = UnityEngine.EventSystems.EventSystem.current; if (_es != null) _es.enabled = false; } catch { _es = null; }
+                Plugin.L.LogInfo($"[Update] offline prompt shown ({Detail})");
+                return;
+            }
             else if (_dismissed || State != St.Available || Latest == null || !CoopMenu.MainMenuVisible) return;
             else if (!UpdateLogic.ShouldOffer(Latest.Version, Plugin.Version, Plugin.UpdateSkipped.Value)) { _dismissed = true; return; }
             _prompt = true; _focus = 0;
@@ -275,15 +300,18 @@ internal static class Updater
 
     public static void OnGUI()
     {
-        if (!_prompt || Latest == null) return;
+        if (!_prompt) return;
+        if (State != St.Offline && Latest == null) return;
         Cursor.visible = true; Cursor.lockState = CursorLockMode.None;
         float w = Mathf.Min(760, Screen.width - 40), h = 330, x = (Screen.width - w) / 2, y = (Screen.height - h) / 2;
         GUI.Box(new Rect(x, y, w, h), ""); GUI.Box(new Rect(x, y, w, h), ""); GUI.Box(new Rect(x, y, w, h), "");
         var title = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold };
         var body = new GUIStyle(GUI.skin.label) { fontSize = 15, wordWrap = true };
-        GUI.Label(new Rect(x + 18, y + 14, w - 36, 32), Loc.F("upd.title", Latest.Version), title);
+        var titleText = State == St.Offline ? Loc.T("upd.titleOffline") : Loc.F("upd.title", Latest.Version);
+        GUI.Label(new Rect(x + 18, y + 14, w - 36, 32), titleText, title);
         string text = State switch
         {
+            St.Offline => Loc.F("upd.bodyOffline", string.IsNullOrEmpty(Detail) ? "—" : Detail),
             St.Downloading => Loc.F("upd.downloading", Progress * 100),
             St.Ready => Loc.T("upd.ready"),
             St.Failed => Loc.F("upd.failed", Detail),
@@ -317,9 +345,6 @@ internal static class Updater
         St.Failed => new Msg("upd.failed", Detail),
         _ => new Msg("upd.st.idle"),
     };
-
-    /// <summary>F7 "Check now": also re-opens the prompt if a newer version is there (even a skipped one).</summary>
-    public static void CheckNow() { _dismissed = false; Plugin.UpdateSkipped.Value = ""; CheckAsync(); }
 
     /// <summary>Self-test: press a prompt button by key.</summary>
     public static bool TestPress(string key) { if (!_prompt) return false; Press(key); return true; }

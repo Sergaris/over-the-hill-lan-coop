@@ -2,6 +2,21 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.1.9.1
+
+Both players need 0.1.9.1. From 0.1.8.1 / 0.1.9 the in-game updater offers this release; from 0.1.8 or older install by hand once.
+
+- Pre-join Modio gate waits for Modio init/auth (terms if needed), retries download, refreshes the livery registry;
+  clearer status. Dialog is an in-game Canvas (no F7). Variant ids show as unsigned. Enter = Download, Esc = Cancel.
+- Update check: if GitHub cannot be reached, a main-menu notice appears (Retry / Later) instead of failing silently.
+
+## 0.1.9.1 — изменения
+
+У обоих игроков должна быть 0.1.9.1. С 0.1.8.1 / 0.1.9 обновление предложит меню; с 0.1.8 и раньше — установите вручную один раз.
+
+- Гейт Modio перед входом ждёт init/auth (условия при необходимости), повторяет скачивание, обновляет реестр
+  раскрасок; понятнее статусы. Диалог — Canvas в игре (без F7). Варианты как unsigned. Enter = Скачать, Esc = Отмена.
+- Проверка обновлений: если GitHub недоступен, уведомление в главном меню (Повторить / Позже), а не тихий сбой.
 ## 0.1.9
 
 Both players need 0.1.9. From 0.1.8.1 the in-game updater offers this release; from 0.1.8 or older install by hand once.
@@ -277,4 +292,5 @@ gate — PASS. Not verified: two PCs over Radmin with real players, SmartScreen 
 
 Direct-IP LAN mode (F7/F8/F9/F10), host-assigned player slots with rejoin, version gate with code-signature checks
 for untested game builds, ping label, CarSync smoothing, installer with full uninstall.
+
 

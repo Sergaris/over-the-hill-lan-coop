@@ -602,15 +602,45 @@ internal static unsafe class Autopilot
         if (now < Delay) return;
         var a = UpdAction;
         if (_updStep == 0) { _updAt = now; _updStep = 1; Checks.Add($"INFO update test '{a}' running {Plugin.Version}"); return; }
-        if (a is "offline" or "uptodate")
+        if (a == "uptodate")
         {
             var done = Updater.State is Updater.St.Offline or Updater.St.UpToDate or Updater.St.Failed or Updater.St.Available;
             if (!done && now < _updAt + 45) return;
-            var want = a == "offline" ? Updater.St.Offline : Updater.St.UpToDate;
-            UpdCheck(Updater.State == want, $"state {Updater.State} ({Updater.Detail}), expected {want}");
+            UpdCheck(Updater.State == Updater.St.UpToDate, $"state {Updater.State} ({Updater.Detail}), expected UpToDate");
             UpdCheck(!Updater.PromptOpen && Updater.PromptFrame < 0, "no prompt");
             UpdCheck(CoopMenu.MainMenuVisible, "main menu still usable (Local Co-op button visible)");
             Overlay.SetShownForTest(true); _updStep = 50; _updAt = now + 1f; UpdAction = "_f7"; return;
+        }
+        if (a == "offline")
+        {
+            // 0.1.9.1: offline is no longer silent — main-menu notice with Retry / Later
+            if (_updStep == 1)
+            {
+                if (Updater.State != Updater.St.Offline && now < _updAt + 45) return;
+                if (Updater.State != Updater.St.Offline)
+                { UpdCheck(false, $"state {Updater.State} ({Updater.Detail}), expected Offline"); UpdAction = null; Finish("update test failed"); return; }
+                if (!Updater.PromptOpen)
+                {
+                    if (now > _updAt + 60) { UpdCheck(false, $"offline prompt never shown ({Updater.Detail})"); UpdAction = null; Finish("update test failed"); }
+                    return;
+                }
+                UpdCheck(true, $"state Offline ({Updater.Detail})");
+                UpdCheck(Updater.TestButtons() == "upd.retry,upd.later", $"offline buttons {Updater.TestButtons()}");
+                _updStep = 2; _updAt = now + 1.5f; return;
+            }
+            if (_updStep == 2)
+            {
+                if (now < _updAt) return;
+                UpdShot("offline"); _updStep = 21; _updAt = now + 0.5f; return;
+            }
+            if (_updStep == 21)
+            {
+                if (now < _updAt) return;
+                Updater.TestPress("upd.later");
+                UpdCheck(!Updater.PromptOpen, "offline prompt closed after Later");
+                UpdCheck(CoopMenu.MainMenuVisible, "main menu still usable (Local Co-op button visible)");
+                Overlay.SetShownForTest(true); _updStep = 50; _updAt = now + 1f; UpdAction = "_f7"; return;
+            }
         }
         if (a == "_f7") { if (now < _updAt) return; UpdShot("f7"); Overlay.SetShownForTest(false); UpdAction = null; Finish("update test done"); return; }
         switch (_updStep)
