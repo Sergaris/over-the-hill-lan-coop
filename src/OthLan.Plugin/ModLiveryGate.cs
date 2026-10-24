@@ -9,7 +9,7 @@ namespace OthLan;
 
 /// <summary>
 /// Pre-join gate: host requires Modio liveries the client lacks → in-game Canvas dialog (game fonts/buttons)
-/// with Download / Cancel. Download is driven by <see cref="ModLiveryBridge"/>.
+/// with Download / Join without mods / Cancel. Download is driven by <see cref="ModLiveryBridge"/>.
 /// </summary>
 internal static class ModLiveryGate
 {
@@ -19,21 +19,25 @@ internal static class ModLiveryGate
     static List<ModLiveryGateLogic.ModRef> _required = new();
     static Action _onReady;
     static Action _onCancel;
+    static Action _onJoinWithout;
 
     static GameObject _root;
     static TMP_Text _title, _body, _list, _status;
-    static UIButtonSelector _dlBtn, _cancelBtn;
+    static UIButtonSelector _dlBtn, _skipBtn, _cancelBtn;
     static int _locGen = -1;
 
     public static bool Active => State != St.Idle;
 
-    /// <summary>Show the gate. <paramref name="onReady"/> runs on the main thread when every required mod is local.</summary>
+    /// <summary>
+    /// Show the gate. <paramref name="onReady"/> = all mods local; <paramref name="onJoinWithout"/> = join with
+    /// mods disabled for this client; <paramref name="onCancel"/> = abort join.
+    /// </summary>
     public static void Begin(IReadOnlyList<ModLiveryGateLogic.ModRef> required, IReadOnlyList<ModLiveryGateLogic.ModRef> missing,
-        Action onReady, Action onCancel)
+        Action onReady, Action onCancel, Action onJoinWithout = null)
     {
         _required = required != null ? new List<ModLiveryGateLogic.ModRef>(required) : new();
         _missing = missing != null ? new List<ModLiveryGateLogic.ModRef>(missing) : new();
-        _onReady = onReady; _onCancel = onCancel;
+        _onReady = onReady; _onCancel = onCancel; _onJoinWithout = onJoinWithout;
         State = St.Prompt;
         Plugin.L.LogInfo($"[ModLivery] gate: {_missing.Count} missing of {_required.Count} required");
         // Do NOT Overlay.Show() — that opens F7. This gate is its own in-game Canvas.
@@ -52,6 +56,19 @@ internal static class ModLiveryGate
         try { c?.Invoke(); } catch (Exception e) { Plugin.L.LogWarning($"[ModLivery] cancel: {e.Message}"); }
     }
 
+    /// <summary>Join the host without waiting for Modio liveries (client session AllowMods=false).</summary>
+    public static void JoinWithoutMods()
+    {
+        if (State == St.Idle) return;
+        ModLiveryBridge.AbortDownload();
+        State = St.Idle;
+        var skip = _onJoinWithout ?? _onReady;
+        Clear();
+        DestroyUi();
+        Plugin.L.LogInfo("[ModLivery] gate: joining without mods");
+        try { skip?.Invoke(); } catch (Exception e) { Plugin.L.LogError($"[ModLivery] join without mods: {e}"); }
+    }
+
     /// <summary>Self-test / automation: same as pressing Download in the dialog.</summary>
     public static void StartDownload()
     {
@@ -63,7 +80,8 @@ internal static class ModLiveryGate
 
     static void Clear()
     {
-        _missing.Clear(); _required.Clear(); _onReady = null; _onCancel = null;
+        _missing.Clear(); _required.Clear();
+        _onReady = null; _onCancel = null; _onJoinWithout = null;
     }
 
     public static void Tick()
@@ -86,14 +104,13 @@ internal static class ModLiveryGate
             }
             if (ModLiveryBridge.DownloadPhase == ModLiveryBridge.Phase.Failed)
             {
-                State = St.Prompt; // allow retry
+                State = St.Prompt; // allow retry / join without
                 RefreshUi();
                 return;
             }
             RefreshUiStatusOnly();
         }
 
-        // Keyboard / gamepad while the Canvas is up
         try
         {
             var kb = UnityEngine.InputSystem.Keyboard.current;
@@ -117,7 +134,7 @@ internal static class ModLiveryGate
         UnityEngine.Object.DontDestroyOnLoad(_root);
         var canvas = _root.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.sortingOrder = 800; // above Local Co-op (500) and most game HUD
+        canvas.sortingOrder = 800;
         var sc = _root.AddComponent<CanvasScaler>();
         sc.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
         sc.referenceResolution = new Vector2(1920, 1080);
@@ -127,7 +144,7 @@ internal static class ModLiveryGate
         var dim = Rect(_root.transform, "Dim", Vector2.zero, new Vector2(4000, 3000));
         dim.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.6f);
 
-        var panel = Rect(_root.transform, "Panel", Vector2.zero, new Vector2(920, 560));
+        var panel = Rect(_root.transform, "Panel", Vector2.zero, new Vector2(960, 600));
         panel.AddComponent<Image>().color = new Color(0.07f, 0.07f, 0.08f, 0.96f);
         var p = panel.transform;
 
@@ -139,16 +156,19 @@ internal static class ModLiveryGate
         }
         catch { }
 
-        _title = MkText(p, "Title", new Vector2(0, 230), new Vector2(860, 48), 36, TextAlignmentOptions.Center, font, col);
-        _body = MkText(p, "Body", new Vector2(0, 170), new Vector2(860, 64), 22, TextAlignmentOptions.Center, font, col);
+        _title = MkText(p, "Title", new Vector2(0, 250), new Vector2(900, 48), 36, TextAlignmentOptions.Center, font, col);
+        _body = MkText(p, "Body", new Vector2(0, 185), new Vector2(900, 72), 22, TextAlignmentOptions.Center, font, col);
         _body.color = new Color(col.r, col.g, col.b, 0.85f);
-        _list = MkText(p, "List", new Vector2(0, 20), new Vector2(860, 220), 22, TextAlignmentOptions.Left, font, col);
-        _status = MkText(p, "Status", new Vector2(0, -120), new Vector2(860, 48), 22, TextAlignmentOptions.Center, font, col);
+        _list = MkText(p, "List", new Vector2(0, 30), new Vector2(900, 220), 22, TextAlignmentOptions.Left, font, col);
+        _status = MkText(p, "Status", new Vector2(0, -110), new Vector2(900, 48), 22, TextAlignmentOptions.Center, font, col);
         _status.color = new Color(1f, 0.85f, 0.4f, 1f);
 
-        _dlBtn = MkButton(p, "Download", new Vector2(-200, -210), new Vector2(340, 64));
-        _cancelBtn = MkButton(p, "Cancel", new Vector2(200, -210), new Vector2(340, 64));
+        // Three actions: Download | Join without mods | Cancel
+        _dlBtn = MkButton(p, "Download", new Vector2(-310, -230), new Vector2(280, 64));
+        _skipBtn = MkButton(p, "JoinWithout", new Vector2(0, -230), new Vector2(280, 64));
+        _cancelBtn = MkButton(p, "Cancel", new Vector2(310, -230), new Vector2(280, 64));
         if (_dlBtn != null) _dlBtn.add_OnPointerClickOrSubmit(Click(StartDownload));
+        if (_skipBtn != null) _skipBtn.add_OnPointerClickOrSubmit(Click(JoinWithoutMods));
         if (_cancelBtn != null) _cancelBtn.add_OnPointerClickOrSubmit(Click(Cancel));
         if (_dlBtn == null || _cancelBtn == null)
             Plugin.L.LogWarning("[ModLivery] game buttons unavailable — use Enter=Download, Esc=Cancel");
@@ -234,7 +254,6 @@ internal static class ModLiveryGate
             for (int i = 0; i < n; i++)
             {
                 var m = _missing[i];
-                // StableHash SubIds are signed Int32 (can look "negative"); show unsigned hex-ish decimal as game stores them.
                 var subLabel = m.SubId == 0 ? Loc.F("modGate.item", m.Id)
                     : Loc.F("modGate.itemSub", m.Id, unchecked((uint)m.SubId).ToString());
                 sb.Append("• ").Append(subLabel).Append('\n');
@@ -243,8 +262,10 @@ internal static class ModLiveryGate
             _list.text = sb.ToString();
         }
         SetLabel(_dlBtn, Loc.T("modGate.download"));
+        SetLabel(_skipBtn, Loc.T("modGate.joinWithout"));
         SetLabel(_cancelBtn, Loc.T("modGate.cancel"));
         if (_dlBtn != null) _dlBtn.gameObject.SetActive(State == St.Prompt);
+        if (_skipBtn != null) _skipBtn.gameObject.SetActive(true); // available during download too
         RefreshUiStatusOnly();
     }
 
@@ -275,6 +296,6 @@ internal static class ModLiveryGate
             _root = null;
         }
         _title = _body = _list = _status = null;
-        _dlBtn = _cancelBtn = null;
+        _dlBtn = _skipBtn = _cancelBtn = null;
     }
 }

@@ -5,7 +5,7 @@
     <TargetFramework>net6.0</TargetFramework>
     <AssemblyName>OthLan</AssemblyName>
     <RootNamespace>OthLan</RootNamespace>
-    <Version>0.1.9.1</Version>
+    <Version>0.1.9.2</Version>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>disable</Nullable>

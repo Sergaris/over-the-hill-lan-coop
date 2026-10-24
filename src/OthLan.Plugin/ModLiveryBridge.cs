@@ -7,21 +7,24 @@ namespace OthLan;
 /// <summary>
 /// IL2CPP bridge for Modio livery mods: collect host requirements, local readiness, temp-subscribe.
 /// Owner of game API calls for the pre-join mod gate; wire format stays in <see cref="ModLiveryGateLogic"/>.
-/// Download is a small state machine: init → auth → RequestTempMod (with retries) → Refresh until ready.
+/// Download: init → auth → <see cref="ModManager.AddTempModAsync"/> (real install) + RequestTempMod once →
+/// Refresh / OnRegistryChanged until <see cref="ModLiveryService.TryGetLivery"/>.
 /// </summary>
 internal static class ModLiveryBridge
 {
     public enum Phase { Idle, Ensuring, Waiting, Done, Failed }
 
     public static Phase DownloadPhase { get; private set; } = Phase.Idle;
-    /// <summary>Short status for the gate UI (already localized keys or plain progress).</summary>
+    /// <summary>Short status for the gate UI (localized key).</summary>
     public static string StatusKey { get; private set; } = "";
     public static string StatusArg { get; private set; } = "";
 
-    static float _nextRefresh, _nextRetry, _ensureDeadline, _waitDeadline;
+    static float _nextRefresh, _nextRetry, _ensureDeadline, _waitDeadline, _nextDiag;
     static List<ModLiveryGateLogic.ModRef> _target = new();
     static readonly HashSet<long> _asked = new();
     static int _ensureKicks, _retries;
+    static bool _registryHooked;
+    static Il2CppSystem.Action _onRegistry;
 
     /// <summary>Host: unique equipped mod liveries from the local profile (and session RuntimePlayer when available).</summary>
     public static List<ModLiveryGateLogic.ModRef> CollectHostRequired()
@@ -46,7 +49,9 @@ internal static class ModLiveryBridge
                     if (string.IsNullOrEmpty(kv.Value)) continue;
                     var parsed = ModLiveryGateLogic.Parse(kv.Value);
                     if (parsed.Count > 0) { foreach (var p in parsed) Add(p.Id, p.SubId); continue; }
+                    // Profile map key = car name; TryGetEquippedIds(carName, …) is the game's path.
                     if (ModLiveryEquipper.TryGetEquippedIds(kv.Key, out var id, out var sub)) Add(id, sub);
+                    else if (ModLiveryEquipper.TryParseKey(kv.Value, out id, out sub)) Add(id, sub);
                 }
             }
         }
@@ -75,7 +80,10 @@ internal static class ModLiveryBridge
         {
             var svc = ModManager.Instance?.Liveries;
             if (svc == null) return false;
-            return svc.TryGetLivery(m.Id, m.SubId, out _);
+            if (svc.TryGetLivery(m.Id, m.SubId, out _)) return true;
+            // Exact pair missing: if the mod is installed under another SubId, still not ready for the host's paint,
+            // but log once so we can see registry vs wire mismatch.
+            return false;
         }
         catch { return false; }
     }
@@ -90,10 +98,12 @@ internal static class ModLiveryBridge
         _asked.Clear();
         _ensureKicks = _retries = 0;
         _nextRetry = 0;
+        _nextDiag = 0;
         StatusKey = "modGate.boot"; StatusArg = "";
         DownloadPhase = Phase.Ensuring;
         _ensureDeadline = Time.realtimeSinceStartup + 45f;
         _waitDeadline = 0;
+        HookRegistry();
         Plugin.L.LogInfo($"[ModLivery] download begin: {ModLiveryGateLogic.Format(_target)}");
         KickEnsure();
     }
@@ -106,6 +116,43 @@ internal static class ModLiveryBridge
         DownloadPhase = Phase.Idle;
         _target.Clear(); _asked.Clear();
         StatusKey = ""; StatusArg = "";
+        UnhookRegistry();
+    }
+
+    static void HookRegistry()
+    {
+        if (_registryHooked) return;
+        try
+        {
+            var svc = ModManager.Instance?.Liveries;
+            if (svc == null) return;
+            _onRegistry = (Il2CppSystem.Action)(() =>
+            {
+                try
+                {
+                    // Force a re-check on next tick; Refresh* may already have run inside the game.
+                    _nextRefresh = 0;
+                }
+                catch { }
+            });
+            svc.add_OnRegistryChanged(_onRegistry);
+            _registryHooked = true;
+            Plugin.L.LogInfo("[ModLivery] hooked Liveries.OnRegistryChanged");
+        }
+        catch (Exception e) { Plugin.L.LogWarning($"[ModLivery] registry hook: {e.Message}"); }
+    }
+
+    static void UnhookRegistry()
+    {
+        if (!_registryHooked) return;
+        try
+        {
+            var svc = ModManager.Instance?.Liveries;
+            if (svc != null && _onRegistry != null) svc.remove_OnRegistryChanged(_onRegistry);
+        }
+        catch { }
+        _registryHooked = false;
+        _onRegistry = null;
     }
 
     static void KickEnsure()
@@ -130,16 +177,17 @@ internal static class ModLiveryBridge
             if (!mm.IsAuthenticated)
             {
                 StatusKey = "modGate.auth";
-                // Silent first; then with terms UI so the player can accept if needed.
                 try { mm.TrySilentBootAuthenticationAsync(); } catch (Exception e) { Plugin.L.LogWarning($"[ModLivery] silent auth: {e.Message}"); }
                 try { mm.EnsureAuthenticatedAsync(_ensureKicks > 2); } catch (Exception e) { Plugin.L.LogWarning($"[ModLivery] auth: {e.Message}"); }
                 return;
             }
+            HookRegistry();
             StatusKey = "modGate.requesting";
-            AskMissing();
+            AskMissing(forceAsync: true);
             DownloadPhase = Phase.Waiting;
             _waitDeadline = Time.realtimeSinceStartup + 180f;
-            _nextRetry = Time.realtimeSinceStartup + 6f;
+            _nextRetry = Time.realtimeSinceStartup + 10f;
+            _nextDiag = Time.realtimeSinceStartup + 5f;
         }
         catch (Exception e)
         {
@@ -149,35 +197,58 @@ internal static class ModLiveryBridge
         }
     }
 
-    static void AskMissing()
+    /// <summary>
+    /// Queue installs. <see cref="ModManager.RequestTempMod"/> alone often no-ops when the id is already in
+    /// <c>requestedTempMods</c> after boot — <see cref="ModManager.AddTempModAsync"/> is the real installer.
+    /// </summary>
+    static void AskMissing(bool forceAsync)
     {
         var mm = ModManager.Instance;
         if (mm == null) return;
         var still = MissingOf(_target);
         foreach (var m in still)
         {
-            if (m.Id == 0 || !_asked.Add(m.Id)) continue;
-            try
+            if (m.Id == 0) continue;
+            var first = _asked.Add(m.Id);
+            if (first)
             {
-                mm.RequestTempMod(m.Id);
-                Plugin.L.LogInfo($"[ModLivery] RequestTempMod {m.Id}");
+                try
+                {
+                    mm.RequestTempMod(m.Id);
+                    Plugin.L.LogInfo($"[ModLivery] RequestTempMod {m.Id}");
+                }
+                catch (Exception e) { Plugin.L.LogWarning($"[ModLivery] RequestTempMod {m.Id}: {e.Message}"); }
             }
-            catch (Exception e) { Plugin.L.LogWarning($"[ModLivery] RequestTempMod {m.Id}: {e.Message}"); }
-        }
-        // Re-ask already-asked ids that are still missing (Modio sometimes drops the first request).
-        if (_retries > 0)
-        {
-            var ids = new HashSet<long>();
-            foreach (var m in still)
+            if (first || forceAsync)
             {
-                if (m.Id == 0 || !ids.Add(m.Id)) continue;
-                try { mm.RequestTempMod(m.Id); Plugin.L.LogInfo($"[ModLivery] RequestTempMod retry {m.Id} (#{_retries})"); }
-                catch (Exception e) { Plugin.L.LogWarning($"[ModLivery] retry {m.Id}: {e.Message}"); }
+                try
+                {
+                    // Private in game C#, public on the Il2CppInterop stub — this actually starts the temp install.
+                    _ = mm.AddTempModAsync(m.Id);
+                    Plugin.L.LogInfo($"[ModLivery] AddTempModAsync {m.Id}" + (first ? "" : $" (retry #{_retries})"));
+                }
+                catch (Exception e) { Plugin.L.LogWarning($"[ModLivery] AddTempModAsync {m.Id}: {e.Message}"); }
             }
         }
         try { mm.Liveries?.Refresh(); } catch { }
         try { mm.Liveries?.RefreshLocalLiveries(); } catch { }
         try { mm.Liveries?.RefreshAvailability(); } catch { }
+    }
+
+    static void LogDiag(IReadOnlyList<ModLiveryGateLogic.ModRef> missing)
+    {
+        try
+        {
+            var svc = ModManager.Instance?.Liveries;
+            if (svc == null) { Plugin.L.LogWarning("[ModLivery] diag: Liveries null"); return; }
+            foreach (var m in missing)
+            {
+                var exact = svc.TryGetLivery(m.Id, m.SubId, out _);
+                var any0 = svc.TryGetLivery(m.Id, 0, out _);
+                Plugin.L.LogInfo($"[ModLivery] diag id={m.Id} wantSub={m.SubId} exact={exact} sub0={any0}");
+            }
+        }
+        catch (Exception e) { Plugin.L.LogWarning($"[ModLivery] diag: {e.Message}"); }
     }
 
     /// <summary>Main thread: boot / auth / retries / refresh while a download is active.</summary>
@@ -225,24 +296,32 @@ internal static class ModLiveryBridge
         {
             DownloadPhase = Phase.Done;
             StatusKey = ""; StatusArg = "";
+            UnhookRegistry();
             Plugin.L.LogInfo("[ModLivery] download done — all required liveries local");
             return;
+        }
+
+        if (now >= _nextDiag)
+        {
+            _nextDiag = now + 15f;
+            LogDiag(missing);
         }
 
         if (now > _waitDeadline)
         {
             DownloadPhase = Phase.Failed;
             StatusKey = "modGate.timeout";
+            LogDiag(missing);
             Plugin.L.LogWarning("[ModLivery] download timeout — still missing " + ModLiveryGateLogic.Format(missing));
             return;
         }
 
         if (now >= _nextRetry)
         {
-            _nextRetry = now + 8f;
+            _nextRetry = now + 12f;
             _retries++;
-            _asked.Clear(); // allow fresh RequestTempMod for every still-missing id
-            AskMissing();
+            // Do not clear _asked: RequestTempMod is one-shot; keep driving AddTempModAsync.
+            AskMissing(forceAsync: true);
         }
     }
 

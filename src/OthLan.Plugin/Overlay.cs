@@ -545,6 +545,14 @@ public class Overlay : MonoBehaviour
                             LanState.Armed = LanRole.Off; LanState.Watching = false;
                             LanState.Status("status.modsCancelled");
                             Show();
+                        },
+                        () =>
+                        {
+                            // Join without waiting for Modio: this client's session reports AllowMods=false.
+                            _joinAllowMods = false;
+                            Plugin.L.LogInfo("[LAN] joining without host liveries (AllowMods=false for this client)");
+                            LanState.Status("status.modsSkipped", missing.Count);
+                            FinishClientJoin(ipP, portP, areaPending);
                         });
                     return;
                 }

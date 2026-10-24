@@ -587,6 +587,8 @@ internal static unsafe class Autopilot
         {
             var act = ModGateAction; ModGateAction = null;
             if (act.Equals("download", StringComparison.OrdinalIgnoreCase)) ModLiveryGate.StartDownload();
+            else if (act.Equals("joinwithout", StringComparison.OrdinalIgnoreCase) || act.Equals("skip", StringComparison.OrdinalIgnoreCase))
+                ModLiveryGate.JoinWithoutMods();
             else ModLiveryGate.Cancel();
             Checks.Add($"INFO realtime {now:0}s mod gate answered '{act}'");
         }

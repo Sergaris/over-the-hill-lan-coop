@@ -185,7 +185,7 @@ static class Program
     static bool InstallUnityLibs(string game, string libsName, string dest, string expectSha)
     {
         Log.Info("GET " + UpdateLogic.LatestApi);
-            Http.DefaultRequestHeaders.UserAgent.ParseAdd("OTH-LAN-Launch/0.1.9.1");
+            Http.DefaultRequestHeaders.UserAgent.ParseAdd("OTH-LAN-Launch/0.1.9.2");
         var json = Http.GetStringAsync(UpdateLogic.LatestApi).GetAwaiter().GetResult();
         if (!UpdateLogic.TryFindAsset(json, libsName, out var url, out var why))
         { Log.Err("release asset: " + why); return false; }
