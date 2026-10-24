@@ -4,7 +4,7 @@ namespace OthLan;
 
 /// <summary>
 /// 0.2.0 T1.1: which angular rate (rad/s) to use for a remote wheel visual.
-/// Owner of the netAng-vs-bodyV rule. <c>RemoteVisuals</c> applies the result to transforms.
+/// Owner of the netAng-vs-bodyV rule. <c>RemoteWheelVisuals</c> applies the result to transforms.
 /// </summary>
 public static class WheelSpinLogic
 {

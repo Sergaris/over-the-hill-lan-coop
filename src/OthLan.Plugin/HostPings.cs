@@ -11,8 +11,8 @@ internal static class HostPings
 {
     sealed class Peer { public IPEndPoint Ep; public double LastSeen; public readonly EchoTracker T = new(); }
     static readonly Dictionary<int, Peer> _peers = new();
-    static readonly System.Diagnostics.Stopwatch Clock = System.Diagnostics.Stopwatch.StartNew();
-    public static double Now => Clock.Elapsed.TotalSeconds;
+    /// <summary>T5.4: alias of <see cref="NetClock.Now"/>.</summary>
+    public static double Now => NetClock.Now;
 
     /// <summary>Network thread: a client ping (kind 0) told us where slot lives.</summary>
     public static void SawClient(int slot, IPEndPoint ep)

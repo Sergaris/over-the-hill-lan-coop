@@ -111,7 +111,7 @@ internal static class SessionLogs
         try { snap.AppendLine(NetStats.FrameDescribe()); } catch { }
         try { snap.AppendLine(FrameCost.Describe()); } catch { }
         try { snap.AppendLine(RemoteSmooth.Describe()); } catch { }
-        try { snap.AppendLine(RemoteVisuals.Describe()); } catch { }
+        try { snap.AppendLine(RemoteWheelVisuals.Describe()); } catch { }
         try { snap.AppendLine(OwnCar.Describe()); } catch { }
         try { snap.AppendLine(OwnRender.Describe()); } catch { }
         try { snap.AppendLine(OwnLocal.Describe()); } catch { }

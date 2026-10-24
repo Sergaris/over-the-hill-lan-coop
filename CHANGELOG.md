@@ -2,6 +2,21 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.2
+
+Both players need 0.2.2. From 0.1.8.1+ the in-game updater offers this release.
+
+- RemoteCarView: blend/proxy/physics pose, wheel visuals from stream, PrePhysics MovePosition.
+- InteractionLogic (Owner contact authority) + HostFollower/JoinFlow/UpdateJob module splits.
+- Join toast, coop session panel (OTPL/OTDX/OTRS); more LogicTests for stream/session/updater.
+
+## 0.2.2 — изменения
+
+У обоих игроков должна быть 0.2.2. С 0.1.8.1+ обновление предложит меню.
+
+- RemoteCarView: blend/proxy/физика, колёса из потока, PrePhysics MovePosition.
+- InteractionLogic (Owner) + модули HostFollower/JoinFlow/UpdateJob.
+- Join-тост, панель кооп-сессии (OTPL/OTDX/OTRS); больше LogicTests для потока/сессии/апдейтера.
 ## 0.2.1
 
 Both players need 0.2.1. From 0.1.8.1+ the in-game updater offers this release.
@@ -346,6 +361,7 @@ gate — PASS. Not verified: two PCs over Radmin with real players, SmartScreen 
 
 Direct-IP LAN mode (F7/F8/F9/F10), host-assigned player slots with rejoin, version gate with code-signature checks
 for untested game builds, ping label, CarSync smoothing, installer with full uninstall.
+
 
 
 

@@ -428,8 +428,8 @@ internal static unsafe class Autopilot
         if (Lights.Count > 0) SampleRemoteLights(t);
         while (_nextCpMin < CpMins.Count && CpMins[_nextCpMin].t <= t)
         {
-            CarSync.CheckpointMinOverride = CpMins[_nextCpMin++].v;
-            Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s checkpoint-min override = {CarSync.CheckpointMinOverride}");
+            HostFollower.CheckpointMinOverride = CpMins[_nextCpMin++].v;
+            Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s checkpoint-min override = {HostFollower.CheckpointMinOverride}");
         }
         if (_rejoinAt >= 0 && t >= _rejoinAt && LanState.Active == LanRole.Client)
         {
@@ -442,20 +442,20 @@ internal static unsafe class Autopilot
         if (_hostJumpAt >= 0 && t >= _hostJumpAt)
         {
             _hostJumpAt = -1;
-            foreach (var k in CarSync.Metrics.Keys) { CarSync.TestJumpSlot = k; break; }
-            Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s host jump test on slot {CarSync.TestJumpSlot}");
+            foreach (var k in HostFollower.Metrics.Keys) { HostFollower.TestJumpSlot = k; break; }
+            Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s host jump test on slot {HostFollower.TestJumpSlot}");
         }
         if (_winchAt >= 0 && t >= _winchAt) { _winchAt = -1; WinchAttach(t); _winchCheckAt = t + 2; }
         if (_winchCheckAt >= 0 && t >= _winchCheckAt)
         {
             _winchCheckAt = -1;
-            try { var w = CarSync.OwnWinch(out _); Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch state: attached={w?.WinchIsAttached} state={w?.WinchState} tension={(w != null ? w.Tension.ToString("0") : "-")}"); }
+            try { var w = HostFollower.OwnWinch(out _); Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch state: attached={w?.WinchIsAttached} state={w?.WinchState} tension={(w != null ? w.Tension.ToString("0") : "-")}"); }
             catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] winch state read failed: {e.Message}"); }
         }
         if (_winchOffAt >= 0 && t >= _winchOffAt)
         {
             _winchOffAt = -1;
-            try { CarSync.OwnWinch(out _)?.RPC_DetachWinchAndDisableWinchPoints(); Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch detach requested"); }
+            try { HostFollower.OwnWinch(out _)?.RPC_DetachWinchAndDisableWinchPoints(); Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch detach requested"); }
             catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] winch detach failed: {e.Message}"); }
         }
         while (_nextBox < ContactBoxes.Count && ContactBoxes[_nextBox].t <= t)
@@ -935,7 +935,7 @@ internal static unsafe class Autopilot
     {
         try
         {
-            var w = CarSync.OwnWinch(out var car);
+            var w = HostFollower.OwnWinch(out var car);
             if (w == null || car == null) { Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch: no own winch component"); return; }
             var pts = w.winchPoints;
             var wp = pts != null && pts.Length > 0 ? pts[0] : car.transform;
@@ -953,7 +953,7 @@ internal static unsafe class Autopilot
     static string F(double v) => double.IsNaN(v) ? "" : v.ToString("0.###", CultureInfo.InvariantCulture);
 
     /// <summary>U3: every remote car's LightsController.AreHeadlightsOn must match the Headlights bit of its
-    /// CurrentFrameInput (what RemoteVisuals applies under RemoteInterpolate).</summary>
+    /// CurrentFrameInput (what RemoteWheelVisuals applies under RemoteInterpolate).</summary>
     static float _nextLightSample = -1;
     static void SampleRemoteLights(float t)
     {
@@ -1008,23 +1008,23 @@ internal static unsafe class Autopilot
         catch { }
         if (LanState.Active == LanRole.Client) lock (ClientLink.Tracker) loss = ClientLink.Tracker.LossPercent;
         Vector3 p = rb != null ? rb.position : Vector3.zero; var sp = rb != null ? rb.linearVelocity.magnitude * 3.6f : 0f;
-        var cs = CarSync.Metrics.FirstOrDefault();
+        var cs = HostFollower.Metrics.FirstOrDefault();
         var l = PingHud.LastLabel; var i = PingHud.LastIcon;
         var ci = CultureInfo.InvariantCulture;
         _log.WriteLine(string.Join(",", new[]
         {
             t.ToString("0.0", ci), CarSync.LocalSetting ? "1" : "0", CarSync.HostFlag.ToString(ci), CarSync.Enabled ? "1" : "0", CarSync.ApplyEnabled ? "1" : "0",
-            CarSync.PosesSent.ToString(ci), CarSync.PosesReceived.ToString(ci), CarSync.PosesRejected.ToString(ci), CarSync.TeleportsIgnored.ToString(ci),
+            HostFollower.PosesSent.ToString(ci), HostFollower.PosesReceived.ToString(ci), HostFollower.PosesRejected.ToString(ci), HostFollower.TeleportsIgnored.ToString(ci),
             Plugin.CarSyncEnabled.Value ? "1" : "0", role, PingHud.LastText.Replace(",", ";"), PingHud.LastLevel.ToString(), PingHud.LastAnchor,
             l.x.ToString("0", ci), l.y.ToString("0", ci), l.width.ToString("0", ci), l.height.ToString("0", ci),
             i.x.ToString("0", ci), i.y.ToString("0", ci), i.width.ToString("0", ci), i.height.ToString("0", ci), PingHud.LastIconActive ? "1" : "0",
             Screen.width.ToString(ci), Screen.height.ToString(ci), F(ms), PingHud.TimedOut ? "1" : "0", F(loss), F(fus),
             ClientLink.NetemRttMs.ToString(ci), (ClientLink.NetemLoss * 100).ToString("0", ci),
             p.x.ToString("0.00", ci), p.y.ToString("0.00", ci), p.z.ToString("0.00", ci), sp.ToString("0.0", ci), Driving ? "1" : "0",
-            CarSync.Metrics.Count > 0 ? cs.Key.ToString(ci) : "", cs.Value.mode ?? "", F(cs.Value.rtt), F(cs.Value.err), F(cs.Value.errDeg), F(cs.Value.poseAge),
-            CarSync.Snaps.ToString(ci), CarSync.Blends.ToString(ci), CarSync.ModeSwitches.ToString(ci), ClientLink.HostPingsEchoed.ToString(ci),
-            CarSync.SoftSnaps.ToString(ci), CarSync.CheckpointsSkipped.ToString(ci), CarSync.ContactPauses.ToString(ci),
-            CarSync.LastAction.Count > 0 ? string.Join("|", CarSync.LastAction.Values) : "", CarSync.ContactBoxOverride.ToString(ci), CarSync.WinchPauses.ToString(ci), CarSync.HostJumps.ToString(ci),
+            HostFollower.Metrics.Count > 0 ? cs.Key.ToString(ci) : "", cs.Value.mode ?? "", F(cs.Value.rtt), F(cs.Value.err), F(cs.Value.errDeg), F(cs.Value.poseAge),
+            HostFollower.Snaps.ToString(ci), HostFollower.Blends.ToString(ci), HostFollower.ModeSwitches.ToString(ci), ClientLink.HostPingsEchoed.ToString(ci),
+            HostFollower.SoftSnaps.ToString(ci), HostFollower.CheckpointsSkipped.ToString(ci), HostFollower.ContactPauses.ToString(ci),
+            HostFollower.LastAction.Count > 0 ? string.Join("|", HostFollower.LastAction.Values) : "", CarSync.ContactBoxOverride.ToString(ci), HostFollower.WinchPauses.ToString(ci), HostFollower.HostJumps.ToString(ci),
         }));
     }
 
@@ -1054,7 +1054,7 @@ internal static unsafe class Autopilot
                 }
                 catch { }
             }
-        var cs = CarSync.Metrics.FirstOrDefault();
+        var cs = HostFollower.Metrics.FirstOrDefault();
         long dOut = 0, dIn = 0;
         if (OutageSim.Installed) { dOut = OutageSim.DroppedOut; dIn = OutageSim.DroppedIn; }
         _trace.WriteLine(string.Join(",", new[]
@@ -1064,8 +1064,8 @@ internal static unsafe class Autopilot
             OthLan.OwnCar.Resets.ToString(ci), OthLan.OwnCar.Restores.ToString(ci), OthLan.OwnCar.Accepts.ToString(ci), OthLan.OwnCar.LastErr.ToString("0.000", ci), OthLan.OwnCar.LastErrDeg.ToString("0.0", ci),
             F(PingHud.SmoothedMs), PingHud.TimedOut ? "1" : "0", PingHud.LastText.Replace(",", ";"), CarSync.Enabled ? "1" : "0", CarSync.HostFlag.ToString(ci),
             rs, rx, ry, rz, rk, st, th, br, it,
-            cs.Value.mode ?? "", F(cs.Value.err), CarSync.LastAction.Count > 0 ? string.Join("|", CarSync.LastAction.Values).Replace(",", ";") : "",
-            CarSync.Snaps.ToString(ci), CarSync.Blends.ToString(ci), dOut.ToString(ci), dIn.ToString(ci),
+            cs.Value.mode ?? "", F(cs.Value.err), HostFollower.LastAction.Count > 0 ? string.Join("|", HostFollower.LastAction.Values).Replace(",", ";") : "",
+            HostFollower.Snaps.ToString(ci), HostFollower.Blends.ToString(ci), dOut.ToString(ci), dIn.ToString(ci),
         }));
     }
 
@@ -1079,11 +1079,11 @@ internal static unsafe class Autopilot
         sb.AppendLine($"label checks: {_passed} passed, {_failed} failed; saves suppressed {SavesSuppressed}; inputs injected {InputsInjected}; handbrake releases {HandbrakeReleases}; unstuck manoeuvres {Unstucks}");
         sb.AppendLine($"gate: tier={BuildGate.Tier} outcome={BuildGate.Outcome} fusion={BuildGate.FusionVersion} buildKey={BuildGate.BuildKey} hooks={FusionHooks.Applied} reasons={string.Join(" | ", BuildGate.Reasons)}");
         sb.AppendLine($"slots: role={LanState.Active} clientId={LanState.ClientId} seen=[{string.Join(",", SlotsSeen)}] rejoins={Rejoins} hostTable=[{LanState.Slots.Describe()}]");
-        sb.AppendLine($"carsync: local={CarSync.LocalSetting} hostFlag={CarSync.HostFlag} sent={CarSync.PosesSent} recv={CarSync.PosesReceived} rejected={CarSync.PosesRejected} teleportFramesIgnored={CarSync.TeleportsIgnored}");
-        sb.AppendLine($"carsync: snaps={CarSync.Snaps} snapLoopsBroken={CarSync.SnapLoopsBroken} softSnaps={CarSync.SoftSnaps} checkpointsSkipped={CarSync.CheckpointsSkipped} contactPauses={CarSync.ContactPauses} winchPauses={CarSync.WinchPauses} hostJumps={CarSync.HostJumps} teleports={CarSync.Teleports} rams={RamContacts} blends={CarSync.Blends} servos={CarSync.Servos} modeSwitches={CarSync.ModeSwitches} {string.Join(" ", CarSync.HostStats.Select(kv => $"slot{kv.Key}: {kv.Value}"))}");
-        sb.AppendLine($"carsync v2: frozenClientPoses={CarSync.FrozenClientPoses} jumpsTowardClient={CarSync.JumpsTowardClient} lowConverges={CarSync.LowConverges} acceptsSent={CarSync.AcceptsSent} recoveries={CarSync.Recoveries} (quiet={CarSync.RecoverQuiet} converge={CarSync.RecoverConverge} snap={CarSync.RecoverSnap}) playbackOk={CarSync.PlaybackOk} playbackExtraps={CarSync.PlaybackExtraps} converge times=[{string.Join(",", CarSync.ConvergeTimes.Select(x => x.ToString("0.00", CultureInfo.InvariantCulture)))}]");
+        sb.AppendLine($"carsync: local={CarSync.LocalSetting} hostFlag={CarSync.HostFlag} sent={HostFollower.PosesSent} recv={HostFollower.PosesReceived} rejected={HostFollower.PosesRejected} teleportFramesIgnored={HostFollower.TeleportsIgnored}");
+        sb.AppendLine($"carsync: snaps={HostFollower.Snaps} snapLoopsBroken={HostFollower.SnapLoopsBroken} softSnaps={HostFollower.SoftSnaps} checkpointsSkipped={HostFollower.CheckpointsSkipped} contactPauses={HostFollower.ContactPauses} winchPauses={HostFollower.WinchPauses} hostJumps={HostFollower.HostJumps} teleports={HostFollower.Teleports} rams={RamContacts} blends={HostFollower.Blends} servos={HostFollower.Servos} modeSwitches={HostFollower.ModeSwitches} {string.Join(" ", HostFollower.HostStats.Select(kv => $"slot{kv.Key}: {kv.Value}"))}");
+        sb.AppendLine($"carsync v2: frozenClientPoses={HostFollower.FrozenClientPoses} jumpsTowardClient={HostFollower.JumpsTowardClient} lowConverges={HostFollower.LowConverges} acceptsSent={HostFollower.AcceptsSent} recoveries={HostFollower.Recoveries} (quiet={HostFollower.RecoverQuiet} converge={HostFollower.RecoverConverge} snap={HostFollower.RecoverSnap}) playbackOk={HostFollower.PlaybackOk} playbackExtraps={HostFollower.PlaybackExtraps} converge times=[{string.Join(",", HostFollower.ConvergeTimes.Select(x => x.ToString("0.00", CultureInfo.InvariantCulture)))}]");
         sb.AppendLine($"netstats: {NetStats.Describe()}");
-        sb.AppendLine($"remoteVisuals: {RemoteVisuals.Describe()} lightToggles={LightToggles} lightMismatches={LightMismatches}");
+        sb.AppendLine($"RemoteWheelVisuals: {RemoteWheelVisuals.Describe()} lightToggles={LightToggles} lightMismatches={LightMismatches}");
         sb.AppendLine($"fusion netem: delayed={OutageSim.Delayed} stalled={OutageSim.Stalled} lostOut={OutageSim.LostOut} lostIn={OutageSim.LostIn}");
         sb.AppendLine($"menu nav: fixes={CoopMenu.NavFixes} order={CoopMenu.NavInfo}");
         sb.AppendLine(OthLan.FreezeWatch.Describe());

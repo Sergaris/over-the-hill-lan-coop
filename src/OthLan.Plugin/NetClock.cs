@@ -1,11 +1,13 @@
-using UnityEngine;
+using System.Diagnostics;
 
 namespace OthLan;
 
 /// <summary>
-/// 0.2.0: single monotonic clock for new netcode (plan NetClock). Proxies for legacy call sites stay on their own Now.
+/// 0.2.0 T5.4: single process clock for netcode (sendTime, arrival, own-car).
+/// Stopwatch so network threads can read it (Unity Time is main-thread only).
 /// </summary>
 internal static class NetClock
 {
-    public static double Now => Time.realtimeSinceStartupAsDouble;
+    static readonly Stopwatch Clock = Stopwatch.StartNew();
+    public static double Now => Clock.Elapsed.TotalSeconds;
 }

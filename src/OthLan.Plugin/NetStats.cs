@@ -203,7 +203,7 @@ internal static class NetStats
         try { car = fp.Object.InputAuthority.PlayerId; } catch { }
         try { var rb = fp.rigidbody; if (rb != null) extra += $" render-rb={(rb.position - p).magnitude * 100:0}cm"; } catch { }
         if (LanState.Active == LanRole.Host)
-        { try { if (CarSync.LastAction.TryGetValue(car, out var a)) extra += $" carsync={a}"; if (CarSync.Metrics.TryGetValue(car, out var m)) extra += $" err={m.err:0.00}m/{m.errDeg:0}deg age={m.poseAge:0.00}s"; } catch { } }
+        { try { if (HostFollower.LastAction.TryGetValue(car, out var a)) extra += $" carsync={a}"; if (HostFollower.Metrics.TryGetValue(car, out var m)) extra += $" err={m.err:0.00}m/{m.errDeg:0}deg age={m.poseAge:0.00}s"; } catch { } }
         else extra += $" snapAge={SnapshotAge * 1000:0}ms smooth={RemoteSmooth.StateOf(fp.Pointer)}";
         Plugin.L.LogInfo($"[NetStats] remote hitch {h * 100:0}cm car={car} dt={dt * 1000:0}ms{extra}");
     }
@@ -235,8 +235,9 @@ internal static class NetStats
     static void Log(string why)
     {
         if (!Plugin.NetStatsLog.Value) return;
-        Plugin.L.LogInfo($"[NetStats] ({why}) {Describe()} | {FrameDescribe()} | {FrameCost.Describe()} | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()} | {RemoteSmooth.Describe()} | {RemoteVisuals.Describe()} | {OwnCar.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()}");
+        Plugin.L.LogInfo($"[NetStats] ({why}) {Describe()} | {FrameDescribe()} | {FrameCost.Describe()} | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()} | {RemoteSmooth.Describe()} | {RemoteWheelVisuals.Describe()} | {OwnCar.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()}");
         FramesOver25ms = FramesOver50ms = 0; RemoteBelow = 0;
+        RemoteCarView.StreamFrames = RemoteCarView.FusionFrames = RemoteCarView.Snaps = RemoteCarView.StaleFrames = RemoteCarView.ExtrapolatedFrames = RemoteCarView.SourceSwitches = RemoteCarView.RemoteBelow = 0;
         FrameCostLogic.Clear(_ft, ref _ftN, ref _ftI); // 30 s window for frameMs (same owner as cost)
         FrameCost.ResetWindow();
     }

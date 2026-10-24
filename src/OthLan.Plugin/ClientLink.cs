@@ -18,9 +18,9 @@ internal static class ClientLink
     static UdpClient _udp;
     static IPEndPoint _host;
     static Thread _rx;
-    static readonly System.Diagnostics.Stopwatch Clock = System.Diagnostics.Stopwatch.StartNew();
     public static readonly EchoTracker Tracker = new();
-    public static double Now => Clock.Elapsed.TotalSeconds;
+    /// <summary>T5.4: alias of <see cref="NetClock.Now"/> (kept for call-site clarity).</summary>
+    public static double Now => NetClock.Now;
     public static int HostPingsEchoed;
 
     // ---- self-test network emulation (client side only, our side channel only; Fusion traffic is NOT affected) ----
@@ -89,6 +89,8 @@ internal static class ClientLink
                 if (d.Length >= 5 && BitConverter.ToUInt32(d, 0) == OutageLogic.StatusMagic) { if (!Drop()) LinkLabels.OnStatus(d, Now); continue; }
                 if (OutageLogic.TryDecodeAccept(d, out var aslot, out var actr)) { if (!Drop()) OwnCar.OnAccept(aslot, actr); continue; }
                 if (d.Length >= 4 && BitConverter.ToUInt32(d, 0) == CarWire.Magic) { if (!Drop()) CarRelay.OnClientPacket(d, d.Length, Now); continue; }
+                if (d.Length >= 4 && BitConverter.ToUInt32(d, 0) == CoopSessionLogic.ListMagic) { if (!Drop()) CoopSession.OnList(d); continue; }
+                if (d.Length >= 4 && BitConverter.ToUInt32(d, 0) == CoopSessionLogic.DiagMagic) { if (!Drop()) CoopSession.OnDiag(); continue; }
                 if (!CarSyncLogic.TryDecodePing(d, out var kind, out _, out var seq, out var flags)) continue;
                 if (Drop()) continue;
                 if (flags >= 0) Later(() => CarSync.OnHostFlags(flags, Now));   // host's session CarSync state

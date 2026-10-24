@@ -56,7 +56,7 @@ internal static class FreezeWatch
         }
         var ep = _rejoinTo; _rejoinTo = null; Rejoins++;
         Plugin.L.LogWarning($"[Freeze] back in the menu: joining {ep}");
-        try { Overlay.Join(ep); } catch (Exception e) { Plugin.L.LogError($"[Freeze] join: {e}"); }
+        try { JoinFlow.Join(ep); } catch (Exception e) { Plugin.L.LogError($"[Freeze] join: {e}"); }
     }
 
     public static string Describe() => $"freeze: detected={Detected} rejoins={Rejoins} lastFrozen={LastFrozenS:0.0}s";

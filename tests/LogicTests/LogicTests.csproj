@@ -17,6 +17,7 @@
     <Compile Include="../../src/OthLan.Plugin/Loc.cs" />
     <Compile Include="../../src/OthLan.Plugin/UpdateLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/SuspendLogic.cs" />
+    <Compile Include="../../src/OthLan.Plugin/InteractionLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/PosePlayback.cs" />
     <Compile Include="../../src/OthLan.Plugin/ModLiveryGateLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/SessionLogsLogic.cs" />
@@ -25,6 +26,7 @@
     <Compile Include="../../src/OthLan.Plugin/PoseSpeedLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/WheelSpinLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/UiModalLogic.cs" />
+    <Compile Include="../../src/OthLan.Plugin/CoopSessionLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/WinchKindLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/CarWire.cs" />
     <Compile Include="../../src/OthLan.Plugin/StatePlayback.cs" />

@@ -135,14 +135,21 @@ public sealed class RemoteSmoother
 
     void Decay(double dt, Cfg c)
     {
-        var len = OffsetLength; if (len < 1e-6) { Ox = Oy = Oz = 0; return; }
+        DecayOffset(ref Ox, ref Oy, ref Oz, dt, c, Speed);
+    }
+
+    /// <summary>0.2.0 T3.5: shared offset decay (RemoteCarView source-switch blend). Single owner of the formula.</summary>
+    public static void DecayOffset(ref double ox, ref double oy, ref double oz, double dt, Cfg c, double speed = 0)
+    {
+        var len = Math.Sqrt(ox * ox + oy * oy + oz * oz);
+        if (len < 1e-6) { ox = oy = oz = 0; return; }
         var tau = TauFor(len, c);
         var step = len * (1 - Math.Exp(-dt / Math.Max(tau, 1e-3)));
-        var cap = (c.MaxCorrection + c.SpeedFactor * Speed) * dt;
+        var cap = (c.MaxCorrection + c.SpeedFactor * speed) * dt;
         if (step > cap) step = cap;
         var k = (len - step) / len;
-        Ox *= k; Oy *= k; Oz *= k;
-        if (OffsetLength < 0.002) Ox = Oy = Oz = 0;
+        ox *= k; oy *= k; oz *= k;
+        if (Math.Sqrt(ox * ox + oy * oy + oz * oz) < 0.002) ox = oy = oz = 0;
     }
 
     public static double TauFor(double err, Cfg c)

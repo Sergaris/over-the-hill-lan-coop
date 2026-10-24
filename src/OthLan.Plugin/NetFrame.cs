@@ -16,7 +16,7 @@ internal static class NetFrame
     {
         try { CarRegistry.Tick(); } catch (Exception e) { LogOnce("carreg", e); }
         try { PingHud.Tick(); } catch (Exception e) { LogOnce("ping", e); }
-        try { CarSync.Tick(); } catch (Exception e) { LogOnce("carsync", e); }
+        try { HostFollower.Tick(); } catch (Exception e) { LogOnce("carsync", e); }
         try { CarStreamSender.Tick(); } catch (Exception e) { LogOnce("stream", e); }
         try { OwnCar.Tick(); } catch (Exception e) { LogOnce("owncar", e); }
         try { FreezeWatch.Tick(); } catch (Exception e) { LogOnce("freeze", e); }
@@ -50,9 +50,11 @@ internal static class NetFrame
             }
             AfterFusion();
         }
+        // Capture Servo body pose after Physics.Simulate and before visual overwrite of the same root.
+        try { RemoteCarView.PostPhysicsStep(); } catch (Exception e) { LogOnce("remotepost", e); }
         try { RemoteCarView.AfterFusionRender(); } catch (Exception e) { LogOnce("remoteview", e); }
         try { RemoteSmooth.LateTick(); } catch (Exception e) { LogOnce("remotesmooth", e); }
-        try { RemoteVisuals.LateTick(); } catch (Exception e) { LogOnce("remotevisuals", e); }
+        try { RemoteWheelVisuals.LateTick(); } catch (Exception e) { LogOnce("RemoteWheelVisuals", e); }
     }
 
     static readonly System.Collections.Generic.HashSet<string> _logged = new();

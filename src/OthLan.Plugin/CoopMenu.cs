@@ -52,7 +52,7 @@ internal static class CoopMenu
         if (_pendingJoin != null && Time.realtimeSinceStartup >= _pendingJoinAt)
         {
             var e = _pendingJoin; _pendingJoin = null;
-            try { Overlay.Join(e); } catch (Exception ex) { Plugin.L.LogError($"[Coop] join: {ex}"); }
+            try { JoinFlow.Join(e); } catch (Exception ex) { Plugin.L.LogError($"[Coop] join: {ex}"); }
         }
         if (_broken || LanState.Disabled && BuildGate.Outcome != GateLogic.Outcome.DisabledByUser) return;
         try
@@ -509,7 +509,7 @@ internal static class CoopMenu
             _pendingJoin = l.Endpoint; _pendingJoinAt = Time.realtimeSinceStartup + 3f;
             return;
         }
-        Overlay.Join(l.Endpoint);
+        JoinFlow.Join(l.Endpoint);
     }
 
     /// <summary>"Become host": the game's own create flow (region -> area -> start) with only the player count from us.</summary>

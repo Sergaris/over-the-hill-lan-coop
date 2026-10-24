@@ -185,8 +185,7 @@ internal static unsafe class FusionHooks
                         Autopilot.OnClientSlot(LanState.ClientSlot);
                     }
                     LanState.StartGameSeenAt = UnityEngine.Time.realtimeSinceStartup;
-                    if (!LanState.Watching) // vanilla "Create Server" path: watch it too
-                    { LanState.Watching = true; LanState.WatchRole = redirected; LanState.WatchStart = LanState.StartGameSeenAt; LanState.FailureText = null; }
+                    JoinFlow.NoteStartSeen(redirected); // vanilla "Create Server" path: watch it too
                     *(int*)(args + FusionLayout.SgaGameMode) = GM_Single;
                     Plugin.L.LogInfo($"[LAN] StartGame(GameMode={gm}) redirected to direct UDP as {redirected}");
                 }

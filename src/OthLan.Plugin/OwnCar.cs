@@ -166,16 +166,28 @@ internal static unsafe class OwnCar
         && !InteractionSuspended
         && (_spawned || _foundAt > 0 && now - _foundAt > SettleSeconds);
 
-    /// <summary>0.1.9 R3: OwnLocal + phase 2 paused while the own car touches another player's car or a winch is involved.</summary>
+    /// <summary>0.2.0 T4.1: OwnLocal + phase 2 paused while InteractionLogic is HostShared (car winch / optional host contact).</summary>
     public static bool InteractionSuspended;
     public static int Suspends, SuspendFrames;
-    static double _suspendLast; static float _nextSuspendScan; static FusionPlayer[] _suspendPeers = Array.Empty<FusionPlayer>();
-    static SuspendLogic.Cfg SuspendCfg() => new()
+    static InteractionLogic.Mode _interactMode;
+    static double _enteredSharedAt, _lastWantAt;
+    static float _nextSuspendScan; static FusionPlayer[] _suspendPeers = Array.Empty<FusionPlayer>();
+    static InteractionLogic.Cfg InteractCfg()
     {
-        SuspendOnContact = Plugin.SuspendOnContact.Value,
-        SuspendOnWinch = Plugin.SuspendOnWinch.Value,
-        ResumeSeconds = Plugin.SuspendResumeSeconds.Value,
-    };
+        var c = new InteractionLogic.Cfg
+        {
+            ResumeSeconds = Math.Max(1.5, Plugin.SuspendResumeSeconds.Value),
+            MinDwellSeconds = Plugin.SharedMinDwellSeconds.Value,
+        };
+        c.ContactAuthority = string.Equals(Plugin.ContactAuthority.Value, "Host", StringComparison.OrdinalIgnoreCase)
+            ? InteractionLogic.Authority.Host : InteractionLogic.Authority.Owner;
+        c.WorldWinchAuthority = string.Equals(Plugin.WorldWinchAuthority.Value, "Host", StringComparison.OrdinalIgnoreCase)
+            ? InteractionLogic.Authority.Host : InteractionLogic.Authority.Owner;
+        // Legacy SuspendOn* = false forces Owner authority for that source.
+        if (!Plugin.SuspendOnContact.Value) c.ContactAuthority = InteractionLogic.Authority.Owner;
+        if (!Plugin.SuspendOnWinch.Value) { /* car winch still forces shared; world uses Owner */ }
+        return c;
+    }
 
     // The game parks a new car (y ~ 1000) and then teleports it to the spawn point. If the spawn is late, the parked
     // car falls and phase 2 would keep (and make the host follow) that fall (seen in self-test r1). So phase 2 starts
@@ -185,7 +197,8 @@ internal static unsafe class OwnCar
     /// <summary>Client: the game moved our car to its spawn point (spawn map done).</summary>
     public static bool SpawnSeen => _spawned;
 
-    internal static double Now => Time.realtimeSinceStartupAsDouble;
+    /// <summary>T5.4: alias of <see cref="NetClock.Now"/>.</summary>
+    internal static double Now => NetClock.Now;
 
     /// <summary>Main thread, every frame (Overlay.Update): find the own car, phase 1 boost, state text.</summary>
     public static void Tick()
@@ -244,7 +257,7 @@ internal static unsafe class OwnCar
         if (_nrb != null && _origSmooth >= 0) { try { _nrb.CorrectionSmoothingTime = _origSmooth; _nrb.CorrectionSnapDistance = _origSnap; } catch { } }
         _own = null; _ownPtr = IntPtr.Zero; _rb = null; _nrb = null; _vb = null; _captured = false; _boostUntil = -1; _origSmooth = -1;
         _acceptUntil = -1; _fallbackUntil = -1; _bigSince = -1; _patchedSim = IntPtr.Zero;
-        InteractionSuspended = false; _suspendLast = 0; _nextSuspendScan = 0;
+        InteractionSuspended = false; _interactMode = InteractionLogic.Mode.Owner; _enteredSharedAt = _lastWantAt = 0; _nextSuspendScan = 0;
     }
 
     static void BeforeResetDetour(IntPtr self, IntPtr mi)
@@ -283,6 +296,13 @@ internal static unsafe class OwnCar
             if (self != IntPtr.Zero && self == _ownPtr && _rb != null) OwnRender.BeforeSim(_own.transform, _rb);
             if (_captured && self != IntPtr.Zero && self == _ownPtr && _rb != null && _runner != null && _runner.IsForward)
             { LateFixes++; _lateNow = true; AfterResim(); _lateNow = false; }
+            // T3.7: move kinematic remotes before Fusion's Physics.Simulate on the forward tick.
+            if (self != IntPtr.Zero && self == _ownPtr && _runner != null && _runner.IsForward && LanState.Active == LanRole.Client)
+            {
+                var dt = Time.fixedDeltaTime;
+                try { if (_runner.DeltaTime > 0) dt = _runner.DeltaTime; } catch { }
+                RemoteCarView.PrePhysicsStep(NetClock.Now + dt);
+            }
             if (self != IntPtr.Zero && self == _ownPtr && _rb != null && _runner != null && _runner.IsForward) OwnLocal.OnForwardTick();
             if (NetTrace.On && self != IntPtr.Zero && self == _ownPtr && _rb != null && _runner != null)
                 NetTrace.Own(_runner.IsForward ? "F" : "f", _runner.Tick.Raw, _capTick, 0, SrvTick(), RenderT(), _rb.position, _rb.position, _rb.linearVelocity, 0, 0);
@@ -403,14 +423,15 @@ internal static unsafe class OwnCar
 
     static void UpdateSuspend(double now)
     {
-        if (_own == null || _rb == null || (!Plugin.SuspendOnContact.Value && !Plugin.SuspendOnWinch.Value))
-        { InteractionSuspended = false; return; }
+        if (_own == null || _rb == null)
+        { InteractionSuspended = false; _interactMode = InteractionLogic.Mode.Owner; return; }
         if (Time.realtimeSinceStartup >= _nextSuspendScan)
         {
             _nextSuspendScan = Time.realtimeSinceStartup + 0.5f;
             _suspendPeers = CarRegistry.Players;
         }
-        bool localC = false, localW = false;
+        bool localC = false;
+        var winchLocal = WinchKindLogic.Kind.None;
         var winchTag = "none";
         try
         {
@@ -418,45 +439,45 @@ internal static unsafe class OwnCar
             {
                 PlayerRef pref = default;
                 try { pref = _own.Object.InputAuthority; } catch { }
-                var wk = CarSync.WinchKindOf(_own, pref, out var wSlot);
-                localW = wk != WinchKindLogic.Kind.None;
-                winchTag = WinchKindLogic.LogTag(wk, wSlot);
+                winchLocal = HostFollower.WinchKindOf(_own, pref, out var wSlot);
+                winchTag = WinchKindLogic.LogTag(winchLocal, wSlot);
             }
-            if (Plugin.SuspendOnContact.Value && !localW)
+            if (Plugin.SuspendOnContact.Value && winchLocal == WinchKindLogic.Kind.None)
             {
                 var lookAhead = 0.15 + (double.IsNaN(PingHud.SmoothedMs) ? 0.1 : PingHud.SmoothedMs / 2000.0);
                 var inv = Quaternion.Inverse(_rb.rotation);
-                var halfW = Plugin.CarHalfWidth.Value; var halfL = Plugin.CarHalfLength.Value; var halfH = Plugin.CarHalfHeight.Value;
+                var box = CarSync.BoxOf(_own); // x width, y height, z length; cfg only as BoxOf's fallback
                 foreach (var o in _suspendPeers)
                 {
                     if (o == null || o == _own || o.Object == null || o.Object.HasInputAuthority) continue;
                     var orb = o.rigidbody ?? o.vehicleBase?.cachedRigidbody; if (orb == null) continue;
                     var d = inv * (orb.position - _rb.position);
                     var rel = (orb.linearVelocity - _rb.linearVelocity).magnitude;
-                    var m = SuspendLogic.PredictiveMargin(Plugin.CarContactMargin.Value, rel, lookAhead);
-                    if (CarSyncLogic.InContact(d.x, d.y, d.z, halfW, halfL, halfH, m)) { localC = true; break; }
+                    var m = InteractionLogic.PredictiveMargin(Plugin.CarContactMargin.Value, rel, lookAhead);
+                    if (CarSyncLogic.InContact(d.x, d.y, d.z, box.x, box.z, box.y, m)) { localC = true; break; }
                 }
             }
         }
         catch { }
-        var cfg = SuspendCfg();
-        var want = SuspendLogic.ActiveNow(localC, localW, CarSync.HostSuspendContact, CarSync.HostSuspendWinch, cfg);
-        var resume = SuspendLogic.ResumeDelay(cfg, PingHud.SmoothedMs, 0.1);
+        // Host winch flag has no Car/World split yet — treat as Car (forces HostShared).
+        var winchHost = CarSync.HostSuspendWinch ? WinchKindLogic.Kind.Car : WinchKindLogic.Kind.None;
+        var cfg = InteractCfg();
+        cfg.ResumeSeconds = InteractionLogic.ResumeDelay(cfg, PingHud.SmoothedMs, 0.1);
+        var want = InteractionLogic.WantShared(localC, CarSync.HostSuspendContact, winchLocal, winchHost, cfg);
         var was = InteractionSuspended;
-        InteractionSuspended = SuspendLogic.Hold(want, now, ref _suspendLast, resume);
+        _interactMode = InteractionLogic.Step(_interactMode, now, ref _enteredSharedAt, ref _lastWantAt, want, cfg);
+        InteractionSuspended = _interactMode == InteractionLogic.Mode.HostShared;
         if (InteractionSuspended) SuspendFrames++;
         if (InteractionSuspended && !was)
         {
             Suspends++;
             try { OwnLocal.RestoreSkip(); OwnLocal.Forget(); OwnRender.Forget(); } catch { }
-            var why = SuspendLogic.Why(localC, localW, CarSync.HostSuspendContact, CarSync.HostSuspendWinch, cfg);
-            var extra = why is SuspendLogic.Reason.Winch or SuspendLogic.Reason.Both ? $" winch={winchTag}" : "";
-            Plugin.L.LogInfo($"[OwnCar] suspend OwnLocal/phase2 ({why}{extra})");
+            Plugin.L.LogInfo($"[OwnCar] HostShared (winch={winchTag} contact={localC}/{CarSync.HostSuspendContact})");
         }
         else if (!InteractionSuspended && was)
         {
             try { OwnLocal.Forget(); OwnRender.Forget(); } catch { }
-            Plugin.L.LogInfo("[OwnCar] resume OwnLocal/phase2 after contact/winch");
+            Plugin.L.LogInfo("[OwnCar] Owner mode after HostShared");
         }
     }
 

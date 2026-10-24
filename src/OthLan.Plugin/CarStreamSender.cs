@@ -109,8 +109,8 @@ internal static class CarStreamSender
             SteerDeg = steer,
             WheelCount = 4,
         };
-        // T3.0 probe deferred: spin from body speed / radius ≈ 0.35 m
-        var spin = speed / 0.35f;
+        // T3.0 probe deferred: spin from body speed / WheelSpinLogic.DefaultRadius (single owner).
+        var spin = speed / (float)WheelSpinLogic.DefaultRadius;
         for (var i = 0; i < 4; i++)
             sample.SetWheel(i, new CarWire.WheelSample { RollDeg = (spin * (float)NetClock.Now * (180f / Mathf.PI)) % 360f, SpinRadS = spin, SuspM = 0 });
         return sample;

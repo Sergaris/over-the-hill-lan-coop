@@ -60,6 +60,7 @@ public sealed class StatePlayback
     byte _epoch;
     bool _pendingSnap;
     public int Pushes, Dupes, Reorders, EpochDrops;
+    public double LastArrivalLocal;
 
     public StatePlayback(Cfg c = null)
     {
@@ -74,6 +75,7 @@ public sealed class StatePlayback
         _delay = Math.Clamp(_c.MinDelayS, _c.MinDelayS, _c.MaxDelayS);
         _epoch = 0; _pendingSnap = false;
         Pushes = Dupes = Reorders = EpochDrops = 0;
+        LastArrivalLocal = 0;
     }
 
     public int Count => _count;
@@ -82,6 +84,7 @@ public sealed class StatePlayback
 
     public void Push(in Sample s, double arrivalLocal)
     {
+        LastArrivalLocal = arrivalLocal;
         if (_count > 0)
         {
             var newest = At(_count - 1);
@@ -173,7 +176,9 @@ public sealed class StatePlayback
         if (_pendingSnap)
         {
             Fill(ref r, newest);
-            r.Ok = true; r.Snap = true; _pendingSnap = false;
+            r.Ok = true; r.Snap = true;
+            // Only the render path (no delayOverride) consumes Snap; PrePhysicsStep must not steal it.
+            if (delayOverride == null) _pendingSnap = false;
             return r;
         }
 

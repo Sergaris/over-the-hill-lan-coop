@@ -74,6 +74,15 @@ static class Program
         Eq(RemoteSmoother.TauFor(0.1, c), c.Tau, "smooth: small error slow decay");
         Eq(RemoteSmoother.TauFor(5, c), c.TauLarge, "smooth: big error fast decay");
         Eq(RemoteSmoother.RotKeep(90, 0.1, 0.2, 180) > 0.79 && RemoteSmoother.RotKeep(90, 0.1, 0.2, 180) < 0.81, true, "smooth: rotation decay capped 180 deg/s");
+        // 0.2.0 T3.5: DecayOffset is the single owner of offset decay (RemoteCarView source blend).
+        {
+            double ox = 1, oy = 0, oz = 0;
+            var bc = new RemoteSmoother.Cfg { Tau = 0.1, TauLarge = 0.1, MaxCorrection = 100, SpeedFactor = 0, SmallMeters = 0, LargeMeters = 1 };
+            RemoteSmoother.DecayOffset(ref ox, ref oy, ref oz, 0.1, bc);
+            Eq(ox > 0.30 && ox < 0.45 && oy == 0 && oz == 0, true, "smooth: DecayOffset ~e^-1 in one tau");
+            ox = 0; RemoteSmoother.DecayOffset(ref ox, ref oy, ref oz, 0.1, bc);
+            Eq(ox == 0 && oy == 0 && oz == 0, true, "smooth: DecayOffset zero stays zero");
+        }
     }
 
     // ---------- 0.1.8 update check (UpdateLogic) ----------
@@ -625,6 +634,10 @@ static class Program
         CarWireTests();
         StatePlaybackTests();
         RelayLogicTests();
+        StreamEdge();
+        SessionWire();
+        ReleaseGate022();
+        InteractEdge();
         Console.WriteLine($"{total - fails}/{total} checks passed");
         return fails == 0 ? 0 : 1;
     }
@@ -1021,7 +1034,7 @@ static class Program
     {
         Eq(OthLan.Launch.HangLogic.Classify("[Message:InteropManager] Downloading unity base libraries from https://unity.bepinex.dev/libraries/6000.0.75.zip"),
             OthLan.Launch.HangLogic.LineKind.UnityLibsDownload, "hang: download line");
-        Eq(OthLan.Launch.HangLogic.Classify("[Info:OTH-LAN] 0.2.1 loaded. Press F7"),
+        Eq(OthLan.Launch.HangLogic.Classify("[Info:OTH-LAN] 0.2.2 loaded. Press F7"),
             OthLan.Launch.HangLogic.LineKind.BootReady, "hang: boot ready");
         Eq(OthLan.Launch.HangLogic.IsHung(true, false, 10.0), true, "hang: 10s hung");
         Eq(OthLan.Launch.HangLogic.IsHung(true, false, 9.9), false, "hang: under 10s");
@@ -1081,5 +1094,168 @@ static class Program
         Eq(SuspendLogic.ResumeDelay(new SuspendLogic.Cfg { ResumeSeconds = 1 }, 200, 0.1) >= 1.2, true, "suspend: resume stretched by RTT");
         Eq(SuspendLogic.PredictiveMargin(0.2, 10, 0.2, 3), 2.2, "suspend: predictive margin");
         Eq(SuspendLogic.PredictiveMargin(0.2, 100, 1, 3), 3.0, "suspend: predictive margin capped");
+
+        // 0.2.0 T4.1 InteractionLogic (D-1 defaults) + T4.0 servo formula owner
+        var ic = new InteractionLogic.Cfg { ContactAuthority = InteractionLogic.Authority.Owner, ResumeSeconds = 1.5, MinDwellSeconds = 2 };
+        Eq(InteractionLogic.WantShared(true, false, WinchKindLogic.Kind.None, WinchKindLogic.Kind.None, ic), false, "interact: Owner contact does not share");
+        Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.Car, WinchKindLogic.Kind.None, ic), true, "interact: car winch shares");
+        double ent = 0, wantAt = 0;
+        var m = InteractionLogic.Mode.Owner;
+        m = InteractionLogic.Step(m, 0, ref ent, ref wantAt, false, ic);
+        Eq(m, InteractionLogic.Mode.Owner, "interact: idle Owner");
+        m = InteractionLogic.Step(m, 1, ref ent, ref wantAt, true, ic);
+        Eq(m, InteractionLogic.Mode.HostShared, "interact: enter HostShared");
+        m = InteractionLogic.Step(m, 6, ref ent, ref wantAt, true, ic);
+        m = InteractionLogic.Step(m, 6.1, ref ent, ref wantAt, false, ic);
+        Eq(m, InteractionLogic.Mode.HostShared, "interact: still in dwell/resume");
+        m = InteractionLogic.Step(m, 8.0, ref ent, ref wantAt, false, ic);
+        Eq(m, InteractionLogic.Mode.Owner, "interact: leave after resume+dwell");
+        m = InteractionLogic.Mode.Owner; ent = wantAt = 0;
+        int enters = 0;
+        for (var t = 0.0; t < 3.0; t += 0.3)
+        {
+            var prev = m;
+            m = InteractionLogic.Step(m, t, ref ent, ref wantAt, true, ic);
+            if (prev == InteractionLogic.Mode.Owner && m == InteractionLogic.Mode.HostShared) enters++;
+        }
+        Eq(enters, 1, "interact: chatter one enter");
+        ic.WorldWinchAuthority = InteractionLogic.Authority.Host;
+        Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.World, WinchKindLogic.Kind.None, ic), true, "interact: world winch Host authority");
+        Eq(HostFollowLogic.ServoSpeed(0, 0.1, 10, 0, 5), 0, "servo: on target");
+        Eq(HostFollowLogic.ServoSpeed(1, 0.1, 10, 0, 0), 10, "servo: 1m/0.1s = 10");
+        Eq(HostFollowLogic.ServoSpeed(5, 0.1, 10, 0, 0), 10, "servo: cap 10");
+        ic.ContactAuthority = InteractionLogic.Authority.Host;
+        Eq(InteractionLogic.WantShared(true, false, WinchKindLogic.Kind.None, WinchKindLogic.Kind.None, ic), true, "interact: Host contact shares");
+        Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.World, WinchKindLogic.Kind.None,
+            new InteractionLogic.Cfg { WorldWinchAuthority = InteractionLogic.Authority.Owner }), false, "interact: world winch Owner ignores");
+    }
+
+    /// <summary>0.2.2 extra: epoch snap once; Stale after MaxExtrap; LastArrivalLocal updated.</summary>
+    static void StreamEdge()
+    {
+        var pb = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0, MaxDelayS = 0, DelayEwma = 1, MaxExtrapS = 0.25 });
+        pb.Push(Mk(1, 1.0, 0, 0, 10, 0, epoch: 1), 1.05);
+        Eq(pb.LastArrivalLocal, 1.05, "stream: LastArrivalLocal");
+        pb.Push(Mk(2, 2.0, 10, 0, 10, 0, epoch: 2), 2.05);
+        Eq(pb.EpochDrops >= 1, true, "stream: epoch drop counted");
+        var phys = pb.SampleAt(2.05, delayOverride: 0);
+        Eq(phys.Ok && phys.Snap, true, "stream: physics SampleAt sees Snap");
+        var snap = pb.SampleAt(2.05);
+        Eq(snap.Ok && snap.Snap, true, "stream: render SampleAt still sees Snap (physics did not consume)");
+        var again = pb.SampleAt(2.06);
+        Eq(again.Snap, false, "stream: Snap consumed once by render path");
+        var stale = pb.SampleAt(2.05 + 0.30);
+        Eq(stale.Ok && stale.Stale, true, "stream: Stale after MaxExtrap");
+        // 30% loss uniform stream: no huge jumps when sampling mid-gap
+        pb = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0.05, MaxDelayS = 0.1, DelayEwma = 0.5, SendHz = 30, MaxExtrapS = 0.25 });
+        double t = 0; float x = 0; var rng = new Random(42);
+        for (var i = 0; i < 90; i++)
+        {
+            t += 1 / 30.0; x += 20f / 30f;
+            if (rng.NextDouble() < 0.30) continue;
+            pb.Push(Mk(i + 1, t, x, 0, 20, 0), t + 0.02);
+        }
+        var mid = pb.SampleAt(t + 0.02);
+        Eq(mid.Ok, true, "stream: lossy stream still Ok");
+        Eq(Math.Abs(mid.Px - x) < 2.0, true, $"stream: lossy error bounded ({mid.Px - x:0.00} m)");
+    }
+
+    static void SessionWire()
+    {
+        Loc.SetLanguage("en");
+        Eq(CoopSessionLogic.StatusOf(true, true), CoopSessionLogic.StatusNoLink, "session: nolink wins");
+        Eq(CoopSessionLogic.StatusOf(false, true), CoopSessionLogic.StatusShared, "session: shared");
+        Eq(CoopSessionLogic.StatusOf(false, false), CoopSessionLogic.StatusOk, "session: ok");
+        Eq(CoopSessionLogic.SharedFromFlags(CarSyncLogic.FlagSuspendWinch), true, "session: winch flag is shared");
+        Eq(CoopSessionLogic.SharedFromFlags(CarSyncLogic.FlagSuspendContact), true, "session: contact flag is shared");
+        Eq(CoopSessionLogic.SharedFromFlags(CarSyncLogic.FlagCarSync), false, "session: carsync flag alone is not shared");
+        Eq(CoopSessionLogic.ClipName("  a\nb  "), "ab", "session: clip controls");
+        Eq(System.Text.Encoding.UTF8.GetByteCount(CoopSessionLogic.ClipName(new string('я', 20))) <= CoopSessionLogic.MaxNameUtf8, true, "session: clip utf8 cap");
+        var rows = new System.Collections.Generic.List<CoopSessionLogic.Row>();
+        for (var i = 0; i < 9; i++) rows.Add(new CoopSessionLogic.Row { Slot = (byte)i, Name = "n" + i, PingMs = -1 });
+        var pkt = CoopSessionLogic.EncodeList(rows);
+        var back = new System.Collections.Generic.List<CoopSessionLogic.Row>();
+        Eq(CoopSessionLogic.TryDecodeList(pkt, back), true, "session: decode clamped list");
+        Eq(back.Count, 8, "session: max 8 rows");
+        Eq(back[7].PingMs, -1, "session: missing ping");
+        rows.Clear();
+        rows.Add(new CoopSessionLogic.Row { Slot = 1, Name = "Ёж", PingMs = 12, LossPct = 3, Status = CoopSessionLogic.StatusShared });
+        pkt = CoopSessionLogic.EncodeList(rows);
+        Eq(CoopSessionLogic.TryDecodeList(pkt, back) && back.Count == 1 && back[0].Name == "Ёж" && back[0].PingMs == 12 && back[0].Status == CoopSessionLogic.StatusShared && back[0].LossPct == 3, true, "session: unicode row");
+        var shortb = new byte[pkt.Length - 1];
+        Array.Copy(pkt, shortb, shortb.Length);
+        Eq(CoopSessionLogic.TryDecodeList(shortb, back), false, "session: short list rejected");
+        var extra = new byte[pkt.Length + 1];
+        Array.Copy(pkt, extra, pkt.Length);
+        Eq(CoopSessionLogic.TryDecodeList(extra, back), false, "session: trailing byte rejected");
+        Eq(CoopSessionLogic.TryDecodeResync(CoopSessionLogic.EncodeResync(3), out var slot) && slot == 3, true, "session: resync slot");
+        Eq(CoopSessionLogic.IsDiag(CoopSessionLogic.EncodeDiag()), true, "session: diag magic");
+        Eq(CoopSessionLogic.IsDiag(CoopSessionLogic.EncodeResync(1)), false, "session: resync is not diag");
+        var ok = new CoopSessionLogic.Row { Slot = 2, Name = "Ann", PingMs = 40, LossPct = 3, Status = CoopSessionLogic.StatusOk };
+        Eq(CoopSessionLogic.FormatRow(ok), "Ann   40 ms   3%   ok", "session: row ok");
+        var nl = new CoopSessionLogic.Row { Name = "Bo", PingMs = -1, LossPct = 10, Status = CoopSessionLogic.StatusNoLink, NoLinkS = 4 };
+        Eq(CoopSessionLogic.FormatRow(nl), "Bo   —   10%   no link 4 s", "session: row nolink");
+        Eq(CoopSessionLogic.FormatRow(new CoopSessionLogic.Row { Name = "Cy", PingMs = 8, Status = CoopSessionLogic.StatusShared }), "Cy   8 ms   0%   shared", "session: row shared");
+    }
+
+    /// <summary>0.2.2: updater must parse the next three-part tag and refuse draft/wrong-repo assets.</summary>
+    static void ReleaseGate022()
+    {
+        Eq(UpdateLogic.Compare("0.2.2", "0.2.1"), 1, "022: 0.2.2 > 0.2.1");
+        Eq(UpdateLogic.IsNewer("0.2.2", "0.2.1"), true, "022: offer newer");
+        Eq(UpdateLogic.ShouldOffer("0.2.2", "0.2.1", "0.2.2"), false, "022: skipped not offered");
+        Eq(UpdateLogic.ShouldOffer("0.2.2", "0.2.1", "0.2.1"), true, "022: skip of older still offers");
+        string J(string tag, bool draft = false, bool pre = false) =>
+            $"{{\"tag_name\":\"{tag}\",\"name\":\"n\",\"body\":\"## What's new in 0.2.2\\n\\n- A\\n\\n## Что нового в 0.2.2\\n\\n- А\\n\",\"draft\":{(draft ? "true" : "false")},\"prerelease\":{(pre ? "true" : "false")},\"assets\":[" +
+            $"{{\"name\":\"OTH-LAN-0.2.2.zip\",\"size\":12,\"browser_download_url\":\"https://github.com/Sergaris/over-the-hill-lan-coop/releases/download/v0.2.2/OTH-LAN-0.2.2.zip\"}}," +
+            $"{{\"name\":\"SHA256SUMS.txt\",\"browser_download_url\":\"https://github.com/Sergaris/over-the-hill-lan-coop/releases/download/v0.2.2/SHA256SUMS.txt\"}}," +
+            $"{{\"name\":\"6000.0.75.zip\",\"size\":9,\"browser_download_url\":\"https://github.com/Sergaris/over-the-hill-lan-coop/releases/download/v0.2.2/6000.0.75.zip\"}}]}}";
+        var rel = UpdateLogic.ParseRelease(J("v0.2.2"), out var why);
+        Eq(rel != null && rel.Version == "0.2.2" && why == null, true, $"022: parse v0.2.2 ({why})");
+        Eq(rel != null && rel.ZipName == "OTH-LAN-0.2.2.zip" && rel.ZipUrl.EndsWith("/OTH-LAN-0.2.2.zip"), true, "022: zip asset");
+        Eq(rel != null && rel.SumsUrl.EndsWith("/SHA256SUMS.txt"), true, "022: sums asset");
+        Eq(rel != null && rel.UnityLibsUrl.EndsWith("/6000.0.75.zip") && rel.UnityLibsSize == 9, true, "022: unity-libs asset");
+        Eq(UpdateLogic.ShortNotes(rel.Notes, "en"), "• A", "022: short notes en");
+        Eq(UpdateLogic.ShortNotes(rel.Notes, "ru"), "• А", "022: short notes ru");
+        Eq(UpdateLogic.ParseRelease(J("v0.2.2", draft: true), out _) == null, true, "022: draft refused");
+        Eq(UpdateLogic.ParseRelease(J("v0.2.2", pre: true), out _) == null, true, "022: prerelease refused");
+        Eq(UpdateLogic.AllowedAssetUrl("https://github.com/Sergaris/over-the-hill-lan-coop/releases/download/v0.2.2/OTH-LAN-0.2.2.zip"), true, "022: asset allow");
+        Eq(UpdateLogic.AllowedAssetUrl("https://github.com/evil/over-the-hill-lan-coop/releases/download/v0.2.2/OTH-LAN-0.2.2.zip"), false, "022: other owner refused");
+        var sums = UpdateLogic.ParseSums("aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899  OTH-LAN-0.2.2.zip\n");
+        Eq(sums.ContainsKey("OTH-LAN-0.2.2.zip"), true, "022: sums key");
+    }
+
+    /// <summary>0.2.2: InteractionLogic hysteresis edges (dwell vs resume, margins).</summary>
+    static void InteractEdge()
+    {
+        var ic = new InteractionLogic.Cfg { ContactAuthority = InteractionLogic.Authority.Host, ResumeSeconds = 1.0, MinDwellSeconds = 3.0 };
+        double ent = 0, wantAt = 0;
+        var m = InteractionLogic.Mode.Owner;
+        m = InteractionLogic.Step(m, 1.0, ref ent, ref wantAt, true, ic);
+        Eq(m, InteractionLogic.Mode.HostShared, "interact-edge: enter");
+        // clear want immediately: MinDwell keeps shared
+        m = InteractionLogic.Step(m, 1.5, ref ent, ref wantAt, false, ic);
+        Eq(m, InteractionLogic.Mode.HostShared, "interact-edge: dwell holds");
+        m = InteractionLogic.Step(m, 3.9, ref ent, ref wantAt, false, ic);
+        Eq(m, InteractionLogic.Mode.HostShared, "interact-edge: still in dwell");
+        m = InteractionLogic.Step(m, 4.1, ref ent, ref wantAt, false, ic);
+        Eq(m, InteractionLogic.Mode.Owner, "interact-edge: leave after dwell (resume already expired)");
+        // resume alone: leave dwell satisfied but resume window open
+        m = InteractionLogic.Mode.Owner; ent = wantAt = 0;
+        m = InteractionLogic.Step(m, 10, ref ent, ref wantAt, true, ic);
+        m = InteractionLogic.Step(m, 14, ref ent, ref wantAt, false, ic); // dwell done at 13, wantAt=10 → resume expired at 11
+        Eq(m, InteractionLogic.Mode.Owner, "interact-edge: leave when both dwell+resume clear");
+        m = InteractionLogic.Mode.Owner; ent = wantAt = 0;
+        m = InteractionLogic.Step(m, 20, ref ent, ref wantAt, true, ic);
+        m = InteractionLogic.Step(m, 22.5, ref ent, ref wantAt, true, ic); // refresh want
+        m = InteractionLogic.Step(m, 23.5, ref ent, ref wantAt, false, ic); // dwell ok (3s), resume still open
+        Eq(m, InteractionLogic.Mode.HostShared, "interact-edge: resume holds after dwell");
+        m = InteractionLogic.Step(m, 24.0, ref ent, ref wantAt, false, ic);
+        Eq(m, InteractionLogic.Mode.Owner, "interact-edge: leave after resume");
+        Eq(InteractionLogic.ResumeDelay(ic, 100, 0.2) >= 1.3, true, "interact-edge: ResumeDelay stretches");
+        Eq(InteractionLogic.PredictiveMargin(0.5, 10, 0.2, 3), 2.5, "interact-edge: margin speed*look");
+        Eq(InteractionLogic.PredictiveMargin(0.5, 100, 1, 3), 3.0, "interact-edge: margin capped");
+        Eq(InteractionLogic.WantShared(false, true, WinchKindLogic.Kind.None, WinchKindLogic.Kind.None, ic), true, "interact-edge: host contact alone");
+        Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.None, WinchKindLogic.Kind.Car, ic), true, "interact-edge: host car winch");
     }
 }

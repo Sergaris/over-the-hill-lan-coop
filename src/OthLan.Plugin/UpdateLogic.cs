@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace OthLan;
 
 /// <summary>
-/// 0.1.8 update check, pure and unit-tested (Updater.cs does the I/O). Source: the public repo's
+/// 0.1.8 update check, pure and unit-tested (UpdateJob.cs does the I/O). Source: the public repo's
 /// GitHub API "releases/latest" (GitHub itself never returns drafts or prereleases there; we check again).
 /// Trust rules: HTTPS only, hosts api.github.com / github.com / objects.githubusercontent.com /
 /// release-assets.githubusercontent.com, asset URLs only under this repo's releases/download/, the zip's sha256 must

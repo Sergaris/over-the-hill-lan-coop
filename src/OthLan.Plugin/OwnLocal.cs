@@ -178,7 +178,12 @@ internal static unsafe class OwnLocal
             own.transform.SetPositionAndRotation(rb.position, rb.rotation);   // undo the render pose
             MarkPrev();
             vb.FixedUpdateNetwork();
+            // T3.7: kinematic remotes at step-end pose so contacts see velocity, not a teleport.
+            if (LanState.Active == LanRole.Client)
+                RemoteCarView.PrePhysicsStep(NetClock.Now + step);
             Physics.Simulate(step);
+            if (LanState.Active == LanRole.Client)
+                RemoteCarView.PostPhysicsStep();
             InitCopy();
             if (_copyFn != null) _copyFn(nrb.Pointer, 0, _copyMi);
             else { _copyToBuffer ??= typeof(NetworkRigidbody<Rigidbody, RunnerSimulatePhysics3D>).GetMethod("CopyToBuffer", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public); _copyToBuffer?.Invoke(nrb, _false); }

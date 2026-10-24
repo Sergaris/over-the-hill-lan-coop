@@ -112,8 +112,10 @@ internal static class HostInfo
                         else HostPings.OnReply(slot, seq);
                         continue;
                     }
-                    if (magic == CarSyncLogic.PoseMagic) { CarSync.OnPosePacket(data, ep); continue; }
-                    if (magic == CarWire.Magic) { CarRelay.OnPacket(data, data.Length, ep, HostPings.Now); continue; }
+                    if (magic == CarSyncLogic.PoseMagic) { HostFollower.OnPosePacket(data, ep); continue; }
+                    if (magic == CarWire.Magic) { CarRelay.OnPacket(data, data.Length, ep, NetClock.Now); continue; }
+                    if (magic == CoopSessionLogic.ResyncMagic) { SessionResync.Accept(data, ep); continue; }
+                    if (magic == CoopSessionLogic.ListMagic || magic == CoopSessionLogic.DiagMagic) continue;
                 }
                 var text = Encoding.UTF8.GetString(data).Trim();
                 if (text.StartsWith(SlotRequest, StringComparison.Ordinal))

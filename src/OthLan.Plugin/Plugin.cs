@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.othlan.lan";
     public const string Name = "OTH-LAN";
-    public const string Version = "0.2.1";
+    public const string Version = "0.2.2";
 
     internal static ManualLogSource L;
     internal static ConfigEntry<int> Port;
@@ -40,9 +40,9 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<float> RemoteExtrapolateSeconds, RemoteSmoothTau, RemoteSmoothTauLarge, RemoteMaxCorrection, RemoteMaxCorrectionDeg, RemoteSnapMeters, RemoteAbsorbDegrees, RemoteStarvedSeconds, RemoteProxySmoothing, RemoteProxySnapMeters, RemoteProxySnapDegrees;
     internal static ConfigEntry<float> InputBufferSeconds;
     internal static ConfigEntry<bool> OwnFreezeSmoothing, OwnLocalClock, RemoteInterpolate, OwnLocalFreshInput;
-    internal static ConfigEntry<string> ClientPhysicsMode;
+    internal static ConfigEntry<string> ClientPhysicsMode, ContactAuthority, WorldWinchAuthority, ProxyBody;
     internal static ConfigEntry<bool> SuspendOnContact, SuspendOnWinch;
-    internal static ConfigEntry<float> SuspendResumeSeconds;
+    internal static ConfigEntry<float> SuspendResumeSeconds, SharedMinDwellSeconds, ServoSeconds;
     internal static ConfigEntry<float> OwnFreezeExtrapSeconds, OwnFreezeDecaySeconds, OwnFreezeSnapMeters;
     internal static ConfigEntry<string> HostName, ManualHosts, RecentHosts;
     internal static ConfigEntry<bool> OutAutoRejoin, UpdateCheck;
@@ -161,6 +161,24 @@ public class Plugin : BasePlugin
             L.LogWarning($"[Config] migration v6: ClientPhysicsMode=SimulateForward (was {ClientPhysicsMode.Value})");
             ClientPhysicsMode.Value = "SimulateForward";
             ConfigVersion.Value = 6;
+        }
+        ContactAuthority = Config.Bind("Netcode", "ContactAuthority", "Owner",
+            "0.2.0 T4.1: who owns car-to-car contact. Owner = each PC resolves its own car (D-1). Host = enter HostShared on contact.");
+        WorldWinchAuthority = Config.Bind("Netcode", "WorldWinchAuthority", "Owner",
+            "0.2.0 T4.1: world/tree winch. Owner = stay on owner stream; Host = HostShared while winched to world.");
+        SharedMinDwellSeconds = Config.Bind("Netcode", "SharedMinDwellSeconds", 2f,
+            "0.2.0 T4.1: minimum seconds in HostShared before exit is allowed (kills suspend chatter).");
+        ProxyBody = Config.Bind("Netcode", "ProxyBody", "Kinematic",
+            "0.2.0 T4.0: remote car rigidbody for contacts. Kinematic = MovePosition (infinite mass). Servo = dynamic + stream pull.");
+        ServoSeconds = Config.Bind("Netcode", "ServoSeconds", 0.1f,
+            "0.2.0 T4.0: ProxyBody=Servo time constant (s) to pull the remote body back to the owner stream.");
+        if (ConfigVersion.Value < 7)
+        {
+            L.LogWarning($"[Config] migration v7: ContactAuthority=Owner WorldWinchAuthority=Owner ProxyBody=Kinematic (D-1)");
+            ContactAuthority.Value = "Owner";
+            WorldWinchAuthority.Value = "Owner";
+            ProxyBody.Value = "Kinematic";
+            ConfigVersion.Value = 7;
         }
         RemoteSmoothing = Config.Bind("Netcode", "RemoteSmoothing", false, "Experimental, off: needs a separate InterpolationTarget, which Over The Hill's cars do not have (then it does nothing; the other players' cars are smoothed by RemoteProxy* instead). Draw the other players' cars smoothly: keep them moving through short host stalls (up to RemoteExtrapolateSeconds) and fade network corrections out instead of jumping. Visual only (physics and collisions unchanged).");
         RemoteExtrapolateSeconds = Config.Bind("Netcode", "RemoteExtrapolateSeconds", 0.5f, "Remote smoothing: how long another car keeps moving at its last speed while no host data arrives.");

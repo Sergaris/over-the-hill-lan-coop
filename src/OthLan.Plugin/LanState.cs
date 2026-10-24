@@ -39,7 +39,17 @@ internal static class LanState
     public const int HostIndex = 1;                           // what Fusion's own single-player path uses (raw 2)
     public const byte UidMagic = 0x4C;                        // 'L' in byte 1 of the connect uniqueId
     public static Msg LastStatus = new("status.idle");
-    public static void Status(string key, params object[] args) => LastStatus = new Msg(key, args);
+    /// <summary>0.2.0 T6.2: JoinToast and other UI listen; text owner stays here.</summary>
+    public static event Action<Msg> StatusChanged;
+    public static void Status(string key, params object[] args) => SetStatus(new Msg(key, args));
+
+    /// <summary>Set status from an existing Msg (e.g. BuildGate) and notify UI.</summary>
+    public static void SetStatus(Msg msg)
+    {
+        if (msg == null) return;
+        LastStatus = msg;
+        try { StatusChanged?.Invoke(LastStatus); } catch { }
+    }
 
     // Watchdog for a LAN start attempt (main thread only).
     public static bool Watching;

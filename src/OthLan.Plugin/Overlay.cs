@@ -8,7 +8,7 @@ namespace OthLan;
 /// <summary>
 /// IMGUI window. F7 toggles it (type the host's Radmin IP:port here). F8 = arm host, then Create Server as usual.
 /// F9 = join the configured/typed address. F10 = disarm. Keys only act while the game window is focused.
-/// A watchdog returns the game to the main menu (the game's own QuitToMenuAsync) when a LAN start fails.
+/// Join, the host query and the start watchdog live in <see cref="JoinFlow"/>.
 /// </summary>
 public class Overlay : MonoBehaviour
 {
@@ -20,10 +20,6 @@ public class Overlay : MonoBehaviour
     string _join;
     Rect _rect = new Rect(40, 40, 540, 430);
     static Application.LogCallback _logCb; // keep alive
-
-    const float TimeoutBeforeStartGame = 90f; // region fetch over a flaky link can take a while
-    const float TimeoutClientConnect = 25f;
-    const float TimeoutHostStart = 60f;
 
     void Awake()
     {
@@ -41,10 +37,7 @@ public class Overlay : MonoBehaviour
     static void OnUnityLog(string msg, string stack, LogType type)
     {
         if (msg != null && LanState.Active != LanRole.Off) NetStats.OnUnityLog(msg);
-        if (!LanState.Watching || msg == null) return;
-        if (msg.Contains("StartGameAsync failed") || msg.Contains("StartGame failed") ||
-            (type == LogType.Exception && LanState.StartGameSeenAt < 0))
-            LanState.FailureText = msg.Length > 200 ? msg[..200] : msg;
+        JoinFlow.NoteUnityLog(msg, type);
     }
 
     internal static void Show() { if (_inst != null && !Autopilot.Active) _inst._show = true; }   // keep self-test screenshots clean
@@ -55,14 +48,15 @@ public class Overlay : MonoBehaviour
     void Update()
     {
         try { LangWatch.Tick(); } catch (Exception e) { LogOnce("lang", e); }
-        try { PollQuery(); } catch (Exception e) { _querying = false; Plugin.L.LogError($"[LAN] join: {e}"); }
+        try { JoinFlow.Tick(); } catch (Exception e) { LogOnce("joinflow", e); }
         try { ModLiveryGate.Tick(); } catch (Exception e) { LogOnce("modgate", e); }
+        try { JoinToast.Tick(); } catch (Exception e) { LogOnce("jointoast", e); }
         try { HostLiveryModsTick(); } catch (Exception e) { LogOnce("hostliveries", e); }
-        try { Watchdog(); } catch (Exception e) { Plugin.L.LogError($"[LAN] watchdog: {e}"); }
         try { NetFrame.Update(); } catch (Exception e) { LogOnce("netframe", e); }
         try { HostSlotsTick(); } catch (Exception e) { LogOnce("slots", e); }
         try { Autopilot.Tick(); } catch (Exception e) { LogOnce("autopilot", e); }
         try { CoopMenu.Tick(); } catch (Exception e) { LogOnce("coop", e); }
+        try { CoopSession.Tick(); } catch (Exception e) { LogOnce("session", e); }
         try { Updater.Tick(); } catch (Exception e) { LogOnce("update", e); }
         try
         {
@@ -72,7 +66,7 @@ public class Overlay : MonoBehaviour
             if (Plugin.ToggleOverlayKey.Value.IsDown()) { _show = !_show; Plugin.L.LogInfo($"[UI] overlay {(_show ? "shown" : "hidden")}"); }
             if (_show) { Cursor.visible = true; Cursor.lockState = CursorLockMode.None; }
             if (input.GetKeyDown(KeyCode.F8)) ArmHost();
-            if (input.GetKeyDown(KeyCode.F9)) Join(_show && !string.IsNullOrWhiteSpace(_join) ? _join : Plugin.JoinAddress.Value);
+            if (input.GetKeyDown(KeyCode.F9)) JoinFlow.Join(_show && !string.IsNullOrWhiteSpace(_join) ? _join : Plugin.JoinAddress.Value);
             if (input.GetKeyDown(KeyCode.F10)) Disarm();
         }
         catch (Exception e) { Plugin.L.LogError($"[UI] {e.Message}"); }
@@ -128,60 +122,6 @@ public class Overlay : MonoBehaviour
     static readonly System.Collections.Generic.HashSet<string> _logged = new();
     static void LogOnce(string key, Exception e) { if (_logged.Add(key)) Plugin.L.LogError($"[LAN] {key}: {e}"); }
 
-    // ---------- failure handling ----------
-    static void BeginWatch(LanRole role)
-    {
-        LanState.Watching = true; LanState.WatchRole = role;
-        LanState.WatchStart = Time.realtimeSinceStartup; LanState.StartGameSeenAt = -1; LanState.FailureText = null;
-    }
-
-    void Watchdog()
-    {
-        if (!LanState.Watching) return;
-        var now = Time.realtimeSinceStartup;
-        if (LanState.FailureText != null) { Recover(new Msg("recover.gameSaid", LanState.FailureText)); return; }
-        if (LanState.StartGameSeenAt < 0)
-        {
-            if (now - LanState.WatchStart > TimeoutBeforeStartGame) Recover(new Msg("recover.netNotStarted", TimeoutBeforeStartGame));
-            return;
-        }
-        var runner = OverlandNetworkRunner.Instance?.NetworkRunner;
-        if (LanState.WatchRole == LanRole.Client)
-        {
-            if (runner != null && runner.IsConnectedToServer)
-            {
-                LanState.Watching = false; LanState.Status("status.connected", $"{LanState.TargetIp}:{LanState.TargetPort}");
-                Plugin.L.LogInfo("[LAN] " + LanState.LastStatus.En());
-            }
-            else if (now - LanState.StartGameSeenAt > TimeoutClientConnect)
-                Recover(new Msg("recover.clientTimeout", $"{LanState.TargetIp}:{LanState.TargetPort}", TimeoutClientConnect));
-        }
-        else if (runner != null && runner.IsRunning)
-        {
-            LanState.Watching = false; LanState.Status("status.hosting", Plugin.Port.Value);
-            Plugin.L.LogInfo("[LAN] host running");
-        }
-        else if (now - LanState.StartGameSeenAt > TimeoutHostStart) Recover(new Msg("recover.hostTimeout", TimeoutHostStart));
-    }
-
-    static void Recover(Msg why)
-    {
-        LanState.Watching = false;
-        LanState.Armed = LanRole.Off; LanState.Active = LanRole.Off; HostInfo.Clear();
-        LanState.Status("recover.status", why);
-        Plugin.L.LogError("[LAN] " + LanState.LastStatus.En());
-        Show();
-        try
-        {
-            var onr = OverlandNetworkRunner.Instance;
-            if (onr == null) { Plugin.L.LogError("[LAN] recover: no OverlandNetworkRunner"); return; }
-            // The game's own path back to the menu (used on shutdown/disconnect); shows its "unable to start" notice.
-            onr.QuitToMenuAsync(MainMenuContext.Reason.UnableToStartGame, "OTH-LAN: " + why);
-            Plugin.L.LogInfo("[LAN] QuitToMenuAsync(UnableToStartGame) called");
-        }
-        catch (Exception e) { Plugin.L.LogError($"[LAN] recover failed: {e}"); }
-    }
-
     // ---------- UI ----------
     bool _pingBroken, _carLabelsBroken;
     void LateUpdate()
@@ -217,7 +157,7 @@ public class Overlay : MonoBehaviour
         {
             _join ??= NetInfo.DemoIp != null ? "26.10.20.40:27015" : Plugin.JoinAddress.Value ?? "";
             var byUser = BuildGate.Outcome == GateLogic.Outcome.DisabledByUser;
-            _rect.height = 430 + Mathf.Max(0, CarSync.HostStats.Count - 2) * 18 + (byUser ? 32 : 0) + (LanState.Active == LanRole.Client ? 144 : LanState.Active == LanRole.Host ? 54 : 0) + 56
+            _rect.height = 430 + Mathf.Max(0, HostFollower.HostStats.Count - 2) * 18 + (byUser ? 32 : 0) + (LanState.Active == LanRole.Client ? 144 : LanState.Active == LanRole.Host ? 54 : 0) + 56
                 + (OffWarnShown() ? 40 : 0);   // client: local + remote + freeze + export; host: export
             GUI.Box(_rect, Loc.F("f7.title", Plugin.Version));
             float x = _rect.x + 10, y = _rect.y + 25, w = _rect.width - 20;
@@ -239,7 +179,7 @@ public class Overlay : MonoBehaviour
             GUI.Label(new Rect(x, y, w, 20), Loc.T("f7.hostAddress"));
             y += 20;
             _join = GUI.TextField(new Rect(x, y, 300, 24), _join ?? "");
-            if (GUI.Button(new Rect(x + 310, y, 190, 24), Loc.T("f7.join"))) Join(_join);
+            if (GUI.Button(new Rect(x + 310, y, 190, 24), Loc.T("f7.join"))) JoinFlow.Join(_join);
             y += 30;
             var same = Loc.T("f7.sameVersions");
             var sameH = Mathf.Max(20f, GUI.skin.label.CalcHeight(new GUIContent(same), w));   // long translations wrap: no overlap
@@ -254,11 +194,11 @@ public class Overlay : MonoBehaviour
             GUI.Label(new Rect(x, y, w, 20), PingHud.FusionCompare.ToString());
             y += 22;
             string cs;
-            if (LanState.Active == LanRole.Client) cs = CarSync.ClientStat.ToString();
+            if (LanState.Active == LanRole.Client) cs = HostFollower.ClientStat.ToString();
             else if (LanState.Active == LanRole.Host)
                 cs = !CarSync.HostEnabled ? Loc.T("cs.hostOff")
-                   : CarSync.HostStats.Count == 0 ? Loc.T("cs.hostWaiting")
-                   : string.Join("\n", System.Linq.Enumerable.Select(CarSync.HostStats.Values, m => m.ToString()));
+                   : HostFollower.HostStats.Count == 0 ? Loc.T("cs.hostWaiting")
+                   : string.Join("\n", System.Linq.Enumerable.Select(HostFollower.HostStats.Values, m => m.ToString()));
             else cs = CarSync.LocalSetting ? Loc.T("cs.willBeOn") : Loc.T("cs.willBeOff");
             if (string.IsNullOrEmpty(cs)) cs = "--";
             var csLines = 1 + cs.Split('\n').Length;          // first line wraps after the caption
@@ -401,7 +341,7 @@ public class Overlay : MonoBehaviour
 
     static void ArmHost()
     {
-        if (LanState.Disabled) { LanState.LastStatus = BuildGate.StatusMsg(); Show(); return; }
+        if (LanState.Disabled) { LanState.SetStatus(BuildGate.StatusMsg()); Show(); return; }
         LanState.Armed = LanRole.Host; LanState.HostPlayers = 0;
         LanState.Status("status.armedHost", $"{NetInfo.DisplayIp() ?? "<IP>"}:{Plugin.Port.Value}");
         Plugin.L.LogInfo("[LAN] " + LanState.LastStatus.En());
@@ -410,13 +350,13 @@ public class Overlay : MonoBehaviour
 
     static void Disarm()
     {
-        LanState.Armed = LanRole.Off; LanState.Watching = false; _querying = false; HostInfo.Clear();
+        LanState.Armed = LanRole.Off; JoinFlow.Cancel(); HostInfo.Clear();
         LanState.Status("status.off");
         Plugin.L.LogInfo("[LAN] disarmed");
     }
 
     /// <summary>Starts the game's own StateStartGame flow with a minimal, valid GameSetupContext.</summary>
-    static void PushStart(Fusion.GameMode mode, string roomName, AreaInfo area)
+    internal static void PushStart(Fusion.GameMode mode, string roomName, AreaInfo area)
     {
         var onr = OverlandNetworkRunner.Instance ?? throw new InvalidOperationException("game network runner not ready (wait for the main menu)");
         if (area == null) throw new InvalidOperationException("no AreaInfo loaded yet (wait for the main menu)");
@@ -434,152 +374,13 @@ public class Overlay : MonoBehaviour
             // GetSessionProperties): null => NullReferenceException and a stuck UI (seen in v0.1.0).
             // 0.1.8: the game's own mods flag (OverlandNetworkRunner.ModsAllowed reads it; false = "mods are disabled in
             // this session"). Host: [LocalCoop] AllowMods; client: the host's value from its session properties.
-            RoomProperties = new OverlandRoomProperties { AllowMods = mode == Fusion.GameMode.Client ? _joinAllowMods : Plugin.AllowMods.Value },
+            RoomProperties = new OverlandRoomProperties { AllowMods = mode == Fusion.GameMode.Client ? JoinFlow.AllowMods : Plugin.AllowMods.Value },
             AreaInfo = area,
         };
         Plugin.L.LogInfo($"[LAN] start ctx built");
         Plugin.L.LogInfo($"[LAN] start ctx: mode={mode} area={area.name} players={LanState.EffectivePlayers} region={ctx.ServerRegion ?? "null"} allowMods={ctx.RoomProperties.AllowMods}");
-        BeginWatch(mode == Fusion.GameMode.Client ? LanRole.Client : LanRole.Host);
+        JoinFlow.BeginWatch(mode == Fusion.GameMode.Client ? LanRole.Client : LanRole.Host);
         HybridSingleton<GameStateManager>.Instance.PushState(new StateStartGame(ctx));
-    }
-
-    internal static void Join(string endpoint)
-    {
-        if (LanState.Disabled) { LanState.LastStatus = BuildGate.StatusMsg(); Show(); return; }
-        if (LanState.Watching || _querying) { LanState.Status("status.joinBusy"); Show(); return; }
-        if (string.IsNullOrWhiteSpace(endpoint) || endpoint.Trim().StartsWith("26.0.0.1") ||
-            !LanState.TryParseEndpoint(endpoint, out var ip, out var port))
-        {
-            LanState.LastStatus = string.IsNullOrWhiteSpace(endpoint) ? new Msg("status.noAddress") : new Msg("status.badAddress", endpoint);
-            Plugin.L.LogWarning("[LAN] " + LanState.LastStatus.En());
-            Show();   // never start a join without a valid address
-            return;
-        }
-        if (OverlandNetworkRunner.Instance == null) { LanState.Status("status.waitMenu"); Show(); return; }
-        if (!Autopilot.Active) Plugin.JoinAddress.Value = $"{ip}:{port}";   // self-test instances share one config file
-        LanState.TargetIp = ip; LanState.TargetPort = port;
-        // Ask the host which area/session it runs before starting anything (HostInfo, UDP port+1).
-        _queryIp = ip; _queryPort = port; _queryResult = null; _queryError = null; _queryDone = false; _querying = true;
-        LanState.Status("status.querying", $"{ip}:{port + 1}");
-        Plugin.L.LogInfo("[LAN] " + LanState.LastStatus.En());
-        // 0.1.9: do not auto-open F7 on join (Local Co-op / F9 / freeze-rejoin). Errors below still Show();
-        // successful world entry Hide()s via FusionHooks → OnClientEnteredWorld.
-        LanState.HostPlayers = 0;
-        var hint = FusionHooks.PickClientSlot();   // main thread (reads the Radmin IP); the host prefers it if free
-        new System.Threading.Thread(() =>
-        {
-            var r = HostInfo.Query(ip, port + 1, out var err);
-            int? slot = null; string slotErr = null;
-            if (r != null && r.Mod == Plugin.Version)   // same mod version: ask the host for a player slot (0.1.6)
-                slot = HostInfo.RequestSlot(ip, port + 1, LanState.ClientId, hint, out slotErr);
-            _slotResult = slot; _slotError = slotErr;
-            _queryResult = r; _queryError = err; _queryDone = true;
-        }) { IsBackground = true, Name = "OTH-LAN query" }.Start();
-    }
-
-    static volatile bool _querying, _queryDone;
-    static volatile HostInfo.Info _queryResult;
-    static volatile string _queryError;
-    static int? _slotResult; static string _slotError;
-    static bool _joinAllowMods = true;
-    static string _queryIp; static int _queryPort;
-
-    /// <summary>Main thread: finish a Join once the host answered (or not).</summary>
-    static void PollQuery()
-    {
-        if (!_querying || !_queryDone) return;
-        _querying = false;
-        var ip = _queryIp; var port = (ushort)_queryPort;
-        var info = _queryResult;
-        string areaName;
-        if (info == null)
-        {
-            if (string.IsNullOrEmpty(Plugin.JoinArea.Value))
-            {
-                LanState.Status("status.hostSilent", ip, _queryError, Plugin.Version, $"{port}-{port + 1}");
-                Plugin.L.LogWarning("[LAN] " + LanState.LastStatus.En());
-                Show(); return;
-            }
-            areaName = Plugin.JoinArea.Value;
-            _joinAllowMods = Plugin.AllowMods.Value;
-            LanState.HostPlayers = 0; LanState.AssignedSlot = -1;
-            Plugin.L.LogWarning($"[LAN] host info unavailable ({_queryError}); using config JoinArea={areaName}");
-        }
-        else
-        {
-            Plugin.L.LogInfo($"[LAN] host info: mod={info.Mod} build={info.Build} players={info.Players} area={info.Area} props={string.Join(", ", info.Props)}");
-            if (info.Mod != Plugin.Version)
-            { LanState.Status("status.modMismatch", info.Mod, Plugin.Version); Show(); return; }
-            if (!GateLogic.SameBuild(info.Build, info.GaHash, BuildGate.BuildKey, BuildGate.GaHash))
-            { LanState.Status("status.gameMismatch", info.Build, BuildGate.BuildKey); Plugin.L.LogWarning("[LAN] " + LanState.LastStatus.En()); Show(); return; }
-            if (string.IsNullOrEmpty(info.Area))
-            { LanState.Status("status.noArea"); Show(); return; }
-            areaName = info.Area;
-            LanState.HostPlayers = info.Players;
-            if (_slotResult == -1)
-            { LanState.Status("status.full", info.Players); Plugin.L.LogWarning("[LAN] " + LanState.LastStatus.En()); Show(); return; }
-            LanState.AssignedSlot = _slotResult ?? -1;
-            Plugin.L.LogInfo(_slotResult.HasValue ? $"[LAN] host assigned player slot {_slotResult}" : $"[LAN] no slot from the host ({_slotError}); using the IP-derived slot");
-            if (info.CarSync >= 0) CarSync.OnHostFlags(info.CarSync, ClientLink.Now);
-            _joinAllowMods = RoomPropsLogic.AllowMods(info.Props) ?? Plugin.AllowMods.Value;
-            Plugin.L.LogInfo($"[LAN] host session: mods {(_joinAllowMods ? "allowed" : "off")}");
-            // Pre-join Modio livery gate: host advertises liverymods=…; client must have them locally.
-            if (_joinAllowMods && !string.IsNullOrEmpty(info.LiveryMods))
-            {
-                var required = ModLiveryGateLogic.Parse(info.LiveryMods);
-                var missing = ModLiveryBridge.MissingOf(required);
-                if (missing.Count > 0)
-                {
-                    var areaPending = areaName;
-                    var ipP = ip; var portP = port;
-                    Plugin.L.LogInfo($"[LAN] missing host liveries: {ModLiveryGateLogic.Format(missing)}");
-                    LanState.Status("status.modsMissing", missing.Count);
-                    ModLiveryGate.Begin(required, missing,
-                        () => FinishClientJoin(ipP, portP, areaPending),
-                        () =>
-                        {
-                            LanState.Armed = LanRole.Off; LanState.Watching = false;
-                            LanState.Status("status.modsCancelled");
-                            Show();
-                        },
-                        () =>
-                        {
-                            // Join without waiting for Modio: this client's session reports AllowMods=false.
-                            _joinAllowMods = false;
-                            Plugin.L.LogInfo("[LAN] joining without host liveries (AllowMods=false for this client)");
-                            LanState.Status("status.modsSkipped", missing.Count);
-                            FinishClientJoin(ipP, portP, areaPending);
-                        });
-                    return;
-                }
-            }
-        }
-        FinishClientJoin(ip, port, areaName);
-    }
-
-    static void FinishClientJoin(string ip, ushort port, string areaName)
-    {
-        var area = FindArea(areaName, out var avail);
-        if (area == null)
-        {
-            LanState.Status("status.noSuchArea", areaName, avail);
-            Plugin.L.LogWarning("[LAN] " + LanState.LastStatus.En()); Show(); return;
-        }
-        LanState.Armed = LanRole.Client;
-        try
-        {
-            PushStart(Fusion.GameMode.Client, $"LAN {ip}:{port}", area);
-            LanState.Status("status.joining", $"{ip}:{port}", area.name);
-            Plugin.L.LogInfo("[LAN] " + LanState.LastStatus.En());
-            // World start is imminent: close F7 even if the user had it open to click Join.
-            Hide();
-        }
-        catch (Exception e)
-        {
-            LanState.Watching = false; LanState.Armed = LanRole.Off;
-            LanState.Status("status.joinNotStarted", e.Message); Show();
-            Plugin.L.LogError($"[LAN] Join: {e}");
-        }
     }
 
     // ---------- dev ----------
@@ -610,8 +411,8 @@ public class Overlay : MonoBehaviour
         try
         {
             if (mode == "host") { ArmHost(); PushStart(Fusion.GameMode.Host, "LAN host autotest", FindArea(Plugin.JoinArea.Value, out _)); }
-            else if (mode.StartsWith("join:")) Join(mode.Substring(5));
+            else if (mode.StartsWith("join:")) JoinFlow.Join(mode.Substring(5));
         }
-        catch (Exception e) { Plugin.L.LogError($"[AutoTest] {e}"); LanState.Watching = false; }
+        catch (Exception e) { Plugin.L.LogError($"[AutoTest] {e}"); JoinFlow.Cancel(); }
     }
 }

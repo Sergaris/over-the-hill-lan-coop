@@ -28,7 +28,7 @@ internal static class CarRelay
         }
     }
 
-    /// <summary>Host: OTC3 from a client (network thread; use HostPings.Now for arrival).</summary>
+    /// <summary>Host: OTC3 from a client (network thread; arrival = <see cref="NetClock.Now"/>).</summary>
     public static void OnPacket(byte[] d, int len, IPEndPoint from, double arrivalLocal)
     {
         if (d == null || len < CarWire.HeaderSize) { Dropped++; return; }
@@ -54,7 +54,7 @@ internal static class CarRelay
         if (n > 0) HostPings.Broadcast(Trim(buf, n));
     }
 
-    /// <summary>Client: OTC3 relayed from host (network thread; use ClientLink.Now).</summary>
+    /// <summary>Client: OTC3 relayed from host (network thread; arrival = <see cref="NetClock.Now"/>).</summary>
     public static void OnClientPacket(byte[] d, int len, double arrivalLocal)
     {
         if (d == null || len < CarWire.HeaderSize) return;
