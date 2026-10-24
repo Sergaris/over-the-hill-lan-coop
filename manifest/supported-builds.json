@@ -1,7 +1,7 @@
 ﻿{
     "schema":  1,
     "mod":  "OTH-LAN",
-    "modVersion":  "0.1.9.3",
+    "modVersion":  "0.2.0",
     "steamAppId":  2929250,
     "bepinex":  {
                     "version":  "6.0.0-be.788+5b766a3",

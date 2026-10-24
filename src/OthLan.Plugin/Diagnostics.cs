@@ -1,8 +1,5 @@
 using System;
-using System.IO;
-using System.IO.Compression;
 using System.Linq;
-using System.Text;
 using Fusion;
 using UnityEngine;
 
@@ -10,12 +7,12 @@ namespace OthLan;
 
 /// <summary>Logs, once per LAN session, the runtime network/physics facts that the IL2CPP dump cannot show
 /// (they live in serialized assets): tick rate, input transfer mode, client physics mode, car components and
-/// the Overland prediction-correction smoothing values. Also F7 "Export diagnostics" zip for live A/B with a friend.</summary>
+/// the Overland prediction-correction smoothing values. Zip export lives in <see cref="SessionLogs"/>.</summary>
 internal static class Diagnostics
 {
     static IntPtr _loggedRunner, _loggedCarsRunner;
     static float _next; static int _retries;
-    public static string LastExportPath;
+    public static string LastExportPath { get => SessionLogs.LastExportPath; set => SessionLogs.LastExportPath = value; }
 
     public static void Tick()
     {
@@ -36,12 +33,13 @@ internal static class Diagnostics
                 if (phys != null)
                     Plugin.L.LogInfo($"[Diag] RunnerSimulatePhysics3D: ClientPhysicsSimulation={phys.ClientPhysicsSimulation} PhysicsTiming={phys.PhysicsTiming} " +
                                      $"PhysicsAuthority={phys.PhysicsAuthority} DeltaTimeMultiplier={phys.DeltaTimeMultiplier} SetUnityFixedTimestep={phys.SetUnityFixedTimestep} " +
-                                     $"Time.fixedDeltaTime={Time.fixedDeltaTime:0.0000}");
-                else Plugin.L.LogInfo("[Diag] RunnerSimulatePhysics3D: null");
+                                     $"Physics.simulationMode={Physics.simulationMode} Time.fixedDeltaTime={Time.fixedDeltaTime:0.0000} TickRate={r.TickRate}");
+                else Plugin.L.LogInfo($"[Diag] RunnerSimulatePhysics3D: null Physics.simulationMode={Physics.simulationMode} Time.fixedDeltaTime={Time.fixedDeltaTime:0.0000} TickRate={r.TickRate}");
             }
             if (_loggedCarsRunner != r.Pointer)
             {
-                var players = UnityEngine.Object.FindObjectsOfType<FusionPlayer>();
+                CarRegistry.RefreshNow();
+                var players = CarRegistry.Players;
                 if (players.Length == 0) return;
                 _loggedCarsRunner = r.Pointer;
                 foreach (var fp in players)
@@ -57,60 +55,16 @@ internal static class Diagnostics
                 }
             }
         }
-        catch (InvalidOperationException e) when (_retries++ < 5)
-        {   // 0.1.8: read too early (Fusion's RuntimeConfig not set yet, seen in the 2026-10-22 log): try again in 3 s
-            _loggedRunner = IntPtr.Zero; Plugin.L.LogInfo($"[Diag] runner not ready yet ({e.Message}); retrying");
+        catch (Exception e) when (DiagLogic.ShouldRetryRuntimeConfig(e, _retries))
+        {
+            // 0.2.0 T0.3: IL2CPP may wrap RuntimeConfig-not-ready as a non-InvalidOperationException; retry up to 20× / 3 s.
+            _retries++;
+            _loggedRunner = IntPtr.Zero;
+            Plugin.L.LogInfo($"[Diag] runner not ready yet ({e.GetType().Name}: {e.Message}); retry {_retries}/{DiagLogic.MaxRuntimeConfigRetries}");
         }
         catch (Exception e) { Plugin.L.LogWarning($"[Diag] {e.Message}"); _loggedRunner = r.Pointer; _loggedCarsRunner = r.Pointer; }
     }
 
-    /// <summary>0.1.9 U0: zip BepInEx + Unity logs, cfg and a NetStats snapshot to the Desktop (no personal Steam paths).</summary>
-    public static string ExportZip(string why)
-    {
-        try
-        {
-            var desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            if (string.IsNullOrEmpty(desk) || !Directory.Exists(desk)) desk = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            var path = Path.Combine(desk, $"OTH-LAN-diag-{stamp}.zip");
-            using (var zs = new FileStream(path, FileMode.Create, FileAccess.Write))
-            using (var zip = new ZipArchive(zs, ZipArchiveMode.Create))
-            {
-                void AddFile(string src, string entry)
-                {
-                    if (string.IsNullOrEmpty(src) || !File.Exists(src)) return;
-                    try { zip.CreateEntryFromFile(src, entry, System.IO.Compression.CompressionLevel.Optimal); } catch { }
-                }
-                AddFile(Path.Combine(BepInEx.Paths.BepInExRootPath, "LogOutput.log"), "LogOutput.log");
-                try { AddFile(Plugin.CfgPath, "OthLan.cfg"); } catch { }
-                try
-                {
-                    var pl = Path.Combine(Application.persistentDataPath, "Player.log");
-                    AddFile(pl, "Player.log");
-                }
-                catch { }
-                var snap = new StringBuilder();
-                snap.AppendLine($"OTH-LAN {Plugin.Version} diag ({why}) {DateTime.Now:o}");
-                snap.AppendLine($"role={LanState.Active} runner={(LanState.LanRunner != IntPtr.Zero)}");
-                snap.AppendLine(NetStats.Describe());
-                snap.AppendLine(NetStats.FrameDescribe());
-                snap.AppendLine(RemoteSmooth.Describe());
-                snap.AppendLine(RemoteVisuals.Describe());
-                snap.AppendLine(OwnCar.Describe());
-                snap.AppendLine(OwnRender.Describe());
-                snap.AppendLine(OwnLocal.Describe());
-                var e = zip.CreateEntry("netstats.txt");
-                using (var w = new StreamWriter(e.Open())) w.Write(snap.ToString());
-            }
-            LastExportPath = path;
-            Plugin.L.LogInfo($"[Diag] exported {path}");
-            return path;
-        }
-        catch (Exception e)
-        {
-            Plugin.L.LogWarning($"[Diag] export failed: {e.Message}");
-            LastExportPath = null;
-            return null;
-        }
-    }
+    /// <summary>0.2.0 T0.2: thin wrapper — ownership moved to <see cref="SessionLogs"/>.</summary>
+    public static string ExportZip(string why) => SessionLogs.ExportZip(why);
 }

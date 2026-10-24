@@ -46,8 +46,16 @@ internal static unsafe class OwnRender
         Plugin.L.LogInfo($"[OwnRender] own-car freeze smoothing {(HookOk ? "installed (after NetworkRigidbody render)" : "hook unavailable: before-render fallback")}");
     }
 
+    static int _netFrameSeen = -1;
     static void RenderDetour(IntPtr self, IntPtr mi)
     {
+        // 0.2.0 T2.3: first NRB.Render this frame → AfterFusion (OwnClock) before poses are drawn.
+        var fc = Time.frameCount;
+        if (fc != _netFrameSeen)
+        {
+            _netFrameSeen = fc;
+            try { NetFrame.AfterFusion(); } catch (Exception e) { if (Frames < 3) Plugin.L.LogWarning($"[NetFrame] AfterFusion: {e.Message}"); }
+        }
         _orig(self, mi);
         if (!Enabled || self == IntPtr.Zero || self != OwnNrb) return;
         try { Apply(false); } catch (Exception e) { if (Frames < 3) Plugin.L.LogWarning($"[OwnRender] {e.Message}"); }
@@ -98,7 +106,7 @@ internal static unsafe class OwnRender
             // Drawn time = real time - 1 step. Debt = real time not yet simulated (in steps); it is negative while Fusion's
             // kept ticks run ahead of the wall clock (up to -0.5) and >1 when local steps are capped. Clamp01 froze the
             // pose in the first case (v3l p4L: judder at 400 ms), so interpolate/extrapolate along the last step instead.
-            var a = Mathf.Clamp((float)OwnLocal.Debt, -1f, 2f);
+            var a = OwnClock.Alpha;
             var lp = Vector3.LerpUnclamped(OwnLocal.PrevP, rb.position, a); var lq = Quaternion.SlerpUnclamped(OwnLocal.PrevQ, rb.rotation, a);
             if ((lp - rb.position).sqrMagnitude > 25f) { lp = rb.position; lq = rb.rotation; Snaps++; }   // teleport: no lerp
             LocalLerps++;

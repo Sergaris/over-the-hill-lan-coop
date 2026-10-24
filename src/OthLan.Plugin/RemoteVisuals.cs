@@ -23,7 +23,10 @@ internal static class RemoteVisuals
         public NetworkedVehicleStatus Status;
         public VehicleCustomizationController Custom;
         public readonly float[] SpinDeg = new float[8];
+        public readonly Quaternion[] RestLocal = new Quaternion[8];
+        public readonly bool[] RestOk = new bool[8];
         public float LastT = -1;
+        public float NetAngAliveUntil = -1;
         public Vector3 LastPos;
         public bool HasPos;
         public bool Lit;
@@ -34,7 +37,6 @@ internal static class RemoteVisuals
 
     static readonly Dictionary<IntPtr, Car> _cars = new();
     static FusionPlayer[] _players = Array.Empty<FusionPlayer>();
-    static float _nextScan;
     static IntPtr _runner;
     public static int Cars, LightSets, WheelFrames, LiveryApplies, Errors;
 
@@ -44,7 +46,6 @@ internal static class RemoteVisuals
             RestoreWtu(c);
         _cars.Clear();
         Cars = LightSets = WheelFrames = LiveryApplies = Errors = 0;
-        _nextScan = 0;
     }
 
     /// <summary>Apply current lights once (late join / right after TuneProxy).</summary>
@@ -64,6 +65,7 @@ internal static class RemoteVisuals
     /// <summary>Main thread, LateUpdate. Client only; only when remote cars are interpolated (non-simulated).</summary>
     public static void LateTick()
     {
+        using var _cost = FrameCost.Measure(FrameCost.Wheels);
         if (!Plugin.RemoteInterpolate.Value) return;
         if (LanState.Active != LanRole.Client || LanState.LanRunner == IntPtr.Zero) { if (_runner != IntPtr.Zero) { _runner = IntPtr.Zero; Reset(); } return; }
         NetworkRunner r = null;
@@ -72,7 +74,7 @@ internal static class RemoteVisuals
         if (r.Pointer != _runner) { _runner = r.Pointer; Reset(); }
 
         var t = Time.realtimeSinceStartup;
-        if (t >= _nextScan) { _nextScan = t + 1f; try { _players = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { _players = Array.Empty<FusionPlayer>(); } }
+        _players = CarRegistry.Players;
 
         Cars = 0;
         foreach (var fp in _players)
@@ -110,10 +112,31 @@ internal static class RemoteVisuals
             for (int i = 0; i < c.Wheels.Length; i++)
             {
                 var w = c.Wheels[i];
-                if (w != null && !w.WasCollected && w.enabled) w.enabled = false;
+                if (w == null || w.WasCollected) continue;
+                CaptureRest(c, i, w);
+                if (w.enabled) w.enabled = false;
             }
             c.WtuDisabled = true;
         }
+        else if (c.Wheels != null)
+        {
+            for (int i = 0; i < c.Wheels.Length; i++)
+                CaptureRest(c, i, c.Wheels[i]);
+        }
+    }
+
+    static void CaptureRest(Car c, int i, WheelTransformUpdater w)
+    {
+        if (c == null || i < 0 || i >= c.RestOk.Length || c.RestOk[i]) return;
+        if (w == null || w.WasCollected) return;
+        try
+        {
+            var wt = w.wheelTransform;
+            if (wt == null) return;
+            c.RestLocal[i] = wt.localRotation;
+            c.RestOk[i] = true;
+        }
+        catch { }
     }
 
     static void RestoreWtu(Car c)
@@ -124,11 +147,15 @@ internal static class RemoteVisuals
             try
             {
                 var w = c.Wheels[i];
-                if (w != null && !w.WasCollected) w.enabled = true;
+                if (w == null || w.WasCollected) continue;
+                if (i < c.RestOk.Length && c.RestOk[i] && w.wheelTransform != null)
+                    w.wheelTransform.localRotation = c.RestLocal[i];
+                w.enabled = true;
             }
             catch { }
         }
         c.WtuDisabled = false;
+        for (int i = 0; i < c.RestOk.Length; i++) c.RestOk[i] = false;
     }
 
     static void ApplyLights(FusionPlayer fp, Car c)
@@ -161,13 +188,30 @@ internal static class RemoteVisuals
         var bodySpeed = ForwardSpeedMs(fp, c, dt);
         TrackPos(fp, c);
 
+        // T1.1: zero-filled WheelsAngularVelocity must not block bodyV/radius fallback.
+        Il2CppSystem.Collections.Generic.List<float> angList = null;
+        var anyAlive = false;
+        try
+        {
+            angList = c.Status != null ? c.Status.WheelsAngularVelocity : null;
+            if (angList != null)
+            {
+                for (int k = 0; k < angList.Count; k++)
+                    if (Mathf.Abs(angList[k]) > (float)WheelSpinLogic.NetAngAliveThresholdRadS) { anyAlive = true; break; }
+            }
+        }
+        catch { angList = null; }
+        c.NetAngAliveUntil = (float)WheelSpinLogic.ExtendAliveUntil(t, c.NetAngAliveUntil, anyAlive);
+        var netAlive = WheelSpinLogic.IsAlive(t, c.NetAngAliveUntil);
+
         for (int i = 0; i < c.Wheels.Length && i < c.SpinDeg.Length; i++)
         {
             var w = c.Wheels[i];
             if (w == null || w.WasCollected) continue;
+            CaptureRest(c, i, w);
             var wt = w.wheelTransform;
             if (wt == null) continue;
-            float radius = 0.38f;
+            float radius = (float)WheelSpinLogic.DefaultRadius;
             try
             {
                 var vb = fp.vehicleBase;
@@ -175,33 +219,29 @@ internal static class RemoteVisuals
             }
             catch { }
 
-            // Prefer per-wheel angular velocity from the host's NetworkedVehicleStatus (rad/s).
-            var spun = false;
+            double netAng = 0;
+            var haveNet = false;
             try
             {
-                var ang = c.Status != null ? c.Status.WheelsAngularVelocity : null;
-                if (ang != null && i < ang.Count)
-                {
-                    c.SpinDeg[i] += ang[i] * Mathf.Rad2Deg * dt;
-                    spun = true;
-                }
+                if (angList != null && i < angList.Count) { netAng = angList[i]; haveNet = true; }
             }
-            catch { }
-            if (!spun)
+            catch { haveNet = false; }
+            if (!haveNet)
             {
-                float wheelSpeed = bodySpeed;
                 try
                 {
                     var ws = c.Status != null ? c.Status.WheelsSpeed : null;
-                    if (ws != null && i < ws.Count) wheelSpeed = ws[i];
+                    if (ws != null && i < ws.Count) bodySpeed = ws[i];
                 }
                 catch { }
-                c.SpinDeg[i] += (wheelSpeed / radius) * Mathf.Rad2Deg * dt;
             }
+            var rate = WheelSpinLogic.RateRadS(bodySpeed, netAng, radius, netAlive && haveNet);
+            c.SpinDeg[i] += (float)(rate * Mathf.Rad2Deg * dt);
             if (c.SpinDeg[i] > 1e6f || c.SpinDeg[i] < -1e6f) c.SpinDeg[i] %= 360f;
             var steerDeg = w.m_isFrontWheel ? steerIn * maxSteer : 0f;
-            // VPP visual convention on OTH cars: local X = roll, local Y = steer (matches WheelTransformUpdater's angles).
-            wt.localRotation = Quaternion.Euler(c.SpinDeg[i], steerDeg, 0f);
+            // §8.2 default (probe deferred post-release): local X = roll, local Y = steer; compose over rest pose.
+            var rest = c.RestOk[i] ? c.RestLocal[i] : Quaternion.identity;
+            wt.localRotation = Quaternion.Euler(0f, steerDeg, 0f) * rest * Quaternion.Euler(c.SpinDeg[i], 0f, 0f);
         }
         WheelFrames++;
     }

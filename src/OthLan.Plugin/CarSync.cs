@@ -400,7 +400,7 @@ internal static class CarSync
     {
         if (now < _nextScan) return;
         _nextScan = now + 1f;
-        try { _players = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { _players = Array.Empty<FusionPlayer>(); }
+        _players = CarRegistry.Players;
         var w = new VehicleWinchSystem[_players.Length];
         for (int i = 0; i < _players.Length; i++)
         {
@@ -416,22 +416,43 @@ internal static class CarSync
     /// <summary>The car's own winch is attached (to a tree, an object or another car), or another car's winch pulls this
     /// car. The rope force is applied by the host's simulation; overriding the pose would cancel it, so CarSync leaves
     /// such a car to vanilla Fusion (as without the mod) while the rope is attached.</summary>
-    public static bool WinchInvolved(FusionPlayer car, PlayerRef pref)
+    public static bool WinchInvolved(FusionPlayer car, PlayerRef pref) => WinchKindOf(car, pref) != WinchKindLogic.Kind.None;
+
+    /// <summary>0.2.0 T1.4: World (tree/object) vs Car (player↔player). For suspend logs and stage 4 authority.</summary>
+    public static WinchKindLogic.Kind WinchKindOf(FusionPlayer car, PlayerRef pref, out int otherSlot)
     {
+        otherSlot = -1;
         try
         {
             var ws = _winches; var ps = _players;
+            bool ownRope = false, ownToPlayer = false, towed = false;
             for (int i = 0; i < ps.Length && i < ws.Length; i++)
             {
                 var w = ws[i]; if (w == null || ps[i] == null) continue;
                 if (!w.WinchIsAttached) continue;
-                if (ps[i] == car) return true;                     // own rope
-                if (w.WinchedCarPlayerRef == pref) return true;    // someone tows this car
+                if (ps[i] == car)
+                {
+                    ownRope = true;
+                    try
+                    {
+                        var wr = w.WinchedCarPlayerRef;
+                        if (wr.IsRealPlayer) { ownToPlayer = true; otherSlot = wr.PlayerId; }
+                    }
+                    catch { }
+                }
+                else if (w.WinchedCarPlayerRef == pref)
+                {
+                    towed = true;
+                    try { otherSlot = ps[i].Object != null ? ps[i].Object.InputAuthority.PlayerId : i; } catch { otherSlot = i; }
+                }
             }
+            return WinchKindLogic.Classify(ownRope, ownToPlayer, towed);
         }
         catch { }
-        return false;
+        return WinchKindLogic.Kind.None;
     }
+
+    public static WinchKindLogic.Kind WinchKindOf(FusionPlayer car, PlayerRef pref) => WinchKindOf(car, pref, out _);
 
     /// <summary>Own car's winch (self-test).</summary>
     public static VehicleWinchSystem OwnWinch(out FusionPlayer car)
@@ -522,7 +543,11 @@ internal static class CarSync
         var pings = HostPings.Snapshot();   // once per frame, not per car
         var hostTick = r.Tick.Raw; var tickDt = (double)r.DeltaTime;
         var work = _work;
-        try { HostApplyCars(r, work, cfg, ocfg, nowS, dt, pings, hostTick, tickDt); }
+        try
+        {
+            using (FrameCost.Measure(FrameCost.HostFollow))
+                HostApplyCars(r, work, cfg, ocfg, nowS, dt, pings, hostTick, tickDt);
+        }
         finally { NetTrace.FollowFlush(LastAction, dt); }
     }
 

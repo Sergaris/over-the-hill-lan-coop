@@ -51,6 +51,21 @@ internal static class HostPings
         lock (_peers) foreach (var kv in _peers) if (kv.Value.Ep != null && now - kv.Value.LastSeen <= 10) HostInfo.SendTo(b, kv.Value.Ep);
     }
 
+    /// <summary>0.2.0 T3.3: broadcast OTC3 to every recent peer except the sender endpoint.</summary>
+    public static void BroadcastExcept(byte[] b, int len, IPEndPoint except)
+    {
+        var now = Now;
+        byte[] payload = b;
+        if (len != b.Length) { payload = new byte[len]; Array.Copy(b, payload, len); }
+        lock (_peers)
+            foreach (var kv in _peers)
+            {
+                if (kv.Value.Ep == null || now - kv.Value.LastSeen > 10) continue;
+                if (except != null && kv.Value.Ep.Equals(except)) continue;
+                HostInfo.SendTo(payload, kv.Value.Ep);
+            }
+    }
+
     /// <summary>(ms or NaN, no link / recovering, loss%, seconds without any echo or -1) per slot.</summary>
     public static Dictionary<int, (double ms, bool timedOut, double loss, double noLinkS)> Snapshot()
     {

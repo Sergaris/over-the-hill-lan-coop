@@ -88,6 +88,7 @@ internal static class ClientLink
                 var d = u.Receive(ref from);
                 if (d.Length >= 5 && BitConverter.ToUInt32(d, 0) == OutageLogic.StatusMagic) { if (!Drop()) LinkLabels.OnStatus(d, Now); continue; }
                 if (OutageLogic.TryDecodeAccept(d, out var aslot, out var actr)) { if (!Drop()) OwnCar.OnAccept(aslot, actr); continue; }
+                if (d.Length >= 4 && BitConverter.ToUInt32(d, 0) == CarWire.Magic) { if (!Drop()) CarRelay.OnClientPacket(d, d.Length, Now); continue; }
                 if (!CarSyncLogic.TryDecodePing(d, out var kind, out _, out var seq, out var flags)) continue;
                 if (Drop()) continue;
                 if (flags >= 0) Later(() => CarSync.OnHostFlags(flags, Now));   // host's session CarSync state

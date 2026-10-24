@@ -113,6 +113,7 @@ internal static class HostInfo
                         continue;
                     }
                     if (magic == CarSyncLogic.PoseMagic) { CarSync.OnPosePacket(data, ep); continue; }
+                    if (magic == CarWire.Magic) { CarRelay.OnPacket(data, data.Length, ep, HostPings.Now); continue; }
                 }
                 var text = Encoding.UTF8.GetString(data).Trim();
                 if (text.StartsWith(SlotRequest, StringComparison.Ordinal))

@@ -325,8 +325,7 @@ internal static unsafe class Autopilot
             _nextFind = now + 1f; _own = null;
             try
             {
-                foreach (var fp in UnityEngine.Object.FindObjectsOfType<FusionPlayer>())
-                    if (fp != null && fp.Object != null && fp.Object.HasInputAuthority) { _own = fp; break; }
+                if (CarRegistry.TryGetOwn(out var e) && e.Fp != null) _own = e.Fp;
             }
             catch { }
         }
@@ -382,7 +381,7 @@ internal static unsafe class Autopilot
         _ramming = Driving && rb != null && _ramFrom >= 0 && t >= _ramFrom && t < _ramTo;
         if (_ramming)
         {
-            if (now >= _nextRamScan) { _nextRamScan = now + 1f; try { _ramCars = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { } }
+            if (now >= _nextRamScan) { _nextRamScan = now + 1f; _ramCars = CarRegistry.Players; }
             FusionPlayer best = null; float bd = float.MaxValue;
             foreach (var fp in _ramCars)
             {
@@ -962,7 +961,7 @@ internal static unsafe class Autopilot
         _nextLightSample = t + 0.5f;
         try
         {
-            foreach (var fp in UnityEngine.Object.FindObjectsOfType<FusionPlayer>())
+            foreach (var fp in CarRegistry.Players)
             {
                 if (fp == null || fp.Object == null || fp.Object.HasInputAuthority) continue;
                 var want = fp.ButtonDown(NetworkInputData.VehicleButtons.Headlights);
@@ -1035,7 +1034,7 @@ internal static unsafe class Autopilot
         var ci = CultureInfo.InvariantCulture;
         string running = "", tick = "";
         try { var r = OverlandNetworkRunner.Instance?.NetworkRunner; if (r != null) { running = r.IsRunning ? "1" : "0"; if (r.IsRunning) tick = r.Tick.Raw.ToString(ci); } } catch { }
-        if (now >= _nextTraceScan) { _nextTraceScan = now + 1f; try { _tracePlayers = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { _tracePlayers = Array.Empty<FusionPlayer>(); } }
+        if (now >= _nextTraceScan) { _nextTraceScan = now + 1f; _tracePlayers = CarRegistry.Players; }
         Vector3 p = rb != null ? rb.position : Vector3.zero; var sp = rb != null ? rb.linearVelocity.magnitude * 3.6f : 0f;
         // host: the first remote car (the client under test)
         string rs = "", rx = "", ry = "", rz = "", rk = "", st = "", th = "", br = "", it = "";

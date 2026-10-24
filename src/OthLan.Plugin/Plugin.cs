@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.othlan.lan";
     public const string Name = "OTH-LAN";
-    public const string Version = "0.1.9.3";
+    public const string Version = "0.2.0";
 
     internal static ManualLogSource L;
     internal static ConfigEntry<int> Port;
@@ -33,12 +33,14 @@ public class Plugin : BasePlugin
         CarCheckpointMinMeters, CarCheckpointMinDegrees, CarCheckpointSoftSeconds, CarContactHoldSeconds,
         CarHalfWidth, CarHalfLength, CarHalfHeight, CarContactMargin, PingShowLossFromPct;
     internal static ConfigEntry<bool> CarContactPause, CarPosePlayback;
+    internal static ConfigEntry<int> CarStreamRedundancy;
     internal static ConfigEntry<bool> OwnCarAuthority, ContactBoxFromColliders, MenuButton, AllowMods, NetStatsLog;
     internal static ConfigEntry<bool> RemoteSmoothing, CarFollowVelocity, CarTeleportOnGameMove;
     internal static ConfigEntry<float> CarServoTau, CarServoVelTau, CarServoMaxCorrection, CarServoMaxTurn, CarServoRotLerpTau, CarServoPosLerpTau;
     internal static ConfigEntry<float> RemoteExtrapolateSeconds, RemoteSmoothTau, RemoteSmoothTauLarge, RemoteMaxCorrection, RemoteMaxCorrectionDeg, RemoteSnapMeters, RemoteAbsorbDegrees, RemoteStarvedSeconds, RemoteProxySmoothing, RemoteProxySnapMeters, RemoteProxySnapDegrees;
     internal static ConfigEntry<float> InputBufferSeconds;
     internal static ConfigEntry<bool> OwnFreezeSmoothing, OwnLocalClock, RemoteInterpolate, OwnLocalFreshInput;
+    internal static ConfigEntry<string> ClientPhysicsMode;
     internal static ConfigEntry<bool> SuspendOnContact, SuspendOnWinch;
     internal static ConfigEntry<float> SuspendResumeSeconds;
     internal static ConfigEntry<float> OwnFreezeExtrapSeconds, OwnFreezeDecaySeconds, OwnFreezeSnapMeters;
@@ -51,6 +53,8 @@ public class Plugin : BasePlugin
 
     static ConfigFile _cfg;
     internal static string CfgPath => _cfg?.ConfigFilePath;
+    /// <summary>Live bound config (SaveOnConfigSet=false — disk file may lag; prefer this for session dumps).</summary>
+    internal static ConfigFile Cfg => _cfg;
 
     public override void Load()
     {
@@ -149,6 +153,15 @@ public class Plugin : BasePlugin
         OwnFreezeSnapMeters = Config.Bind("Netcode", "OwnFreezeSnapMeters", 2f, "Client: differences larger than this (respawn, rescue) snap instead of blending.");
         InputBufferSeconds = Config.Bind("Netcode", "InputBufferSeconds", 8f, "Client: how many seconds of own inputs Fusion may keep unconfirmed (game: 1 s). With 1 s, a host-to-client stall of ~0.7 s at 200 ms ping made Fusion drop your inputs (log: 'buffer was full') = jerky control. 0 = game default.");
         NetStatsLog = Config.Bind("Netcode", "StatsToLog", true, "Write network statistics (stalls, corrections, smoothness) to the log every 30 s of a session.");
+        ClientPhysicsMode = Config.Bind("Netcode", "ClientPhysicsMode", "SimulateForward",
+            "Client only: Fusion ClientPhysicsSimulation. SimulateForward = Physics.Simulate only on forward ticks (less CPU on resim; recommended). Game = leave the game's default (usually SimulateAlways).");
+        if (ConfigVersion.Value < 6)
+        {
+            // 0.2.0: SimulateForward + OTC3 stream defaults. OwnLocalClock stays on (T2.4; LIVE A/B after release).
+            L.LogWarning($"[Config] migration v6: ClientPhysicsMode=SimulateForward (was {ClientPhysicsMode.Value})");
+            ClientPhysicsMode.Value = "SimulateForward";
+            ConfigVersion.Value = 6;
+        }
         RemoteSmoothing = Config.Bind("Netcode", "RemoteSmoothing", false, "Experimental, off: needs a separate InterpolationTarget, which Over The Hill's cars do not have (then it does nothing; the other players' cars are smoothed by RemoteProxy* instead). Draw the other players' cars smoothly: keep them moving through short host stalls (up to RemoteExtrapolateSeconds) and fade network corrections out instead of jumping. Visual only (physics and collisions unchanged).");
         RemoteExtrapolateSeconds = Config.Bind("Netcode", "RemoteExtrapolateSeconds", 0.5f, "Remote smoothing: how long another car keeps moving at its last speed while no host data arrives.");
         RemoteSmoothTau = Config.Bind("Netcode", "RemoteSmoothTau", 0.25f, "Remote smoothing: time constant (s) for fading out a small correction (up to 25 cm).");
@@ -157,12 +170,13 @@ public class Plugin : BasePlugin
         RemoteMaxCorrectionDeg = Config.Bind("Netcode", "RemoteMaxCorrectionDeg", 180f, "Remote smoothing: rotation correction speed limit in deg/s.");
         RemoteSnapMeters = Config.Bind("Netcode", "RemoteSnapMeters", 15f, "Remote smoothing: jumps larger than this are shown at once (respawn, rescue).");
         RemoteAbsorbDegrees = Config.Bind("Netcode", "RemoteAbsorbDegrees", 3f, "Remote smoothing: rotation steps larger than this in one frame are faded out.");
-        RemoteStarvedSeconds = Config.Bind("Netcode", "RemoteStarvedSeconds", 0.1f, "Remote smoothing (client): no host snapshot for this long = stall (only then a frozen car is extrapolated).");
+        RemoteStarvedSeconds = Config.Bind("Netcode", "RemoteStarvedSeconds", 0.1f, "Remote smoothing (client): no NEW host snapshot (ServerTickAge) for this long = stall; only then extrapolate. A car that really stopped is not extrapolated.");
         RemoteProxySmoothing = Config.Bind("Netcode", "RemoteProxySmoothingSeconds", 0.25f, "Client: Fusion's correction smoothing time for the other players' cars (game default 0.1 s). Remote cars are predicted ahead of the host; when the other driver brakes or turns, the correction is drawn over this time instead of in one frame. 0 = game default.");
         RemoteProxySnapMeters = Config.Bind("Netcode", "RemoteProxySnapMeters", 10f, "Client: corrections of the other players' cars larger than this snap (game default 2 m; respawns and rescues are larger). 0 = game default.");
         RemoteProxySnapDegrees = Config.Bind("Netcode", "RemoteProxySnapDegrees", 90f, "Client: rotation corrections of the other players' cars larger than this snap (game default 30). 0 = game default.");
         CarSendHz = Config.Bind("CarSync", "SendHz", 30f, "Client: own-car pose packets per second (0.1.9.1: was 20; higher rate shortens host follower lag).");
         CarPosePlayback = Config.Bind("CarSync", "PosePlayback", true, "Host: jitter buffer + Hermite for the follower target (0.1.9.1). Play head holds the newest sample (tick-age still applied in CarSync); delay is jitter-only (~1 packet).");
+        CarStreamRedundancy = Config.Bind("CarSync", "Redundancy", 3, "0.2.0 OTC3: how many recent own-car states to pack in each stream packet (1..3).");
         CarHighPingMs = Config.Bind("CarSync", "HighPingMs", 150f, "RTT above which the host switches from continuous blending to checkpoints.");
         CarHysteresisMs = Config.Bind("CarSync", "HysteresisMs", 15f, "Switch to checkpoint mode above HighPingMs+this, back below HighPingMs-this.");
         CarCheckpointSeconds = Config.Bind("CarSync", "CheckpointSeconds", 1.5f, "High-ping mode: force-align every N seconds.");

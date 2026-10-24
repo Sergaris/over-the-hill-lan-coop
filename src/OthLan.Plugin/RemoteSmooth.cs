@@ -23,12 +23,12 @@ internal static class RemoteSmooth
         public Transform It; public bool Usable, Checked;
         public Vector3 LastFusionP, LastWrittenP; public Quaternion LastFusionQ = Quaternion.identity, LastWrittenQ = Quaternion.identity, LastDrawnQ = Quaternion.identity;
         public Quaternion Qo = Quaternion.identity; public Vector3 W; public bool HasQ, Wrote;
-        public float LastFusionMoveAt = -1;   // 0.1.9: per-car starve (global SnapshotAge wrongly freezes all remotes)
+        public float HoldRotFor; // T1.2: Hold/Extrapolate rotation timeout
         public readonly Smoothness Raw = new();
     }
     static readonly Dictionary<IntPtr, Car> _cars = new();
     static readonly RemoteSmoother.Cfg _cfg = new();
-    static FusionPlayer[] _players = Array.Empty<FusionPlayer>(); static float _nextScan; static IntPtr _runner;
+    static FusionPlayer[] _players = Array.Empty<FusionPlayer>(); static IntPtr _runner;
     public static readonly Smoothness RawAll = new();
     public static int Absorbs, Snaps, ExtrapFrames, NoTarget, FusionSkipped;
     static float _lastT = -1;
@@ -37,7 +37,7 @@ internal static class RemoteSmooth
 
     public static bool Enabled => Plugin.RemoteSmoothing?.Value ?? false;
 
-    static void ResetAll() { _cars.Clear(); _interpolated.Clear(); RawAll.Reset(); Absorbs = Snaps = ExtrapFrames = NoTarget = FusionSkipped = ProxiesTuned = Interpolated = 0; _nextScan = 0; _lastT = -1; RemoteVisuals.Reset(); }
+    static void ResetAll() { _cars.Clear(); _interpolated.Clear(); RawAll.Reset(); Absorbs = Snaps = ExtrapFrames = NoTarget = FusionSkipped = ProxiesTuned = Interpolated = 0; _lastT = -1; RemoteVisuals.Reset(); }
 
     public static string StateOf(IntPtr p) => _cars.TryGetValue(p, out var c) ? (c.Usable ? $"{c.S.Last}/off{c.S.OffsetLength * 100:0}cm" : "unusable") : "-";
     public static int StateCode(IntPtr p) => _cars.TryGetValue(p, out var c) && c.Usable ? (int)c.S.Last : -1;
@@ -99,7 +99,7 @@ internal static class RemoteSmooth
         if (Plugin.RemoteInterpolate.Value == on) return;
         Plugin.RemoteInterpolate.Value = on;
         Plugin.L.LogInfo($"[RemoteSmooth] RemoteInterpolate {(on ? "on" : "off")} ({why})");
-        foreach (var fp in _players)
+        foreach (var fp in CarRegistry.Players)
         {
             try
             {
@@ -115,13 +115,14 @@ internal static class RemoteSmooth
     /// <summary>Main thread, LateUpdate.</summary>
     public static void LateTick()
     {
+        using var _cost = FrameCost.Measure(FrameCost.RemoteView);
         if (LanState.Active == LanRole.Off || LanState.LanRunner == IntPtr.Zero) { if (_runner != IntPtr.Zero) { _runner = IntPtr.Zero; ResetAll(); } return; }
         NetworkRunner r = null;
         try { r = OverlandNetworkRunner.Instance?.NetworkRunner; } catch { }
         if (r == null || r.Pointer != LanState.LanRunner || !r.IsRunning) return;
         if (r.Pointer != _runner) { _runner = r.Pointer; ResetAll(); }
         var t = Time.realtimeSinceStartup; var dt = _lastT < 0 ? 0 : t - _lastT; _lastT = t;
-        if (t >= _nextScan) { _nextScan = t + 1f; try { _players = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { _players = Array.Empty<FusionPlayer>(); } }
+        _players = CarRegistry.Players;
         var client = r.IsClient && !r.IsServer;
         var starveS = Plugin.RemoteStarvedSeconds.Value;
         // 0.1.9 U5: under RemoteInterpolate OTH cars have no InterpolationTarget (Usable=false), so the old
@@ -135,6 +136,13 @@ internal static class RemoteSmooth
             try
             {
                 if (fp == null || fp.WasCollected || fp.Object == null || fp.Object.HasInputAuthority) continue;
+                // 0.2.0 T3.5: OTC3 stream owns the draw when fresh — do not fight RemoteCarView.
+                try
+                {
+                    var slot = fp.Object.InputAuthority.AsIndex;
+                    if (RemoteCarView.HasFreshStream(slot, NetClock.Now)) continue;
+                }
+                catch { }
                 if (!_cars.TryGetValue(fp.Pointer, out var c)) _cars[fp.Pointer] = c = new Car();
                 if (!c.Checked)
                 {
@@ -157,11 +165,9 @@ internal static class RemoteSmooth
                 var fpos = vis.position; var fq = vis.rotation;
                 // Fusion did not write the target this frame (our value is still there): its pose is the last one we saw.
                 if (c.Wrote && fpos == c.LastWrittenP && fq == c.LastWrittenQ) { fpos = c.LastFusionP; fq = c.LastFusionQ; FusionSkipped++; }
-                // Per-car starve: this remote's Fusion pose has not moved for RemoteStarvedSeconds (not global SnapshotAge —
-                // one stalled slot must not force Extrapolate/Hold on every other car in fc4).
-                if (c.LastFusionMoveAt < 0 || (fpos - c.LastFusionP).sqrMagnitude > 1e-8f || Quaternion.Angle(fq, c.LastFusionQ) > 1e-3f)
-                    c.LastFusionMoveAt = t;
-                var starved = client && (t - c.LastFusionMoveAt) > starveS;
+                // T1.2: starve = no new host snapshots (ServerTickAge), not "this car's Fusion pose frozen".
+                var age = NetStats.ServerTickAge;
+                var starved = client && age >= 0 && age > starveS;
                 // raw = what Fusion alone would have drawn (same metric as NetStats, for the A/B in one run)
                 if (dt > 0 && dt <= 0.25f) { var f0 = c.Raw.Frames; var h = c.Raw.Add(fpos.x, fpos.y, fpos.z, dt); if (c.Raw.Frames > f0) RawAll.Record(h); } else c.Raw.Break();
                 // IT path still needs RemoteSmoothing=true; root path is on whenever RemoteInterpolate is.
@@ -171,17 +177,26 @@ internal static class RemoteSmooth
                 Absorbs += c.S.Absorbed - a0; Snaps += c.S.Snaps - s0; ExtrapFrames += c.S.ExtrapolatedFrames - e0;
                 // rotation: angular velocity estimate from Fusion's frames; same absorb / extrapolate / decay as position
                 Quaternion drawnQ;
-                if (!c.HasQ || dt <= 0 || dt > 0.5f || c.S.Snaps != s0) { c.Qo = Quaternion.identity; c.W = Vector3.zero; drawnQ = fq; c.HasQ = true; }
+                if (!c.HasQ || dt <= 0 || dt > 0.5f || c.S.Snaps != s0) { c.Qo = Quaternion.identity; c.W = Vector3.zero; drawnQ = fq; c.HasQ = true; c.HoldRotFor = 0; }
                 else
                 {
                     var dq = fq * Quaternion.Inverse(c.LastFusionQ); dq.ToAngleAxis(out var ang, out var axis);
                     if (ang > 180) ang -= 360;
                     var frozen = Quaternion.Angle(fq, c.LastFusionQ) < 1e-3f;
                     if (c.S.Last == RemoteSmoother.State.Extrapolate)
-                    { drawnQ = Quaternion.AngleAxis(c.W.magnitude * Mathf.Rad2Deg * dt, c.W.sqrMagnitude > 1e-8f ? c.W.normalized : Vector3.up) * c.LastDrawnQ; c.Qo = drawnQ * Quaternion.Inverse(fq); }
-                    else if (c.S.Last == RemoteSmoother.State.Hold) { drawnQ = c.LastDrawnQ; c.Qo = drawnQ * Quaternion.Inverse(fq); }
+                    {
+                        c.HoldRotFor = 0;
+                        drawnQ = Quaternion.AngleAxis(c.W.magnitude * Mathf.Rad2Deg * dt, c.W.sqrMagnitude > 1e-8f ? c.W.normalized : Vector3.up) * c.LastDrawnQ; c.Qo = drawnQ * Quaternion.Inverse(fq);
+                    }
+                    else if (c.S.Last == RemoteSmoother.State.Hold)
+                    {
+                        c.HoldRotFor += dt;
+                        if (c.HoldRotFor > _cfg.HoldMaxSeconds) { c.Qo = Quaternion.identity; drawnQ = fq; c.HoldRotFor = 0; }
+                        else { drawnQ = c.LastDrawnQ; c.Qo = drawnQ * Quaternion.Inverse(fq); }
+                    }
                     else
                     {
+                        c.HoldRotFor = 0;
                         var expectedQ = Quaternion.AngleAxis(c.W.magnitude * Mathf.Rad2Deg * dt, c.W.sqrMagnitude > 1e-8f ? c.W.normalized : Vector3.up) * c.LastDrawnQ;
                         if (c.S.LastAbsorbed || Quaternion.Angle(c.Qo * fq, expectedQ) > Plugin.RemoteAbsorbDegrees.Value)
                             c.Qo = expectedQ * Quaternion.Inverse(fq);
@@ -192,6 +207,7 @@ internal static class RemoteSmooth
                     }
                 }
                 var drawn = new Vector3((float)x, (float)y, (float)z);
+                if (drawn.y < fpos.y - 0.3f) NetStats.RemoteBelow++;
                 c.LastFusionP = fpos; c.LastFusionQ = fq;
                 if ((drawn - fpos).sqrMagnitude > 1e-8f || Quaternion.Angle(drawnQ, fq) > 1e-3f) { vis.SetPositionAndRotation(drawn, drawnQ); c.Wrote = true; c.LastWrittenP = vis.position; c.LastWrittenQ = vis.rotation; }
                 else c.Wrote = false;

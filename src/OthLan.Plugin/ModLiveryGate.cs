@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace OthLan;
@@ -21,10 +22,14 @@ internal static class ModLiveryGate
     static Action _onCancel;
     static Action _onJoinWithout;
 
+    const string ModalOwner = "modgate";
     static GameObject _root;
     static TMP_Text _title, _body, _list, _status;
     static UIButtonSelector _dlBtn, _skipBtn, _cancelBtn;
     static int _locGen = -1;
+    static GameObject _prevSelected;
+    static ContextUIMainMenu _menuHid;
+    static bool _hidButtons;
 
     public static bool Active => State != St.Idle;
 
@@ -35,6 +40,9 @@ internal static class ModLiveryGate
     public static void Begin(IReadOnlyList<ModLiveryGateLogic.ModRef> required, IReadOnlyList<ModLiveryGateLogic.ModRef> missing,
         Action onReady, Action onCancel, Action onJoinWithout = null)
     {
+        if (UiModal.Current != null && UiModal.Current != ModalOwner)
+        { Plugin.L.LogInfo($"[ModLivery] gate deferred (modal={UiModal.Current})"); return; }
+        if (!UiModal.TryOpen(ModalOwner)) return;
         _required = required != null ? new List<ModLiveryGateLogic.ModRef>(required) : new();
         _missing = missing != null ? new List<ModLiveryGateLogic.ModRef>(missing) : new();
         _onReady = onReady; _onCancel = onCancel; _onJoinWithout = onJoinWithout;
@@ -42,8 +50,11 @@ internal static class ModLiveryGate
         Plugin.L.LogInfo($"[ModLivery] gate: {_missing.Count} missing of {_required.Count} required");
         // Do NOT Overlay.Show() — that opens F7. This gate is its own in-game Canvas.
         Overlay.Hide();
+        try { _prevSelected = EventSystem.current != null ? EventSystem.current.currentSelectedGameObject : null; } catch { _prevSelected = null; }
         EnsureUi();
+        HideMainMenuButtons();
         RefreshUi();
+        FocusInitial();
     }
 
     public static void Cancel()
@@ -111,17 +122,76 @@ internal static class ModLiveryGate
             RefreshUiStatusOnly();
         }
 
+        // T1.3: EventSystem Submit owns A/Enter; we only keep B/Esc → Cancel and KeepFocus.
         try
         {
             var kb = UnityEngine.InputSystem.Keyboard.current;
             var gp = UnityEngine.InputSystem.Gamepad.current;
             bool esc = kb != null && kb.escapeKey.wasPressedThisFrame || gp != null && gp.buttonEast.wasPressedThisFrame;
-            bool ok = kb != null && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame || kb.spaceKey.wasPressedThisFrame)
-                || gp != null && gp.buttonSouth.wasPressedThisFrame;
             if (esc) Cancel();
-            else if (ok && State == St.Prompt) StartDownload();
         }
         catch { }
+        KeepGateFocus();
+    }
+
+    static void FocusInitial()
+    {
+        LinkGateButtons();
+        var prefer = _dlBtn != null && _dlBtn.gameObject.activeInHierarchy ? _dlBtn : _skipBtn;
+        if (prefer != null) UiNav.Select(prefer.gameObject);
+    }
+
+    static void LinkGateButtons()
+    {
+        var row = new Selectable[] { _dlBtn, _skipBtn, _cancelBtn };
+        // Drop nulls while preserving order for LinkRow.
+        var list = new List<Selectable>(3);
+        foreach (var s in row) if (s != null && s.gameObject.activeInHierarchy) list.Add(s);
+        if (list.Count > 0) UiNav.LinkRow(list.ToArray());
+    }
+
+    static void KeepGateFocus()
+    {
+        var list = new List<Selectable>(3);
+        if (_dlBtn != null && _dlBtn.gameObject.activeInHierarchy) list.Add(_dlBtn);
+        if (_skipBtn != null && _skipBtn.gameObject.activeInHierarchy) list.Add(_skipBtn);
+        if (_cancelBtn != null && _cancelBtn.gameObject.activeInHierarchy) list.Add(_cancelBtn);
+        if (list.Count == 0) return;
+        var fallback = list[0];
+        if (_dlBtn != null && list.Contains(_dlBtn)) fallback = _dlBtn;
+        UiNav.KeepFocus(list.ToArray(), fallback);
+    }
+
+    static void HideMainMenuButtons()
+    {
+        _hidButtons = false; _menuHid = null;
+        try
+        {
+            var m = UnityEngine.Object.FindObjectOfType<ContextUIMainMenu>();
+            if (m == null || m.buttonsContainer == null) return;
+            m.buttonsContainer.gameObject.SetActive(false);
+            _menuHid = m; _hidButtons = true;
+        }
+        catch { }
+    }
+
+    static void RestoreMainMenuButtons()
+    {
+        if (_hidButtons && _menuHid != null && !_menuHid.WasCollected)
+        {
+            try { _menuHid.buttonsContainer.gameObject.SetActive(true); } catch { }
+        }
+        _hidButtons = false; _menuHid = null;
+        try
+        {
+            if (_prevSelected != null && !_prevSelected.WasCollected && _prevSelected.activeInHierarchy)
+                UiNav.Select(_prevSelected);
+            else if (CoopMenu.LocalCoopButton != null)
+                UiNav.Select(CoopMenu.LocalCoopButton);
+        }
+        catch { }
+        _prevSelected = null;
+        UiModal.Close(ModalOwner);
     }
 
     /// <summary>Kept for Overlay.OnGUI hook compatibility; drawing is Canvas-only.</summary>
@@ -142,7 +212,9 @@ internal static class ModLiveryGate
         _root.AddComponent<GraphicRaycaster>();
 
         var dim = Rect(_root.transform, "Dim", Vector2.zero, new Vector2(4000, 3000));
-        dim.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.6f);
+        var dimImg = dim.AddComponent<Image>();
+        dimImg.color = new Color(0f, 0f, 0f, 0.6f);
+        dimImg.raycastTarget = true; // T1.3: block clicks through to the menu
 
         var panel = Rect(_root.transform, "Panel", Vector2.zero, new Vector2(960, 600));
         panel.AddComponent<Image>().color = new Color(0.07f, 0.07f, 0.08f, 0.96f);
@@ -266,6 +338,7 @@ internal static class ModLiveryGate
         SetLabel(_cancelBtn, Loc.T("modGate.cancel"));
         if (_dlBtn != null) _dlBtn.gameObject.SetActive(State == St.Prompt);
         if (_skipBtn != null) _skipBtn.gameObject.SetActive(true); // available during download too
+        LinkGateButtons();
         RefreshUiStatusOnly();
     }
 
@@ -297,5 +370,6 @@ internal static class ModLiveryGate
         }
         _title = _body = _list = _status = null;
         _dlBtn = _skipBtn = _cancelBtn = null;
+        RestoreMainMenuButtons();
     }
 }

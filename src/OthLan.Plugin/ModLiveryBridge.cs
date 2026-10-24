@@ -59,7 +59,8 @@ internal static class ModLiveryBridge
 
         try
         {
-            foreach (var fp in UnityEngine.Object.FindObjectsOfType<FusionPlayer>())
+            CarRegistry.RefreshNow();
+            foreach (var fp in CarRegistry.Players)
             {
                 if (fp == null || fp.WasCollected) continue;
                 var vcc = fp.GetComponentInChildren<VehicleCustomizationController>() ?? fp.GetComponent<VehicleCustomizationController>();

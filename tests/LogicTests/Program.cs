@@ -39,12 +39,35 @@ static class Program
         // teleport: shown at once
         var tp = s.Step(fx + 2400, 0, 0, dt, c, false).x; Eq(Math.Abs(tp - (fx + 2400)) < 1e-9, true, "smooth: teleport not smoothed");
         Eq(s.Snaps, 1, "smooth: snap counted");
-        // long stall beyond ExtrapolateSeconds: holds, no runaway
+        // long stall: extrapolate then Hold; after HoldMaxSeconds snap to Fusion (T1.2)
         s = new RemoteSmoother(); fx = 0;
         for (int k = 0; k < 60; k++) { fx += 10 * dt; s.Step(fx, 0, 0, dt, c, false); }
-        double last = 0; for (int k = 0; k < 180; k++) last = s.Step(fx, 0, 0, dt, c, true).x;
-        Eq(last - fx <= 10 * c.ExtrapolateSeconds + 0.2, true, $"smooth: 3 s stall bounded ({last - fx:0.00} m ahead)");
-        Eq(s.Last, RemoteSmoother.State.Hold, "smooth: hold after the extrapolation window");
+        double last = 0; int snaps0 = s.Snaps;
+        for (int k = 0; k < 40; k++) last = s.Step(fx, 0, 0, dt, c, true).x;
+        Eq(last - fx <= 10 * c.ExtrapolateSeconds + 0.2, true, $"smooth: stall bounded before hold timeout ({last - fx:0.00} m ahead)");
+        for (int k = 0; k < 120; k++) last = s.Step(fx, 0, 0, dt, c, true).x;
+        Eq(s.Snaps > snaps0, true, "smooth: hold timeout counted as snap");
+        Eq(Math.Abs(last - fx) < 0.05, true, $"smooth: after hold snap at fusion ({last - fx:0.00})");
+        // T1.2 fall then stop without starve: no dive underground
+        s = new RemoteSmoother(); c = new RemoteSmoother.Cfg(); double y = 10, ground = 0;
+        for (int k = 0; k < 30; k++) { y -= 0.15; ground = y; var d = s.Step(0, y, 0, dt, c, false); Eq(d.y >= ground - c.MaxBelowMeters - 1e-9, true, "smooth: fall floor"); }
+        for (int k = 0; k < 200; k++)
+        {
+            var d = s.Step(0, ground, 0, dt, c, false);
+            Eq(d.y >= ground - c.MaxBelowMeters - 1e-9, true, "smooth: stop floor");
+            if (k == 19) Eq(s.OffsetLength < 0.01, true, $"smooth: stop offset gone ({s.OffsetLength:0.000})");
+        }
+        Eq(s.Last, RemoteSmoother.State.Follow, "smooth: stopped car Follow");
+        // T1.2 starve after fall: Y not extrapolated down
+        s = new RemoteSmoother(); y = 10;
+        for (int k = 0; k < 30; k++) { y -= 0.15; s.Step(0, y, 0, dt, c, false); }
+        ground = y; double minY = double.MaxValue;
+        for (int k = 0; k < 60; k++) { var d = s.Step(0, ground, 0, dt, c, true); if (d.y < minY) minY = d.y; }
+        Eq(minY >= ground - c.MaxBelowMeters - 1e-9, true, $"smooth: starve Y floor ({minY:0.00} vs {ground:0.00})");
+        s = new RemoteSmoother();
+        for (int k = 0; k < 600; k++) s.Step(1, 2, 3, dt, c, false);
+        Eq(s.Last, RemoteSmoother.State.Follow, "smooth: standing Follow");
+        Eq(s.OffsetLength < 1e-6, true, "smooth: standing offset 0");
         Eq(HostFollowLogic.ServoSpeed(1.0, 0.25, 6, 0.5, 0), 4.0, "servo: 1 m / 0.25 s = 4 m/s");
         Eq(HostFollowLogic.ServoSpeed(10.0, 0.25, 6, 0.5, 10), 11.0, "servo: capped at 6 + 0.5 v");
         Eq(HostFollowLogic.ServoSpeed(0, 0.25, 6, 0.5, 10), 0.0, "servo: no error, no correction");
@@ -592,8 +615,390 @@ static class Program
         Playback();
         ModGate();
         Hang();
+        SessionLogs();
+        DiagRetry();
+        FrameCost();
+        PoseSpeed();
+        WheelSpin();
+        UiModal();
+        WinchKind();
+        CarWireTests();
+        StatePlaybackTests();
+        RelayLogicTests();
         Console.WriteLine($"{total - fails}/{total} checks passed");
         return fails == 0 ? 0 : 1;
+    }
+
+    static void RelayLogicTests()
+    {
+        Eq(RelayLogic.Filter(2, true, true), RelayLogic.Decision.Accept, "relay: match accept");
+        Eq(RelayLogic.Filter(2, true, false), RelayLogic.Decision.DropWrongSlot, "relay: wrong ep");
+        Eq(RelayLogic.Filter(2, false, false), RelayLogic.Decision.DropUnknownPeer, "relay: unknown");
+        Eq(RelayLogic.Filter(CarSyncLogic.HostSlot, true, true), RelayLogic.Decision.DropWrongSlot, "relay: host slot over UDP");
+    }
+
+    // ---------- 0.2.0 T3.4 StatePlayback ----------
+    static void StatePlaybackTests()
+    {
+        var pb = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0.05, MaxDelayS = 0.15, DelayEwma = 0.5, SendHz = 30 });
+        // steady 30 Hz, 20 m/s, ± ±20 ms on arrival
+        var rng = new Random(1);
+        for (int i = 0; i < 90; i++)
+        {
+            double send = i / 30.0;
+            double arrive = send + 0.08 + (rng.NextDouble() - 0.5) * 0.04;
+            pb.Push(Mk(i, send, 20 * (float)send, 0, 20, 0), arrive);
+        }
+        double maxErr = 0;
+        for (int k = 0; k < 30; k++)
+        {
+            double now = 2.0 + k / 60.0;
+            var r = pb.SampleAt(now);
+            if (!r.Ok) continue;
+            var play = now - pb.OffsetS - r.DelayS;
+            var expect = 20 * play;
+            maxErr = Math.Max(maxErr, Math.Abs(r.Px - expect));
+        }
+        Eq(maxErr < 0.05, true, $"statepb: steady Hermite err {maxErr:0.000} m");
+
+        // 30% loss
+        pb = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0.05, MaxDelayS = 0.2, DelayEwma = 0.3, SendHz = 30 });
+        for (int i = 0; i < 60; i++)
+        {
+            if (i % 10 < 3) continue;
+            double send = i / 30.0;
+            pb.Push(Mk(i, send, 10 * (float)send, 0, 10, 0), send + 0.05);
+        }
+        float prev = float.NaN; double maxJump = 0; const double dt = 1.0 / 60.0;
+        for (int k = 0; k < 40; k++)
+        {
+            var r = pb.SampleAt(1.0 + k * dt);
+            if (!r.Ok) continue;
+            if (!float.IsNaN(prev))
+            {
+                var step = Math.Abs(r.Px - prev);
+                var expect = 10 * dt; // 10 m/s
+                maxJump = Math.Max(maxJump, Math.Abs(step - expect));
+            }
+            prev = r.Px;
+        }
+        Eq(maxJump < 0.10, true, $"statepb: loss jump excess {maxJump:0.000} m");
+
+        // break stream → extrap then stale
+        pb = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0.05, MaxDelayS = 0.1, DelayEwma = 1, SendHz = 30, MaxExtrapS = 0.25 });
+        for (int i = 0; i < 20; i++)
+        {
+            double send = i / 30.0;
+            pb.Push(Mk(i, send, 5 * (float)send, 1, 5, -2), send + 0.05);
+        }
+        var lastSend = 19 / 30.0;
+        var mid = pb.SampleAt(lastSend + 0.05 + 0.05 + 0.15); // within extrap
+        Eq(mid.Ok && mid.Extrapolated, true, "statepb: extrap after gap");
+        var held = pb.SampleAt(lastSend + 0.05 + 0.05 + 0.5);
+        Eq(held.Ok && held.Stale && !held.Extrapolated, true, "statepb: stale hold after MaxExtrap");
+
+        // fall then stop: y floor
+        pb = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0.02, MaxDelayS = 0.05, DelayEwma = 1, MaxExtrapS = 0.25, MaxBelowNewestM = 0.5 });
+        float y = 10;
+        for (int i = 0; i < 30; i++)
+        {
+            y -= 0.2f;
+            double send = i * 0.02;
+            pb.Push(Mk(i, send, 0, y, 0, -10, airborne: true), send + 0.02);
+        }
+        var ground = y;
+        for (int i = 30; i < 50; i++)
+        {
+            double send = i * 0.02;
+            pb.Push(Mk(i, send, 0, ground, 0, 0, airborne: false), send + 0.02);
+        }
+        double minY = double.MaxValue;
+        for (int k = 0; k < 40; k++)
+        {
+            var r = pb.SampleAt(1.0 + k / 60.0);
+            if (r.Ok && r.Py < minY) minY = r.Py;
+        }
+        Eq(minY >= ground - 0.05 - 1e-3, true, $"statepb: y floor {minY:0.00} vs {ground:0.00}");
+
+        // epoch snap once
+        pb = new StatePlayback();
+        pb.Push(Mk(1, 0.1, 0, 0, 0, 0, epoch: 1), 0.15);
+        pb.Push(Mk(2, 0.2, 1, 0, 0, 0, epoch: 1), 0.25);
+        pb.Push(Mk(3, 0.3, 100, 0, 0, 0, epoch: 2), 0.35);
+        var snap = pb.SampleAt(0.40);
+        Eq(snap.Ok && snap.Snap && Math.Abs(snap.Px - 100) < 1e-3, true, "statepb: epoch snap");
+        var after = pb.SampleAt(0.41);
+        Eq(after.Ok && !after.Snap, true, "statepb: snap only once");
+
+        // dupe seq
+        pb = new StatePlayback();
+        pb.Push(Mk(5, 0.1, 0, 0, 0, 0), 0.12);
+        pb.Push(Mk(5, 0.1, 9, 0, 0, 0), 0.13);
+        Eq(pb.Dupes, 1, "statepb: dupe counted");
+        Eq(pb.Count, 1, "statepb: dupe not stored");
+
+        // delayOverride 0 for host follower
+        pb = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0.1, MaxDelayS = 0.2, DelayEwma = 0 });
+        pb.Push(Mk(1, 1.0, 10, 0, 0, 0), 1.05);
+        pb.Push(Mk(2, 1.1, 12, 0, 0, 0), 1.15);
+        var host = pb.SampleAt(1.15, 0);
+        Eq(host.Ok && Math.Abs(host.Px - 12) < 0.05, true, $"statepb: delayOverride0 near newest ({host.Px})");
+    }
+
+    static StatePlayback.Sample Mk(int seq, double send, float px, float py, float vx, float vy, bool airborne = false, byte epoch = 1)
+        => new()
+        {
+            Seq = (uint)seq, SendTime = send, Epoch = epoch,
+            Px = px, Py = py, Pz = 0, Qw = 1,
+            Vx = vx, Vy = vy,
+            Flags = airborne ? CarWire.FlagAirborne : (byte)0,
+            WheelCount = 0,
+        };
+
+    // ---------- 0.2.0 T3.1 OTC3 wire ----------
+    static void CarWireTests()
+    {
+        Eq(CarWire.Magic, 0x3343544Fu, "carwire: magic OTC3");
+        Eq(CarWire.StateBytes(4), 92, "carwire: 4-wheel state size");
+        Eq(CarWire.StateBytes(6), 104, "carwire: 6-wheel state size");
+        Eq(CarWire.StateBytes(7), -1, "carwire: >6 wheels invalid");
+
+        var s = new CarWire.CarStateSample
+        {
+            Seq = 42, SendTime = 123.456,
+            Px = 1, Py = 2, Pz = 3, Qx = 0, Qy = 0, Qz = 0, Qw = 1,
+            Vx = 10, Vy = 0, Vz = -2, Wx = 0.1f, Wy = 0.2f, Wz = 0,
+            Flags = (byte)(CarWire.FlagHeadlights | CarWire.FlagEngineOn),
+            SteerDeg = 45f, WheelCount = 4,
+        };
+        s.SetWheel(0, new CarWire.WheelSample { RollDeg = 90, SpinRadS = 12.5f, SuspM = 0.05f });
+        s.SetWheel(1, new CarWire.WheelSample { RollDeg = 180, SpinRadS = -12.5f, SuspM = -0.02f });
+        s.SetWheel(2, new CarWire.WheelSample { RollDeg = 270, SpinRadS = 0, SuspM = 0 });
+        s.SetWheel(3, new CarWire.WheelSample { RollDeg = 0, SpinRadS = 1600f, SuspM = 0.1f });
+        var p = new CarWire.CarStatePacket { Slot = 2, Epoch = 7, Count = 1 };
+        p.SetState(0, s);
+        var buf = new byte[CarWire.MaxPacketBytes];
+        var n = CarWire.Encode(p, buf);
+        Eq(n > 0 && n == CarWire.HeaderSize + 92, true, $"carwire: encode size ({n})");
+        Eq(CarWire.TryDecode(buf.AsSpan(0, n), out var d), true, "carwire: decode ok");
+        Eq(d.Slot, (byte)2, "carwire: slot");
+        Eq(d.Epoch, (byte)7, "carwire: epoch");
+        Eq(d.Count, (byte)1, "carwire: count");
+        var r = d.S0;
+        Eq(r.Seq, 42u, "carwire: seq");
+        Eq(Math.Abs(r.SendTime - 123.456) < 1e-9, true, "carwire: sendTime");
+        Eq(Math.Abs(r.Px - 1) < 1e-5 && Math.Abs(r.Py - 2) < 1e-5 && Math.Abs(r.Pz - 3) < 1e-5, true, "carwire: pos");
+        Eq(Math.Abs(r.SteerDeg - 45f) < 0.02f, true, $"carwire: steer ({r.SteerDeg})");
+        Eq(r.Flags, (byte)(CarWire.FlagHeadlights | CarWire.FlagEngineOn), "carwire: flags");
+        Eq(r.WheelCount, (byte)4, "carwire: wheels");
+        Eq(Math.Abs(r.W0.SpinRadS - 12.5f) < 0.06f, true, $"carwire: spin0 ({r.W0.SpinRadS})");
+        Eq(Math.Abs(r.W3.SpinRadS - 1600f) < 0.1f, true, $"carwire: spin clip edge ({r.W3.SpinRadS})");
+
+        // steer ±45, spin clip beyond ±1600, 6 wheels, 3 states
+        s.SteerDeg = -45f; s.WheelCount = 6;
+        s.SetWheel(3, new CarWire.WheelSample { RollDeg = 10, SpinRadS = 2000f, SuspM = 0 }); // clips to 1600
+        s.SetWheel(4, new CarWire.WheelSample { RollDeg = 20, SpinRadS = -2000f, SuspM = 0 });
+        s.SetWheel(5, new CarWire.WheelSample { RollDeg = 359.9f, SpinRadS = 0, SuspM = 0.2f });
+        var p3 = new CarWire.CarStatePacket { Slot = 1, Epoch = 1, Count = 3 };
+        p3.SetState(0, s);
+        var s1 = s; s1.Seq = 41; s1.Px = 0.5f; p3.SetState(1, s1);
+        var s2 = s; s2.Seq = 40; s2.Px = 0; p3.SetState(2, s2);
+        n = CarWire.Encode(p3, buf);
+        Eq(n == CarWire.HeaderSize + 3 * 104, true, $"carwire: 3×6-wheel size ({n})");
+        Eq(n < 1200, true, "carwire: under MTU budget");
+        Eq(CarWire.TryDecode(buf.AsSpan(0, n), out d) && d.Count == 3 && d.S0.Seq == 42 && d.S2.Seq == 40, true, "carwire: 3-state roundtrip");
+        Eq(Math.Abs(d.S0.SteerDeg - (-45f)) < 0.02f, true, "carwire: steer -45");
+        Eq(Math.Abs(d.S0.W3.SpinRadS - 1600f) < 0.1f, true, "carwire: spin +clip");
+        Eq(Math.Abs(d.S0.W4.SpinRadS - (-1600f)) < 0.1f, true, "carwire: spin -clip");
+
+        Eq(CarWire.TryDecode(buf.AsSpan(0, n / 2), out _), false, "carwire: truncated rejected");
+        buf[0] ^= 1;
+        Eq(CarWire.TryDecode(buf.AsSpan(0, n), out _), false, "carwire: bad magic rejected");
+        buf[0] ^= 1;
+        var nanP = p; nanP.S0.Px = float.NaN;
+        Eq(CarWire.Encode(nanP, buf), -1, "carwire: NaN encode rejected");
+        var badCount = p; badCount.Count = 0;
+        Eq(CarWire.Encode(badCount, buf), -1, "carwire: count 0 rejected");
+        Eq(CarWire.QuantSpin(2000f), CarWire.QuantSpin(1600f), "carwire: QuantSpin clips");
+    }
+
+    // ---------- 0.2.0 T1.4 winch world vs car ----------
+    static void WinchKind()
+    {
+        Eq(WinchKindLogic.Classify(false, false, false), WinchKindLogic.Kind.None, "winch: none");
+        Eq(WinchKindLogic.Classify(true, false, false), WinchKindLogic.Kind.World, "winch: tree/world");
+        Eq(WinchKindLogic.Classify(true, true, false), WinchKindLogic.Kind.Car, "winch: own rope to car");
+        Eq(WinchKindLogic.Classify(false, false, true), WinchKindLogic.Kind.Car, "winch: towed by other");
+        Eq(WinchKindLogic.Classify(true, false, true), WinchKindLogic.Kind.Car, "winch: towed wins over world");
+        Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.World), "world", "winch: tag world");
+        Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.Car, 2), "car:2", "winch: tag car slot");
+        Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.None), "none", "winch: tag none");
+    }
+
+    // ---------- 0.2.0 T1.3 single modal slot ----------
+    static void UiModal()
+    {
+        string cur = null;
+        Eq(UiModalLogic.TryOpen("modgate", ref cur), true, "modal: open modgate");
+        Eq(cur, "modgate", "modal: current modgate");
+        Eq(UiModalLogic.TryOpen("update", ref cur), false, "modal: update blocked");
+        Eq(cur, "modgate", "modal: still modgate");
+        Eq(UiModalLogic.TryOpen("modgate", ref cur), true, "modal: re-open same");
+        UiModalLogic.Close("update", ref cur);
+        Eq(cur, "modgate", "modal: close other no-op");
+        UiModalLogic.Close("modgate", ref cur);
+        Eq(cur, null, "modal: closed");
+        Eq(UiModalLogic.TryOpen("update", ref cur), true, "modal: update after close");
+        Eq(UiModalLogic.TryOpen("", ref cur), false, "modal: empty owner");
+        Eq(UiModalLogic.TryOpen(null, ref cur), false, "modal: null owner");
+    }
+
+    // ---------- 0.2.0 T1.1 remote wheel spin rate ----------
+    static void WheelSpin()
+    {
+        Eq(WheelSpinLogic.RateRadS(10, 0, 0.4, false), 25.0, "wheel: zero netAng → body/r");
+        Eq(WheelSpinLogic.RateRadS(10, 24, 0.4, true), 24.0, "wheel: live netAng");
+        Eq(WheelSpinLogic.RateRadS(10, 1, 0.4, true), 25.0, "wheel: weak netAng vs body → body/r");
+        Eq(WheelSpinLogic.RateRadS(0, 0, 0.4, false), 0.0, "wheel: standstill");
+        Eq(WheelSpinLogic.RateRadS(0, 0, 0.4, true), 0.0, "wheel: standstill alive zeros");
+        Eq(WheelSpinLogic.RateRadS(-10, 0, 0.4, false), -25.0, "wheel: reverse body");
+        Eq(WheelSpinLogic.RateRadS(1.5, 0.1, 0.4, true), 0.1, "wheel: slow body keeps weak netAng");
+        Eq(WheelSpinLogic.AnyNetAngAlive(new float[] { 0, 0, 0 }), false, "wheel: all zero not alive");
+        Eq(WheelSpinLogic.AnyNetAngAlive(new float[] { 0, 0.6f, 0 }), true, "wheel: one alive");
+        Eq(WheelSpinLogic.ExtendAliveUntil(5, 0, true), 6.0, "wheel: extend +1s");
+        Eq(WheelSpinLogic.IsAlive(5.5, 6.0), true, "wheel: still alive");
+        Eq(WheelSpinLogic.IsAlive(6.1, 6.0), false, "wheel: expired");
+        Eq(WheelSpinLogic.RateRadS(10, 0, 0, false), 10.0 / WheelSpinLogic.DefaultRadius, "wheel: bad radius → default");
+    }
+
+    // ---------- 0.2.0 T0.5 speed from rendered Δpose ----------
+    static void PoseSpeed()
+    {
+        Eq(PoseSpeedLogic.FromDelta(10, 0, 0, 1), 10.0, "poseV: 10 m in 1 s");
+        Eq(PoseSpeedLogic.FromDelta(0, 0, 0, 0.016), 0.0, "poseV: stationary");
+        Eq(PoseSpeedLogic.FromDelta(0.16, 0, 0, 0.016), 10.0, "poseV: 10 m/s at 60 Hz");
+        Eq(PoseSpeedLogic.FromDelta(3, 4, 0, 1), 5.0, "poseV: 3-4-5");
+        Eq(PoseSpeedLogic.FromDelta(1, 0, 0, 0), 0.0, "poseV: zero dt");
+        Eq(PoseSpeedLogic.FromDelta(1, 0, 0, 1e-4), 0.0, "poseV: below MinDt");
+        Eq(PoseSpeedLogic.FromDelta(0, 0, 0, 1, 0, 0, 0.5), 2.0, "poseV: points form");
+        Eq(PoseSpeedLogic.FromDelta(double.NaN, 0, 0, 1), 0.0, "poseV: NaN");
+        Eq(PoseSpeedLogic.MinDt, 1e-3, "poseV: MinDt");
+    }
+
+    // ---------- 0.2.0 T0.4 per-stage frame cost ----------
+    static void FrameCost()
+    {
+        Eq(FrameCostLogic.StageHotMs, 8.0, "cost: stage hot");
+        Eq(FrameCostLogic.WindowCap >= 3600, true, "cost: window holds 30 s × 2 LocalStep/frame");
+        Eq(FrameCostLogic.WindowCap >= 30 * 60 * 2, true, "cost: 30*60*2 formula");
+        Eq(FrameCostLogic.MaxPlausibleFrameMs, 500.0, "cost: frame cap");
+        Eq(FrameCostLogic.MaxPlausibleStageMs, 5000.0, "cost: stage cap");
+        var buf = new double[FrameCostLogic.WindowCap];
+        int n = 0, i = 0, over = 0;
+        Eq(FrameCostLogic.TryPush(buf, ref n, ref i, -1, FrameCostLogic.MaxPlausibleStageMs), false, "cost: reject negative");
+        Eq(n, 0, "cost: n after reject");
+        Eq(FrameCostLogic.TryPush(buf, ref n, ref i, 600, FrameCostLogic.MaxPlausibleFrameMs), false, "cost: frame rejects 600");
+        Eq(FrameCostLogic.TryPush(buf, ref n, ref i, 600, FrameCostLogic.MaxPlausibleStageMs), true, "cost: stage accepts 600");
+        n = i = 0; Array.Clear(buf, 0, buf.Length);
+        Eq(FrameCostLogic.TryPush(buf, ref n, ref i, double.NaN, FrameCostLogic.MaxPlausibleStageMs), false, "cost: reject NaN");
+        for (var k = 0; k < 100; k++)
+        {
+            var ms = 1.0 + k * 0.01;
+            if (FrameCostLogic.TryPush(buf, ref n, ref i, ms, FrameCostLogic.MaxPlausibleStageMs) && ms > FrameCostLogic.StageHotMs) over++;
+        }
+        Eq(n, 100, "cost: 100 samples");
+        Eq(FrameCostLogic.TryStats(buf, n, out var p50, out var p99, out var max), true, "cost: stats ok");
+        Eq(p50 > 1.4 && p50 < 1.6, true, $"cost: p50 mid ({p50:0.00})");
+        Eq(p99 > 1.9 && p99 < 2.1, true, $"cost: p99 high ({p99:0.00})");
+        Eq(max > 1.98 && max < 2.01, true, $"cost: max ({max:0.00})");
+        Eq(over, 0, "cost: no hot yet");
+        if (FrameCostLogic.TryPush(buf, ref n, ref i, 12.0, FrameCostLogic.MaxPlausibleStageMs)) over++;
+        Eq(over, 1, "cost: >8ms counted");
+        var fmt = FrameCostLogic.Format("resim", buf, n, over, FrameCostLogic.StageHotMs);
+        Eq(fmt.StartsWith("resim p50="), true, "cost: format prefix");
+        Eq(fmt.Contains(">8ms=1"), true, "cost: format hot");
+        Eq(FrameCostLogic.Format("x", Array.Empty<double>(), 0, 0, 8).Contains("p50=-"), true, "cost: empty format");
+        Eq(FrameCostLogic.Percentile(new[] { 1.0, 2.0, 3.0 }, 0.5), 2.0, "cost: median");
+        Eq(FrameCostLogic.Percentile(new[] { 1.0 }, 0.99), 1.0, "cost: single");
+        FrameCostLogic.Clear(buf, ref n, ref i);
+        Eq(n, 0, "cost: clear n");
+        Eq(i, 0, "cost: clear i");
+        Eq(FrameCostLogic.TryStats(buf, n, out _, out _, out _), false, "cost: clear empty stats");
+    }
+
+    // ---------- 0.2.0 T0.3 Diagnostics RuntimeConfig retry ----------
+    static void DiagRetry()
+    {
+        Eq(DiagLogic.IsRuntimeConfigNotReady(null), false, "diag: null");
+        Eq(DiagLogic.IsRuntimeConfigNotReady(new Exception("")), false, "diag: empty msg");
+        Eq(DiagLogic.IsRuntimeConfigNotReady(new Exception("something else")), false, "diag: unrelated");
+        Eq(DiagLogic.IsRuntimeConfigNotReady(new InvalidOperationException("RuntimeConfig is not ready")), true, "diag: IOE RuntimeConfig");
+        Eq(DiagLogic.IsRuntimeConfigNotReady(new Exception("Failed to get RuntimeConfig")), true, "diag: generic RuntimeConfig");
+        Eq(DiagLogic.IsRuntimeConfigNotReady(new Exception("runtimeconfig missing")), true, "diag: case insensitive");
+        Eq(DiagLogic.ShouldRetryRuntimeConfig(new Exception("RuntimeConfig"), 0), true, "diag: retry 0");
+        Eq(DiagLogic.ShouldRetryRuntimeConfig(new Exception("RuntimeConfig"), 19), true, "diag: retry 19");
+        Eq(DiagLogic.ShouldRetryRuntimeConfig(new Exception("RuntimeConfig"), 20), false, "diag: retry cap 20");
+        Eq(DiagLogic.ShouldRetryRuntimeConfig(new Exception("other"), 0), false, "diag: no retry unrelated");
+        Eq(DiagLogic.MaxRuntimeConfigRetries, 20, "diag: max retries constant");
+    }
+
+    // ---------- 0.2.0 T0.2 session log rotation ----------
+    static void SessionLogs()
+    {
+        Eq(SessionLogsLogic.SanitizeWhy(""), "snap", "sanitize empty");
+        Eq(SessionLogsLogic.SanitizeWhy("   "), "snap", "sanitize blank");
+        Eq(SessionLogsLogic.SanitizeWhy("F7 button"), "F7-button", "sanitize spaces");
+        Eq(SessionLogsLogic.SanitizeWhy("a/b\\c:d*e?f"), "a-b-c-d-e-f", "sanitize path chars");
+        Eq(SessionLogsLogic.SanitizeWhy(new string('x', 60)).Length, 40, "sanitize capped at 40");
+        Eq(SessionLogsLogic.SnapshotFileName(new DateTime(2026, 10, 24, 19, 17, 3), "session-end"),
+            "LogOutput-20261024-191703-session-end.log", "snapshot name");
+        Eq(SessionLogsLogic.TryParseStamp("LogOutput-20261024-191703-session-end.log", out var st)
+            && st == new DateTime(2026, 10, 24, 19, 17, 3), true, "parse stamp");
+        Eq(SessionLogsLogic.TryParseStamp("readme.txt", out _), false, "non-snapshot ignored");
+        Eq(SessionLogsLogic.TryParseStamp("LogOutput.log", out _), false, "live log not a snapshot");
+        Eq(SessionLogsLogic.TryParseStamp("LogOutput-bad.log", out _), false, "bad stamp rejected");
+
+        var keep = new[]
+        {
+            "LogOutput-20261024-100000-a.log",
+            "LogOutput-20261024-100100-b.log",
+            "LogOutput-20261024-100200-c.log",
+            "LogOutput-20261024-100300-d.log",
+            "LogOutput-20261024-100400-e.log",
+            "LogOutput-20261024-100500-f.log",
+            "LogOutput-20261024-100600-g.log",
+            "LogOutput-20261024-100700-h.log",
+            "LogOutput-20261024-100800-i.log",
+            "LogOutput-20261024-100900-j.log",
+            "LogOutput-20261024-101000-k.log", // 11th → drop oldest
+            "notes.txt",
+            "OthLan.cfg",
+        };
+        var drop = SessionLogsLogic.PickExcess(keep, 10);
+        Eq(drop.Count, 1, "11 snaps -> drop 1");
+        Eq(drop[0], "LogOutput-20261024-100000-a.log", "drop oldest");
+        Eq(drop.Contains("notes.txt"), false, "foreign files untouched");
+        Eq(drop.Contains("OthLan.cfg"), false, "cfg untouched");
+        var ten = new string[10];
+        Array.Copy(keep, ten, 10);
+        Eq(SessionLogsLogic.PickExcess(ten, 10).Count, 0, "exactly 10 -> drop none");
+        Eq(SessionLogsLogic.PickExcess(Array.Empty<string>(), 10).Count, 0, "empty dir");
+        Eq(SessionLogsLogic.PickExcess(new[] { "notes.txt", "foo.log" }, 10).Count, 0, "only foreign -> drop none");
+        var eleven = new string[11];
+        Array.Copy(keep, eleven, 11);
+        var drop3 = SessionLogsLogic.PickExcess(eleven, 8);
+        Eq(drop3.Count, 3, "11 keep 8 -> drop 3");
+        Eq(drop3[0], "LogOutput-20261024-100000-a.log", "drop3 oldest first");
+        Eq(drop3[2], "LogOutput-20261024-100200-c.log", "drop3 third");
+        Eq(SessionLogsLogic.PickExcess(keep, 0).Count, 11, "keep 0 drops all snaps");
+        Eq(SessionLogsLogic.PickExcess(new[] { @"C:\game\BepInEx\OthLan-logs\LogOutput-20261024-100000-a.log",
+            "LogOutput-20261024-100100-b.log" }, 1)[0], "LogOutput-20261024-100000-a.log", "full path stripped");
+        Eq(SessionLogsLogic.IsSessionCfgSection("Netcode"), true, "session cfg Netcode");
+        Eq(SessionLogsLogic.IsSessionCfgSection("CarSync"), true, "session cfg CarSync");
+        Eq(SessionLogsLogic.IsSessionCfgSection("Outage"), true, "session cfg Outage");
+        Eq(SessionLogsLogic.IsSessionCfgSection("OwnCar"), true, "session cfg OwnCar");
+        Eq(SessionLogsLogic.IsSessionCfgSection("Network"), false, "session cfg not Network");
+        Eq(SessionLogsLogic.SessionCfgSections.Length, 4, "session cfg 4 sections");
     }
 
     // ---------- 0.1.9 pre-join Modio livery gate (wire + diff) ----------
@@ -616,7 +1021,7 @@ static class Program
     {
         Eq(OthLan.Launch.HangLogic.Classify("[Message:InteropManager] Downloading unity base libraries from https://unity.bepinex.dev/libraries/6000.0.75.zip"),
             OthLan.Launch.HangLogic.LineKind.UnityLibsDownload, "hang: download line");
-        Eq(OthLan.Launch.HangLogic.Classify("[Info:OTH-LAN] 0.1.9.3 loaded. Press F7"),
+        Eq(OthLan.Launch.HangLogic.Classify("[Info:OTH-LAN] 0.2.0 loaded. Press F7"),
             OthLan.Launch.HangLogic.LineKind.BootReady, "hang: boot ready");
         Eq(OthLan.Launch.HangLogic.IsHung(true, false, 10.0), true, "hang: 10s hung");
         Eq(OthLan.Launch.HangLogic.IsHung(true, false, 9.9), false, "hang: under 10s");

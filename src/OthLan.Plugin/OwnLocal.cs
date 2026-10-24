@@ -111,7 +111,7 @@ internal static unsafe class OwnLocal
         try { OwnCar.RestoreFrom(_skip, true); SyncWords(); } catch (Exception e) { StepErrors++; if (StepErrors < 4) Plugin.L.LogWarning($"[OwnLocal] skip restore: {e.Message}"); }
     }
 
-    /// <summary>Main thread, Update (after Fusion's simulation, before Fusion's render).</summary>
+    /// <summary>Main thread, after Fusion sim (OwnClock.FrameAfterFusion via NetFrame.AfterFusion / T2.3).</summary>
     public static void Frame()
     {
         var now = OwnCar.Now;
@@ -172,6 +172,7 @@ internal static unsafe class OwnLocal
     {
         var rb = OwnCar.Rb; var own = OwnCar.Own; var vb = own.vehicleBase; var nrb = OwnCar.Nrb;
         if (vb == null || nrb == null) return false;
+        using var _cost = FrameCost.Measure(FrameCost.LocalStep);
         try
         {
             own.transform.SetPositionAndRotation(rb.position, rb.rotation);   // undo the render pose

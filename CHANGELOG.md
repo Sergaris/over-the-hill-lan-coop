@@ -2,6 +2,21 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.0
+
+Both players need 0.2.0. From 0.1.8.1+ the in-game updater offers this release; from 0.1.8 or older install by hand once.
+
+- Smoother remote cars/wheels and RemoteSmoother floor after falls; gamepad focus for the missing-mods dialog.
+- Client SimulateForward physics; single CarRegistry scan; NetFrame/OwnClock after Fusion.
+- OTC3 car-state stream (parallel with OTP2): host relay + StatePlayback; observers draw from the stream when fresh.
+
+## 0.2.0 — изменения
+
+У обоих игроков должна быть 0.2.0. С 0.1.8.1+ обновление предложит меню; с 0.1.8 и раньше — вручную один раз.
+
+- Плавнее чужие машины/колёса и пол у RemoteSmoother после падений; фокус геймпада в окне модов.
+- Клиент SimulateForward; один скан CarRegistry; NetFrame/OwnClock после Fusion.
+- Поток OTC3 (параллельно OTP2): ретрансляция хоста + StatePlayback; наблюдатели рисуют из потока, пока он свежий.
 ## 0.1.9.3
 
 Both players need 0.1.9.3. From 0.1.8.1+ the in-game updater offers this release; from 0.1.8 or older install by hand once.
@@ -318,6 +333,7 @@ gate — PASS. Not verified: two PCs over Radmin with real players, SmartScreen 
 
 Direct-IP LAN mode (F7/F8/F9/F10), host-assigned player slots with rejoin, version gate with code-signature checks
 for untested game builds, ping label, CarSync smoothing, installer with full uninstall.
+
 
 
 

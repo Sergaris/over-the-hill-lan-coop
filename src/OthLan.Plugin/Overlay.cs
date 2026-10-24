@@ -36,6 +36,8 @@ public class Overlay : MonoBehaviour
         catch (Exception e) { Plugin.L.LogWarning($"[LAN] log listener unavailable: {e.Message}"); }
     }
 
+    void OnApplicationQuit() => SessionLogs.OnQuit();
+
     static void OnUnityLog(string msg, string stack, LogType type)
     {
         if (msg != null && LanState.Active != LanRole.Off) NetStats.OnUnityLog(msg);
@@ -57,12 +59,7 @@ public class Overlay : MonoBehaviour
         try { ModLiveryGate.Tick(); } catch (Exception e) { LogOnce("modgate", e); }
         try { HostLiveryModsTick(); } catch (Exception e) { LogOnce("hostliveries", e); }
         try { Watchdog(); } catch (Exception e) { Plugin.L.LogError($"[LAN] watchdog: {e}"); }
-        try { PingHud.Tick(); } catch (Exception e) { LogOnce("ping", e); }
-        try { CarSync.Tick(); } catch (Exception e) { LogOnce("carsync", e); }
-        try { OwnCar.Tick(); } catch (Exception e) { LogOnce("owncar", e); }
-        try { FreezeWatch.Tick(); } catch (Exception e) { LogOnce("freeze", e); }
-        try { Diagnostics.Tick(); } catch (Exception e) { LogOnce("diag", e); }
-        try { NetStats.Tick(); } catch (Exception e) { LogOnce("netstats", e); }
+        try { NetFrame.Update(); } catch (Exception e) { LogOnce("netframe", e); }
         try { HostSlotsTick(); } catch (Exception e) { LogOnce("slots", e); }
         try { Autopilot.Tick(); } catch (Exception e) { LogOnce("autopilot", e); }
         try { CoopMenu.Tick(); } catch (Exception e) { LogOnce("coop", e); }
@@ -189,8 +186,7 @@ public class Overlay : MonoBehaviour
     bool _pingBroken, _carLabelsBroken;
     void LateUpdate()
     {
-        try { RemoteSmooth.LateTick(); } catch (Exception e) { LogOnce("remotesmooth", e); }
-        try { RemoteVisuals.LateTick(); } catch (Exception e) { LogOnce("remotevisuals", e); }
+        try { NetFrame.Late(); } catch (Exception e) { LogOnce("netframe-late", e); }
     }
 
     static float _offConfirmUntil = -1;

@@ -201,21 +201,18 @@ internal static unsafe class OwnCar
         if ((_own == null || _own.Object == null || _ownPtr == IntPtr.Zero) && Time.realtimeSinceStartup >= _nextFind)
         {
             Forget(); _nextFind = Time.realtimeSinceStartup + 1f;
-            FusionPlayer[] all; try { all = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { all = Array.Empty<FusionPlayer>(); }
-            foreach (var fp in all)
-                if (fp != null && fp.Object != null && fp.Object.HasInputAuthority)
-                {
-                    try { OwnSlot = fp.Object.InputAuthority.AsIndex; } catch { OwnSlot = -1; }
-                    _own = fp; _ownPtr = fp.Pointer; _rb = fp.rigidbody ?? fp.vehicleBase?.cachedRigidbody;
-                    _spawned = false; _foundAt = Now;
-                    _nrb = fp.GetComponent<NetworkRigidbody3D>();
-                    OwnRender.Forget(); OwnRender.OwnNrb = _nrb != null ? _nrb.Pointer : IntPtr.Zero;
-                    _vb = fp.vehicleBase;
-                    try { Plugin.L.LogInfo($"[OwnCar] networked words: VehicleBase {(_vb != null ? _vb.WordCount : -1)} (restoring {VbWords}), NetworkRigidbody3D {(_nrb != null ? _nrb.WordCount : -1)}"); } catch { }
-                    if (_nrb != null) { _origSmooth = _nrb.CorrectionSmoothingTime; _origSnap = _nrb.CorrectionSnapDistance; }
-                    Plugin.L.LogInfo($"[OwnCar] own car found; phase 2 {(Phase2Active(Now) ? "ACTIVE (client-authoritative)" : "inactive")}, smoothing {_origSmooth} s / snap {_origSnap} m");
-                    break;
-                }
+            if (CarRegistry.TryGetOwn(out var e) && e.Fp != null && e.Fp.Object != null)
+            {
+                OwnSlot = e.Slot;
+                _own = e.Fp; _ownPtr = e.Fp.Pointer; _rb = e.Rb ?? e.Fp.rigidbody ?? e.Fp.vehicleBase?.cachedRigidbody;
+                _spawned = false; _foundAt = Now;
+                _nrb = e.Nrb ?? e.Fp.GetComponent<NetworkRigidbody3D>();
+                OwnRender.Forget(); OwnRender.OwnNrb = _nrb != null ? _nrb.Pointer : IntPtr.Zero;
+                _vb = e.Fp.vehicleBase;
+                try { Plugin.L.LogInfo($"[OwnCar] networked words: VehicleBase {(_vb != null ? _vb.WordCount : -1)} (restoring {VbWords}), NetworkRigidbody3D {(_nrb != null ? _nrb.WordCount : -1)}"); } catch { }
+                if (_nrb != null) { _origSmooth = _nrb.CorrectionSmoothingTime; _origSnap = _nrb.CorrectionSnapDistance; }
+                Plugin.L.LogInfo($"[OwnCar] own car found; phase 2 {(Phase2Active(Now) ? "ACTIVE (client-authoritative)" : "inactive")}, smoothing {_origSmooth} s / snap {_origSnap} m");
+            }
         }
         var now = Now;
         UpdateSuspend(now);
@@ -239,7 +236,6 @@ internal static unsafe class OwnCar
                 _boostUntil = -1; _nrb.CorrectionSmoothingTime = _origSmooth; _nrb.CorrectionSnapDistance = _origSnap;
             }
         }
-        try { OwnLocal.Frame(); } catch (Exception e) { Plugin.L.LogWarning($"[OwnLocal] {e.Message}"); }
     }
 
     static void Forget()
@@ -298,7 +294,8 @@ internal static unsafe class OwnCar
     static void ResimDetour(IntPtr self, int ticks, IntPtr mi)
     {
         var t0 = _runner != null && NetTrace.On ? _runner.Tick.Raw : 0;
-        _rsOrig(self, ticks, mi);
+        using (FrameCost.Measure(FrameCost.Resim))
+            _rsOrig(self, ticks, mi);
         if (NetTrace.On && _runner != null && _rb != null) NetTrace.Own("S", _runner.Tick.Raw, _capTick, ticks, SrvTick(), RenderT(), _rb.position, _rb.position, _rb.linearVelocity, t0, _captured ? 1 : 0);
         try { if (_captured && _rb != null && _runner != null) { ResimRestores++; AfterResim(); } }
         catch (Exception e) { _captured = false; Plugin.L.LogWarning($"[OwnCar] after resim: {e.Message}"); }
@@ -316,7 +313,7 @@ internal static unsafe class OwnCar
                 LastErr = err; LastErrDeg = errDeg; SumErr += err; ErrSamples++; if (err > MaxErr) MaxErr = err;
                 if (err > 1) ErrOver1m++; if (err > 5) ErrOver5m++;
                 if (!_spawned && err > Plugin.OwnAcceptMeters.Value)
-                { _spawned = true; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Plugin.L.LogInfo($"[OwnCar] spawn move {err:0} m seen: phase 2 from now on"); }
+                { _spawned = true; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Plugin.L.LogInfo($"[OwnCar] spawn move {err:0} m seen: phase 2 from now on"); try { CarStreamSender.BumpEpoch("spawn move"); } catch { } }
                 if (Phase2Active(now)) Decide(now, err, errDeg);
                 NetStats.OnOwnCorrection(err);
             }
@@ -326,7 +323,7 @@ internal static unsafe class OwnCar
     static void Decide(double now, double err, double errDeg)
     {
         // Host asked us to take its pose (the game moved the car on the host: respawn, rescue, jack, reset upright).
-        if (AcceptRequests != _acceptSeen) { _acceptSeen = AcceptRequests; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; AcceptsOtac++; Plugin.L.LogInfo($"[OwnCar] host moved the car: accepting its pose for {Plugin.OwnAcceptSeconds.Value:0.0} s"); }
+        if (AcceptRequests != _acceptSeen) { _acceptSeen = AcceptRequests; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; AcceptsOtac++; Plugin.L.LogInfo($"[OwnCar] host moved the car: accepting its pose for {Plugin.OwnAcceptSeconds.Value:0.0} s"); try { CarStreamSender.BumpEpoch("host moved"); } catch { } }
         if (now < _acceptUntil) return;
         // Physics blow-up on our side: never keep such a state.
         var bad = !float.IsFinite(_cp.x) || !float.IsFinite(_cp.y) || !float.IsFinite(_cp.z) || _cv.magnitude > 150f || _ca.magnitude > 60f;
@@ -411,16 +408,19 @@ internal static unsafe class OwnCar
         if (Time.realtimeSinceStartup >= _nextSuspendScan)
         {
             _nextSuspendScan = Time.realtimeSinceStartup + 0.5f;
-            try { _suspendPeers = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { _suspendPeers = Array.Empty<FusionPlayer>(); }
+            _suspendPeers = CarRegistry.Players;
         }
         bool localC = false, localW = false;
+        var winchTag = "none";
         try
         {
             if (Plugin.SuspendOnWinch.Value)
             {
                 PlayerRef pref = default;
                 try { pref = _own.Object.InputAuthority; } catch { }
-                localW = CarSync.WinchInvolved(_own, pref);
+                var wk = CarSync.WinchKindOf(_own, pref, out var wSlot);
+                localW = wk != WinchKindLogic.Kind.None;
+                winchTag = WinchKindLogic.LogTag(wk, wSlot);
             }
             if (Plugin.SuspendOnContact.Value && !localW)
             {
@@ -449,7 +449,9 @@ internal static unsafe class OwnCar
         {
             Suspends++;
             try { OwnLocal.RestoreSkip(); OwnLocal.Forget(); OwnRender.Forget(); } catch { }
-            Plugin.L.LogInfo($"[OwnCar] suspend OwnLocal/phase2 ({SuspendLogic.Why(localC, localW, CarSync.HostSuspendContact, CarSync.HostSuspendWinch, cfg)})");
+            var why = SuspendLogic.Why(localC, localW, CarSync.HostSuspendContact, CarSync.HostSuspendWinch, cfg);
+            var extra = why is SuspendLogic.Reason.Winch or SuspendLogic.Reason.Both ? $" winch={winchTag}" : "";
+            Plugin.L.LogInfo($"[OwnCar] suspend OwnLocal/phase2 ({why}{extra})");
         }
         else if (!InteractionSuspended && was)
         {

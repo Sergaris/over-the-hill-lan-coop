@@ -17,7 +17,7 @@ internal static class LinkLabels
     static readonly List<(byte, double)> _rx = new();
     static bool _sentNonEmpty;
     static GUIStyle _style;
-    static FusionPlayer[] _players = Array.Empty<FusionPlayer>(); static float _nextScan;
+    static FusionPlayer[] _players = Array.Empty<FusionPlayer>();
     public static string Last = "";                             // self-test log: "slot:seconds;..."
     static readonly OutageLogic.Cfg Ocfg = new();
 
@@ -64,8 +64,7 @@ internal static class LinkLabels
             list = new KeyValuePair<int, double>[_noLink.Count]; int i = 0; foreach (var kv in _noLink) list[i++] = kv;
         }
         var cam = Camera.main; if (cam == null) return;
-        var now = Time.realtimeSinceStartup;
-        if (now >= _nextScan) { _nextScan = now + 1f; try { _players = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { _players = Array.Empty<FusionPlayer>(); } }
+        _players = CarRegistry.Players;
         var scale = Screen.height / 1080f;
         _style ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
         _style.fontSize = Mathf.RoundToInt(20 * scale);

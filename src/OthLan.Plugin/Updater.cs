@@ -230,6 +230,7 @@ internal static class Updater
         _prompt = false; _dismissed = true;
         try { if (_es != null && !_es.WasCollected) _es.enabled = true; } catch { }
         _es = null;
+        UiModal.Close("update");
     }
 
     static string[] Buttons() => State switch
@@ -263,9 +264,12 @@ internal static class Updater
         if (!_prompt)
         {
             // a finished download re-opens the prompt once (Quit and update), even after "Later" during the download
+            // T1.3: do not steal focus while another Canvas modal (e.g. mod gate) is open.
+            if (UiModal.Current != null) return;
             if (State == St.Ready && !_readyShown && Latest != null && CoopMenu.MainMenuVisible) { _readyShown = true; _dismissed = false; }
             else if (State == St.Offline && !_offlineShown && !_dismissed && CoopMenu.MainMenuVisible)
             {
+                if (!UiModal.TryOpen("update")) return;
                 _offlineShown = true; _dismissed = false;
                 _prompt = true; _focus = 0;
                 try { _es = UnityEngine.EventSystems.EventSystem.current; if (_es != null) _es.enabled = false; } catch { _es = null; }
@@ -274,13 +278,21 @@ internal static class Updater
             }
             else if (_dismissed || State != St.Available || Latest == null || !CoopMenu.MainMenuVisible) return;
             else if (!UpdateLogic.ShouldOffer(Latest.Version, Plugin.Version, Plugin.UpdateSkipped.Value)) { _dismissed = true; return; }
+            if (!UiModal.TryOpen("update")) return;
             _prompt = true; _focus = 0;
             // the game's menu must not move behind the prompt (bug #1 lesson: one owner of navigation at a time)
             try { _es = UnityEngine.EventSystems.EventSystem.current; if (_es != null) _es.enabled = false; } catch { _es = null; }
             Plugin.L.LogInfo($"[Update] prompt shown for {Latest.Version}");
             return;
         }
-        if (!CoopMenu.MainMenuVisible && State != St.Downloading && State != St.Ready) { _prompt = false; try { if (_es != null) _es.enabled = true; } catch { } _es = null; return; }
+        if (!CoopMenu.MainMenuVisible && State != St.Downloading && State != St.Ready)
+        {
+            _prompt = false;
+            try { if (_es != null) _es.enabled = true; } catch { }
+            _es = null;
+            UiModal.Close("update");
+            return;
+        }
         var b = Buttons();
         if (_focus >= b.Length) _focus = 0;
         try

@@ -23,13 +23,14 @@ internal static class NetStats
     public static readonly GapStats Gaps = new();
     public static int InputDropped, TimeResets, Corrections, CorrOver1m, CorrOver5m; public static double CorrMax, CorrSum;
     static readonly Dictionary<IntPtr, Smoothness> _remote = new();
+    static readonly Dictionary<IntPtr, Vector3> _remoteVisPos = new(); // last rendered root for Δpose speed (T0.5)
     static IntPtr _runner; static int _lastServerTick = int.MinValue, _lastTick = int.MinValue; static double _serverTickAt = -1;
     static float _nextLog, _lastSampleAt = -1; static bool _hooked;
     static UnityEngine.Events.UnityAction _cb;
     public static double LastOwnHitch;
-    static FusionPlayer[] _players = Array.Empty<FusionPlayer>(); static float _nextScan;
-    // 0.1.9 R2: wall-clock frame time (ms) for OwnLocal ON/OFF A/B
-    static readonly double[] _ft = new double[240]; static int _ftN, _ftI;
+    static FusionPlayer[] _players = Array.Empty<FusionPlayer>();
+    // 0.1.9 R2 / 0.2.0 T0.4: wall-clock frame time — ring+percentiles owned by FrameCostLogic
+    static readonly double[] _ft = new double[FrameCostLogic.WindowCap]; static int _ftN, _ftI;
     public static int FramesOver25ms, FramesOver50ms;
     static float _lastFtAt = -1;
 
@@ -53,10 +54,11 @@ internal static class NetStats
 
     static void ResetAll()
     {
-        Own.Reset(); OwnWindow.Reset(); RemoteWindow.Reset(); _remoteHitchLogs = 0; OwnSim.Reset(); _lastRenderTime = -1; _hitchLogs = 0; _nextScan = 0; _hasOwnPos = false; Remote.Reset(); Gaps.Reset(); _remote.Clear();
-        InputDropped = TimeResets = Corrections = CorrOver1m = CorrOver5m = 0; CorrMax = CorrSum = 0;
+        Own.Reset(); OwnWindow.Reset(); RemoteWindow.Reset(); _remoteHitchLogs = 0; OwnSim.Reset(); _lastRenderTime = -1; _hitchLogs = 0; _hasOwnPos = false; Remote.Reset(); Gaps.Reset(); _remote.Clear(); _remoteVisPos.Clear();
+        InputDropped = TimeResets = Corrections = CorrOver1m = CorrOver5m = 0; CorrMax = CorrSum = 0; RemoteBelow = 0;
         _lastServerTick = _lastTick = int.MinValue; _serverTickAt = -1; _lastSampleAt = -1;
         _ftN = _ftI = FramesOver25ms = FramesOver50ms = 0; _lastFtAt = -1;
+        FrameCost.ResetAll();
     }
 
     static void NoteFrameTime()
@@ -65,10 +67,10 @@ internal static class NetStats
         if (_lastFtAt > 0)
         {
             var ms = (t - _lastFtAt) * 1000.0;
-            if (ms > 0 && ms < 500)
+            if (FrameCostLogic.TryPush(_ft, ref _ftN, ref _ftI, ms, FrameCostLogic.MaxPlausibleFrameMs))
             {
-                _ft[_ftI++ % _ft.Length] = ms; if (_ftN < _ft.Length) _ftN++;
-                if (ms > 25) FramesOver25ms++; if (ms > 50) FramesOver50ms++;
+                if (ms > 25) FramesOver25ms++;
+                if (ms > 50) FramesOver50ms++;
             }
         }
         _lastFtAt = t;
@@ -76,12 +78,9 @@ internal static class NetStats
 
     public static string FrameDescribe()
     {
-        if (_ftN <= 0) return "frameMs=-";
-        var n = _ftN; var tmp = new double[n];
-        for (int i = 0; i < n; i++) tmp[i] = _ft[i];
-        Array.Sort(tmp);
-        double P(double q) => tmp[Math.Clamp((int)(q * (n - 1)), 0, n - 1)];
-        return $"frameMs p50={P(0.50):0.0} p99={P(0.99):0.0} max={tmp[n - 1]:0.0} >25ms={FramesOver25ms} >50ms={FramesOver50ms}";
+        if (!FrameCostLogic.TryStats(_ft, _ftN, out var p50, out var p99, out var max))
+            return "frameMs=-";
+        return $"frameMs p50={p50:0.0} p99={p99:0.0} max={max:0.0} >25ms={FramesOver25ms} >50ms={FramesOver50ms}";
     }
 
     static NetworkRunner Runner()
@@ -97,8 +96,24 @@ internal static class NetStats
         Hook();
         NoteFrameTime();
         var r = Runner();
-        if (r == null) { if (_runner != IntPtr.Zero) { Log("session end"); _runner = IntPtr.Zero; } return; }
-        if (r.Pointer != _runner) { if (_runner != IntPtr.Zero) Log("runner changed"); _runner = r.Pointer; ResetAll(); _nextLog = Time.realtimeSinceStartup + 30f; }
+        if (r == null)
+        {
+            if (_runner != IntPtr.Zero)
+            {
+                Log("session end");
+                _runner = IntPtr.Zero;
+                try { SessionLogs.SnapshotNow("session-end"); } catch (Exception e) { Plugin.L.LogWarning($"[Logs] session-end snapshot: {e.Message}"); }
+            }
+            return;
+        }
+        if (r.Pointer != _runner)
+        {
+            if (_runner != IntPtr.Zero) Log("runner changed");
+            _runner = r.Pointer;
+            ResetAll();
+            SessionLogs.NoteSessionStart();
+            _nextLog = Time.realtimeSinceStartup + 30f;
+        }
         var now = Time.realtimeSinceStartupAsDouble;
         if (r.IsClient && !r.IsServer)
         {
@@ -130,9 +145,8 @@ internal static class NetStats
             OwnRender.BeforeRender();
             var t = Time.realtimeSinceStartup;
             var dt = _lastSampleAt < 0 ? 0 : t - _lastSampleAt; _lastSampleAt = t;
-            if (dt <= 0 || dt > 0.25f) { Own.Break(); OwnWindow.Break(); foreach (var s in _remote.Values) s.Break(); return; }
-            // Own scan (1 s): CarSync's list is empty when ping compensation is off.
-            if (t >= _nextScan) { _nextScan = t + 1f; try { _players = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { _players = Array.Empty<FusionPlayer>(); } }
+            if (dt <= 0 || dt > 0.25f) { Own.Break(); OwnWindow.Break(); foreach (var s in _remote.Values) s.Break(); _remoteVisPos.Clear(); _hasOwnPos = false; return; }
+            _players = CarRegistry.Players;
             foreach (var fp in _players)
             {
                 if (fp == null || fp.WasCollected || fp.Object == null) continue;
@@ -150,7 +164,9 @@ internal static class NetStats
                     if (LastOwnHitch > 0.3 && _hitchLogs < 60 && Plugin.NetStatsLog.Value)
                     {
                         _hitchLogs++;
-                        var v = _hasOwnPos ? (p - _lastOwnPos).magnitude / Math.Max(dt, 1e-3f) : 0;
+                        var v = _hasOwnPos
+                            ? PoseSpeedLogic.FromDelta(_lastOwnPos.x, _lastOwnPos.y, _lastOwnPos.z, p.x, p.y, p.z, dt)
+                            : 0;
                         string rbd = "-"; try { var rb = fp.GetComponent<Rigidbody>(); if (rb != null) rbd = $"{(rb.position - p).magnitude * 100:0}cm"; } catch { }
                         Plugin.L.LogInfo($"[NetStats] hitch {LastOwnHitch * 100:0}cm (sim clock {simH * 100:0}cm) dt={dt * 1000:0}ms simDt={sdt * 1000:0}ms v={v:0.0}m/s render-rb={rbd} resets+{OwnCar.Resets - _lastResets} restores+{OwnCar.Restores - _lastRestores} sinceReset={(OwnCar.LastResetAt > 0 ? (OwnCar.Now - OwnCar.LastResetAt) * 1000 : -1):0}ms");
                     }
@@ -162,8 +178,12 @@ internal static class NetStats
                     var f0 = s.Frames;
                     var h = s.Add(p.x, p.y, p.z, dt);
                     if (s.Frames > f0) { Remote.Record(h); RemoteWindow.Record(h); }
-                    if (h > 0.5 && _remoteHitchLogs < 80 && Plugin.NetStatsLog.Value) { _remoteHitchLogs++; RemoteHitchLog(fp, p, h, dt); }
-                    if (NetTrace.On) TraceRemote(fp, p, h, dt);
+                    var poseV = 0.0;
+                    if (_remoteVisPos.TryGetValue(fp.Pointer, out var prevVis))
+                        poseV = PoseSpeedLogic.FromDelta(prevVis.x, prevVis.y, prevVis.z, p.x, p.y, p.z, dt);
+                    _remoteVisPos[fp.Pointer] = p;
+                    if (h > 0.5 && _remoteHitchLogs < 80 && Plugin.NetStatsLog.Value) { _remoteHitchLogs++; RemoteHitchLog(fp, p, h, dt, poseV); }
+                    if (NetTrace.On) TraceRemote(fp, p, h, dt, poseV);
                 }
             }
         }
@@ -172,27 +192,31 @@ internal static class NetStats
 
     /// <summary>Seconds since the last new host snapshot (client), -1 on the host.</summary>
     public static double SnapshotAge => _serverTickAt > 0 && LanState.Active == LanRole.Client ? Time.realtimeSinceStartupAsDouble - _serverTickAt : -1;
+    /// <summary>0.2.0 T1.2: same as <see cref="SnapshotAge"/> — starve signal for RemoteSmoother.</summary>
+    public static double ServerTickAge => SnapshotAge;
+    /// <summary>Frames where a remote drawn y was &gt;0.3 m below Fusion pose (underground).</summary>
+    public static int RemoteBelow;
 
-    static void RemoteHitchLog(FusionPlayer fp, Vector3 p, double h, float dt)
+    static void RemoteHitchLog(FusionPlayer fp, Vector3 p, double h, float dt, double poseSpeedMs)
     {
-        int car = -1; string extra = "";
+        int car = -1; string extra = $" v={poseSpeedMs:0.0}m/s";
         try { car = fp.Object.InputAuthority.PlayerId; } catch { }
-        try { var rb = fp.rigidbody; if (rb != null) extra = $" v={rb.linearVelocity.magnitude:0.0}m/s render-rb={(rb.position - p).magnitude * 100:0}cm"; } catch { }
+        try { var rb = fp.rigidbody; if (rb != null) extra += $" render-rb={(rb.position - p).magnitude * 100:0}cm"; } catch { }
         if (LanState.Active == LanRole.Host)
         { try { if (CarSync.LastAction.TryGetValue(car, out var a)) extra += $" carsync={a}"; if (CarSync.Metrics.TryGetValue(car, out var m)) extra += $" err={m.err:0.00}m/{m.errDeg:0}deg age={m.poseAge:0.00}s"; } catch { } }
         else extra += $" snapAge={SnapshotAge * 1000:0}ms smooth={RemoteSmooth.StateOf(fp.Pointer)}";
         Plugin.L.LogInfo($"[NetStats] remote hitch {h * 100:0}cm car={car} dt={dt * 1000:0}ms{extra}");
     }
 
-    static void TraceRemote(FusionPlayer fp, Vector3 p, double h, float dt)
+    static void TraceRemote(FusionPlayer fp, Vector3 p, double h, float dt, double poseSpeedMs)
     {
         try
         {
             int car = -1; try { car = fp.Object.InputAuthority.PlayerId; } catch { }
-            var rb = fp.rigidbody; var bp = rb != null ? rb.position : Vector3.zero; var sp = rb != null ? rb.linearVelocity.magnitude : 0f;
+            var rb = fp.rigidbody; var bp = rb != null ? rb.position : Vector3.zero;
             int st = 0, tk = 0; float rrt = -1, al = -1;
             try { var r = Runner(); if (r != null) { tk = r.Tick.Raw; if (r.IsClient && !r.IsServer) { st = r.Simulation.LatestServerTick.Raw; rrt = r.RemoteRenderTime; } } } catch { }
-            NetTrace.Remote(dt, car, p, bp, h, sp, RemoteSmooth.StateCode(fp.Pointer), RemoteSmooth.OffsetOf(fp.Pointer), SnapshotAge, st, tk, rrt, al);
+            NetTrace.Remote(dt, car, p, bp, h, (float)poseSpeedMs, RemoteSmooth.StateCode(fp.Pointer), RemoteSmooth.OffsetOf(fp.Pointer), SnapshotAge, st, tk, rrt, al);
         }
         catch { }
     }
@@ -206,12 +230,14 @@ internal static class NetStats
     public static string Describe() =>
         $"own car on screen: {Own.Describe()} | own (Fusion clock): {OwnSim.Describe()} | remote cars: {Remote.Describe()}" +
         (LanState.Active == LanRole.Client ? $" | snapshot gaps {Gaps.Describe()} | inputs dropped by Fusion={InputDropped} time re-syncs={TimeResets}" +
-            $" | own-car corrections={Corrections} mean={(Corrections > 0 ? CorrSum / Corrections : 0):0.000}m max={CorrMax:0.00}m >1m={CorrOver1m} >5m={CorrOver5m}" : "");
+            $" | own-car corrections={Corrections} mean={(Corrections > 0 ? CorrSum / Corrections : 0):0.000}m max={CorrMax:0.00}m >1m={CorrOver1m} >5m={CorrOver5m} | remoteBelow={RemoteBelow}" : "");
 
     static void Log(string why)
     {
         if (!Plugin.NetStatsLog.Value) return;
-        Plugin.L.LogInfo($"[NetStats] ({why}) {Describe()} | {FrameDescribe()} | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()} | {RemoteSmooth.Describe()} | {RemoteVisuals.Describe()} | {OwnCar.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()}");
-        FramesOver25ms = FramesOver50ms = 0; // per-window counters
+        Plugin.L.LogInfo($"[NetStats] ({why}) {Describe()} | {FrameDescribe()} | {FrameCost.Describe()} | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()} | {RemoteSmooth.Describe()} | {RemoteVisuals.Describe()} | {OwnCar.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()}");
+        FramesOver25ms = FramesOver50ms = 0; RemoteBelow = 0;
+        FrameCostLogic.Clear(_ft, ref _ftN, ref _ftI); // 30 s window for frameMs (same owner as cost)
+        FrameCost.ResetWindow();
     }
 }

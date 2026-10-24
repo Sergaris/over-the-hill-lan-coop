@@ -370,7 +370,9 @@ internal static class CoopMenu
 
     static string Esc(string s) => "<noparse>" + (s ?? "").Replace("</noparse>", "") + "</noparse>";
 
-    static void Select(GameObject go) { try { EventSystem.current?.SetSelectedGameObject(go); } catch { } }
+    static void Select(GameObject go) => UiNav.Select(go);
+    /// <summary>0.2.0 T1.3: Local Co-op button for restoring focus after a modal closes.</summary>
+    public static GameObject LocalCoopButton => _button != null && !_button.WasCollected ? _button : null;
 
     static void ScreenTick()
     {
@@ -426,20 +428,25 @@ internal static class CoopMenu
     {
         var sel = new List<Selectable>();
         foreach (var r in _rows) if (r.gameObject.activeSelf) sel.Add(r);
-        var bar = new Selectable[] { _playersBtn, _modsBtn, _hostBtn, _addBtn, _backBtn };
-        for (int i = 0; i < sel.Count; i++)
+        var col = sel.ToArray();
+        UiNav.LinkColumn(col);
+        if (col.Length > 0)
         {
-            var n = new Navigation { mode = Navigation.Mode.Explicit };
-            n.selectOnUp = i > 0 ? sel[i - 1] : null;
-            n.selectOnDown = i + 1 < sel.Count ? sel[i + 1] : _hostBtn;
-            sel[i].navigation = n;
+            var last = col[col.Length - 1].navigation;
+            last.selectOnDown = _hostBtn;
+            col[col.Length - 1].navigation = last;
         }
+        var bar = new Selectable[] { _playersBtn, _modsBtn, _hostBtn, _addBtn, _backBtn };
+        UiNav.LinkRow(bar);
+        // LinkRow wraps left/right; restore up → last lobby row (and clear wrap that would leave the bar).
         for (int i = 0; i < bar.Length; i++)
         {
-            var n = new Navigation { mode = Navigation.Mode.Explicit };
+            if (bar[i] == null) continue;
+            var n = bar[i].navigation;
             n.selectOnLeft = i > 0 ? bar[i - 1] : null;
             n.selectOnRight = i + 1 < bar.Length ? bar[i + 1] : null;
-            n.selectOnUp = sel.Count > 0 ? sel[sel.Count - 1] : null;
+            n.selectOnUp = col.Length > 0 ? col[col.Length - 1] : null;
+            n.selectOnDown = null;
             bar[i].navigation = n;
         }
     }
