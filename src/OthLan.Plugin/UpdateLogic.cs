@@ -101,10 +101,15 @@ public static class UpdateLogic
         url != null && (testPrefix != null ? url.StartsWith(testPrefix, StringComparison.Ordinal) && AllowedUrl(url, true)
                                            : url.StartsWith(AssetPrefix, StringComparison.Ordinal) && AllowedUrl(url));
 
+    /// <summary>GitHub release asset with the Unity base libraries zip (BepInEx InteropManager offline cache).
+    /// Same bytes as unity.bepinex.dev/libraries/6000.0.75.zip; must be listed in SHA256SUMS.txt.</summary>
+    public const string UnityLibsAssetName = "6000.0.75.zip";
+
     public sealed class Release
     {
         public string Tag = "", Version = "", Name = "", Notes = "", ZipName = "", ZipUrl = "", SumsUrl = "";
-        public long ZipSize;
+        public string UnityLibsUrl = "";
+        public long ZipSize, UnityLibsSize;
     }
 
     /// <summary>Release from the GitHub JSON, or null with a reason. Picks OTH-LAN-&lt;version&gt;.zip (installer zip).</summary>
@@ -130,6 +135,8 @@ public static class UpdateLogic
                     if (!AllowedAssetUrl(u, testPrefix)) continue;
                     if (n == rel.ZipName) { rel.ZipUrl = u; if (a.TryGetProperty("size", out var sz) && sz.ValueKind == JsonValueKind.Number) rel.ZipSize = sz.GetInt64(); }
                     else if (n == SumsName) rel.SumsUrl = u;
+                    else if (n == UnityLibsAssetName)
+                    { rel.UnityLibsUrl = u; if (a.TryGetProperty("size", out var usz) && usz.ValueKind == JsonValueKind.Number) rel.UnityLibsSize = usz.GetInt64(); }
                 }
             if (rel.ZipUrl.Length == 0) { why = $"no {rel.ZipName} asset"; return null; }
             if (rel.SumsUrl.Length == 0) { why = $"no {SumsName} asset"; return null; }
@@ -137,6 +144,35 @@ public static class UpdateLogic
             return rel;
         }
         catch (Exception e) { why = "bad JSON: " + Trunc(e.Message, 80); return null; }
+    }
+
+    /// <summary>Find a named release asset URL (allow-listed). Does not require the installer zip to be present —
+    /// used by OTH-LAN-Launch for the offline unity-libs zip.</summary>
+    public static bool TryFindAsset(string json, string assetName, out string url, out string why, string testPrefix = null)
+    {
+        url = null; why = null;
+        if (string.IsNullOrEmpty(assetName) || assetName.Contains('/') || assetName.Contains('\\'))
+        { why = "bad asset name"; return false; }
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var r = doc.RootElement;
+            bool B(string k) => r.TryGetProperty(k, out var e) && e.ValueKind == JsonValueKind.True;
+            string S(JsonElement o, string k) => o.TryGetProperty(k, out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() ?? "" : "";
+            if (B("draft")) { why = "draft"; return false; }
+            if (B("prerelease")) { why = "prerelease"; return false; }
+            if (!r.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+            { why = "no assets"; return false; }
+            foreach (var a in assets.EnumerateArray())
+            {
+                var n = S(a, "name"); var u = S(a, "browser_download_url");
+                if (n != assetName || !AllowedAssetUrl(u, testPrefix)) continue;
+                url = u; return true;
+            }
+            why = $"no {assetName} asset";
+            return false;
+        }
+        catch (Exception e) { why = "bad JSON: " + Trunc(e.Message, 80); return false; }
     }
 
     /// <summary>Release notes for the prompt: bullets of the first "## ... x.y.z" section in the wanted language

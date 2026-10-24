@@ -49,12 +49,22 @@ internal static unsafe class OwnRender
     static void RenderDetour(IntPtr self, IntPtr mi)
     {
         _orig(self, mi);
-        if (self == IntPtr.Zero || self != OwnNrb) return;
+        if (!Enabled || self == IntPtr.Zero || self != OwnNrb) return;
         try { Apply(false); } catch (Exception e) { if (Frames < 3) Plugin.L.LogWarning($"[OwnRender] {e.Message}"); }
     }
 
     /// <summary>Fallback when the render hook is unavailable (camera then lags the offset by a frame).</summary>
     public static void BeforeRender() { if (!HookOk && Enabled && OwnNrb != IntPtr.Zero) { try { BeforeRenderApplies++; Apply(true); } catch { } } }
+
+    /// <summary>0.1.9 U0: live F7 A/B. Installs the render hook on first enable; disable just stops applying.</summary>
+    public static void SetEnabled(bool on, string why)
+    {
+        if (Plugin.OwnFreezeSmoothing.Value == on) return;
+        Plugin.OwnFreezeSmoothing.Value = on;
+        Plugin.L.LogInfo($"[OwnRender] OwnFreezeSmoothing {(on ? "on" : "off")} ({why})");
+        if (on) Install();
+        else Forget();
+    }
 
     public static void Forget() { OwnNrb = IntPtr.Zero; _lastTick = int.MinValue; _hasShown = false; _wasFrozen = false; _applied = false; _carryP = Vector3.zero; _carryQ = Quaternion.identity; _frame = -1; }
 

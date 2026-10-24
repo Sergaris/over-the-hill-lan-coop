@@ -34,6 +34,11 @@ internal static class HostInfo
     /// <summary>Lobby name (main thread sets it: Steam name / cfg / PC name).</summary>
     public static volatile string LobbyName = Environment.MachineName;
     public static readonly string SessionId = Guid.NewGuid().ToString("N")[..12];
+    /// <summary>Host: <c>liverymods=</c> payload (main thread refreshes via <see cref="SetLiveryMods"/>).</summary>
+    static volatile string _liveryMods = "";
+
+    /// <summary>Host: update the Modio livery ids required to join (wire: <see cref="ModLiveryGateLogic.Format"/>).</summary>
+    public static void SetLiveryMods(string csv) { _liveryMods = csv ?? ""; }
 
     /// <summary>Host: publish (or replace) the session description. Called from the StartGame detour.</summary>
     public static void Publish(string area, int players, Dictionary<string, string> props)
@@ -50,6 +55,16 @@ internal static class HostInfo
         _maxPlayers = players; _area = area ?? "";
         EnsureListener();
         Plugin.L.LogInfo($"[LAN] host info published on UDP {InfoPort}: area={area ?? "?"} players={players} props={props.Count}");
+    }
+
+    /// <summary>Full reply including the latest liverymods line (appended outside the locked base blob).</summary>
+    static string ReplyNow()
+    {
+        string body; lock (_lock) body = _reply;
+        if (body == null) return null;
+        var lm = _liveryMods;
+        if (string.IsNullOrEmpty(lm)) return body;
+        return body + "liverymods=" + lm.Replace('\n', ' ') + "\n";
     }
 
     public static void Clear() { lock (_lock) _reply = null; }
@@ -91,7 +106,7 @@ internal static class HostInfo
                             HostPings.SawClient(slot, ep);
                             var rep = new byte[CarSyncLogic.PingSize + 1];
                             Array.Copy(data, rep, CarSyncLogic.PingSize);
-                            rep[4] = 1; rep[CarSyncLogic.PingSize] = (byte)CarSync.HostFlags;
+                            rep[4] = 1; rep[CarSyncLogic.PingSize] = (byte)CarSync.HostFlagsFor(slot);
                             _udp.Send(rep, rep.Length, ep);
                         }
                         else HostPings.OnReply(slot, seq);
@@ -126,7 +141,7 @@ internal static class HostInfo
                     continue;
                 }
                 if (text != Request) continue;
-                string r; lock (_lock) r = _reply;
+                var r = ReplyNow();
                 if (r == null) continue;
                 r += $"carsync={(CarSync.HostEnabled ? 1 : 0)}\nname={DiscoveryLogic.Clean(LobbyName, 32)}\ncur={CurPlayers}\nmax={_maxPlayers}\n";
                 var b = Encoding.UTF8.GetBytes(r);
@@ -176,7 +191,7 @@ internal static class HostInfo
 
     public sealed class Info
     {
-        public string Mod, Build, GaHash, Area, Name = ""; public int Players, Cur = -1, Max = -1; public int CarSync = -1;
+        public string Mod, Build, GaHash, Area, Name = "", LiveryMods = ""; public int Players, Cur = -1, Max = -1; public int CarSync = -1;
         public Dictionary<string, string> Props = new();
     }
 
@@ -226,6 +241,7 @@ internal static class HostInfo
                 case "name": info.Name = DiscoveryLogic.Clean(v, 32); break;
                 case "cur": int.TryParse(v, out info.Cur); break;
                 case "max": int.TryParse(v, out info.Max); break;
+                case "liverymods": info.LiveryMods = v.Trim(); break;
                 default: if (k.StartsWith("prop.")) info.Props[k[5..]] = v; break;
             }
         }

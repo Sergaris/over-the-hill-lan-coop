@@ -36,7 +36,7 @@ internal static class FreezeWatch
         var ep = $"{LanState.TargetIp}:{LanState.TargetPort}";
         Plugin.L.LogWarning($"[Freeze] Fusion tick stuck at {tick} for {frozen:0.0} s while the side channel is healthy ({healthy:0.0} s, loss {loss:0} %): rejoining {ep} (attempt {Attempts}, slot {LanState.ClientSlot})");
         LanState.Status("status.freezeRejoin", ep);
-        Overlay.Show();
+        // 0.1.9: do not pop F7 on auto-rejoin; status stays in logs / next explicit F7.
         try { OverlandNetworkRunner.Instance?.QuitToMenuAsync(MainMenuContext.Reason.PlayerChoice, "OTH-LAN: Fusion simulation stuck, rejoining"); }
         catch (Exception e) { Plugin.L.LogWarning($"[Freeze] quit: {e.Message}"); }
         Autopilot.OnAutoRejoin();

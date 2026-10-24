@@ -46,12 +46,16 @@ public class Overlay : MonoBehaviour
     }
 
     internal static void Show() { if (_inst != null && !Autopilot.Active) _inst._show = true; }   // keep self-test screenshots clean
+    /// <summary>0.1.9: close F7 without a keypress (e.g. client just entered the host's world).</summary>
+    internal static void Hide() { if (_inst != null) _inst._show = false; }
     public static void SetShownForTest(bool v) { if (_inst != null) _inst._show = v; }
 
     void Update()
     {
         try { LangWatch.Tick(); } catch (Exception e) { LogOnce("lang", e); }
         try { PollQuery(); } catch (Exception e) { _querying = false; Plugin.L.LogError($"[LAN] join: {e}"); }
+        try { ModLiveryGate.Tick(); } catch (Exception e) { LogOnce("modgate", e); }
+        try { HostLiveryModsTick(); } catch (Exception e) { LogOnce("hostliveries", e); }
         try { Watchdog(); } catch (Exception e) { Plugin.L.LogError($"[LAN] watchdog: {e}"); }
         try { PingHud.Tick(); } catch (Exception e) { LogOnce("ping", e); }
         try { CarSync.Tick(); } catch (Exception e) { LogOnce("carsync", e); }
@@ -77,7 +81,28 @@ public class Overlay : MonoBehaviour
         catch (Exception e) { Plugin.L.LogError($"[UI] {e.Message}"); }
     }
 
-    static float _nextSlotSync;
+    static float _nextSlotSync, _nextLiveryMods;
+    /// <summary>Host: publish required Modio livery ids for joining clients (HostInfo liverymods=).</summary>
+    static void HostLiveryModsTick()
+    {
+        if (LanState.Active != LanRole.Host) return;
+        if (Time.realtimeSinceStartup < _nextLiveryMods) return;
+        _nextLiveryMods = Time.realtimeSinceStartup + 2f;
+        try
+        {
+            string csv;
+#if SELFTEST
+            csv = !string.IsNullOrEmpty(Autopilot.FakeLiveryMods)
+                ? Autopilot.FakeLiveryMods
+                : ModLiveryGateLogic.Format(ModLiveryBridge.CollectHostRequired());
+#else
+            csv = ModLiveryGateLogic.Format(ModLiveryBridge.CollectHostRequired());
+#endif
+            HostInfo.SetLiveryMods(csv);
+        }
+        catch (Exception e) { Plugin.L.LogWarning($"[LAN] host liverymods: {e.Message}"); }
+    }
+
     /// <summary>Host: mark reserved slots connected / release the slots of players who left (SlotAllocator).</summary>
     static void HostSlotsTick()
     {
@@ -165,6 +190,7 @@ public class Overlay : MonoBehaviour
     void LateUpdate()
     {
         try { RemoteSmooth.LateTick(); } catch (Exception e) { LogOnce("remotesmooth", e); }
+        try { RemoteVisuals.LateTick(); } catch (Exception e) { LogOnce("remotevisuals", e); }
     }
 
     static float _offConfirmUntil = -1;
@@ -178,6 +204,7 @@ public class Overlay : MonoBehaviour
             catch (Exception e) { _pingBroken = true; Plugin.L.LogWarning($"[UI] ping label disabled: {e.Message}"); }
         }
         try { CoopMenu.OnGUI(); } catch (Exception e) { LogOnce("coop-gui", e); }
+        try { ModLiveryGate.OnGUI(); } catch (Exception e) { LogOnce("modgate-gui", e); }
         try { Updater.OnGUI(); } catch (Exception e) { LogOnce("update-gui", e); }
         if (!_carLabelsBroken)
         {
@@ -194,8 +221,8 @@ public class Overlay : MonoBehaviour
         {
             _join ??= NetInfo.DemoIp != null ? "26.10.20.40:27015" : Plugin.JoinAddress.Value ?? "";
             var byUser = BuildGate.Outcome == GateLogic.Outcome.DisabledByUser;
-            _rect.height = 430 + Mathf.Max(0, CarSync.HostStats.Count - 2) * 18 + (byUser ? 32 : 0) + (LanState.Active == LanRole.Client ? 54 : LanState.Active == LanRole.Host ? 24 : 0) + 56
-                + (OffWarnShown() ? 40 : 0);   // 3-4 players: grow instead of overlapping
+            _rect.height = 430 + Mathf.Max(0, CarSync.HostStats.Count - 2) * 18 + (byUser ? 32 : 0) + (LanState.Active == LanRole.Client ? 144 : LanState.Active == LanRole.Host ? 54 : 0) + 56
+                + (OffWarnShown() ? 40 : 0);   // client: local + remote + freeze + export; host: export
             GUI.Box(_rect, Loc.F("f7.title", Plugin.Version));
             float x = _rect.x + 10, y = _rect.y + 25, w = _rect.width - 20;
             var gate = BuildGate.Status();
@@ -251,13 +278,23 @@ public class Overlay : MonoBehaviour
                 GUI.Button(new Rect(x, y, w, 26), Loc.F("cs.hostControls", hs));
                 GUI.enabled = prev;
                 y += 30;
-                var st = OwnCar.State == "client" ? Loc.T("own.client") : OwnCar.State == "soft" ? Loc.T("own.soft") : Loc.T("own.none");
+                var st = OwnCar.State == "client" ? Loc.T("own.client") : OwnCar.State == "soft" ? Loc.T("own.soft") : OwnCar.State == "suspend" ? Loc.T("own.suspend") : Loc.T("own.none");
                 GUI.Label(new Rect(x, y, w, 20), Loc.F("own.caption", st));
                 y += 20;
                 // 0.1.8.1: the client's own toggle is back (experimental): OwnLocalClock, applied live (OwnLocal.SetEnabled
                 // puts back a pending skipped tick and resets the local clock + render interpolation).
                 if (GUI.Button(new Rect(x, y, w, 26), Plugin.OwnLocalClock.Value ? Loc.T("own.localOn") : Loc.T("own.localOff")))
                     OwnLocal.SetEnabled(!Plugin.OwnLocalClock.Value, "F7 button");
+                y += 30;
+                // 0.1.9 U0: live A/B for RemoteInterpolate (was cfg-only; TuneProxy ran once per car).
+                if (GUI.Button(new Rect(x, y, w, 26), Plugin.RemoteInterpolate.Value ? Loc.T("own.remoteOn") : Loc.T("own.remoteOff")))
+                    RemoteSmooth.SetInterpolate(!Plugin.RemoteInterpolate.Value, "F7 button");
+                y += 30;
+                if (GUI.Button(new Rect(x, y, w, 26), Plugin.OwnFreezeSmoothing.Value ? Loc.T("own.freezeOn") : Loc.T("own.freezeOff")))
+                    OwnRender.SetEnabled(!Plugin.OwnFreezeSmoothing.Value, "F7 button");
+                y += 30;
+                if (GUI.Button(new Rect(x, y, w, 26), Loc.T("f7.exportDiag")))
+                    Diagnostics.ExportZip("F7 button");
                 y += 30;
                 GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.netStats", NetStats.Gaps.Over500ms, NetStats.InputDropped, NetStats.Own.Over10cm));
                 y += 22;
@@ -274,6 +311,12 @@ public class Overlay : MonoBehaviour
                 }
                 if (LanState.Active == LanRole.Host) { y += 30; GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.netStats", "-", "-", NetStats.Own.Over10cm)); }
                 y += 30;
+                if (LanState.Active == LanRole.Host || LanState.Active == LanRole.Off)
+                {
+                    if (GUI.Button(new Rect(x, y, w, 26), Loc.T("f7.exportDiag")))
+                        Diagnostics.ExportZip("F7 button");
+                    y += 30;
+                }
             }
             // 0.1.8 updates
             GUI.Label(new Rect(x, y, w, 20), Loc.F("upd.f7", Updater.StatusMsg()));
@@ -423,7 +466,8 @@ public class Overlay : MonoBehaviour
         _queryIp = ip; _queryPort = port; _queryResult = null; _queryError = null; _queryDone = false; _querying = true;
         LanState.Status("status.querying", $"{ip}:{port + 1}");
         Plugin.L.LogInfo("[LAN] " + LanState.LastStatus.En());
-        Show();
+        // 0.1.9: do not auto-open F7 on join (Local Co-op / F9 / freeze-rejoin). Errors below still Show();
+        // successful world entry Hide()s via FusionHooks → OnClientEnteredWorld.
         LanState.HostPlayers = 0;
         var hint = FusionHooks.PickClientSlot();   // main thread (reads the Radmin IP); the host prefers it if free
         new System.Threading.Thread(() =>
@@ -483,7 +527,34 @@ public class Overlay : MonoBehaviour
             if (info.CarSync >= 0) CarSync.OnHostFlags(info.CarSync, ClientLink.Now);
             _joinAllowMods = RoomPropsLogic.AllowMods(info.Props) ?? Plugin.AllowMods.Value;
             Plugin.L.LogInfo($"[LAN] host session: mods {(_joinAllowMods ? "allowed" : "off")}");
+            // Pre-join Modio livery gate: host advertises liverymods=…; client must have them locally.
+            if (_joinAllowMods && !string.IsNullOrEmpty(info.LiveryMods))
+            {
+                var required = ModLiveryGateLogic.Parse(info.LiveryMods);
+                var missing = ModLiveryBridge.MissingOf(required);
+                if (missing.Count > 0)
+                {
+                    var areaPending = areaName;
+                    var ipP = ip; var portP = port;
+                    Plugin.L.LogInfo($"[LAN] missing host liveries: {ModLiveryGateLogic.Format(missing)}");
+                    LanState.Status("status.modsMissing", missing.Count);
+                    ModLiveryGate.Begin(required, missing,
+                        () => FinishClientJoin(ipP, portP, areaPending),
+                        () =>
+                        {
+                            LanState.Armed = LanRole.Off; LanState.Watching = false;
+                            LanState.Status("status.modsCancelled");
+                            Show();
+                        });
+                    return;
+                }
+            }
         }
+        FinishClientJoin(ip, port, areaName);
+    }
+
+    static void FinishClientJoin(string ip, ushort port, string areaName)
+    {
         var area = FindArea(areaName, out var avail);
         if (area == null)
         {
@@ -496,6 +567,8 @@ public class Overlay : MonoBehaviour
             PushStart(Fusion.GameMode.Client, $"LAN {ip}:{port}", area);
             LanState.Status("status.joining", $"{ip}:{port}", area.name);
             Plugin.L.LogInfo("[LAN] " + LanState.LastStatus.En());
+            // World start is imminent: close F7 even if the user had it open to click Join.
+            Hide();
         }
         catch (Exception e)
         {

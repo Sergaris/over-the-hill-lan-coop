@@ -23,6 +23,7 @@ internal static class RemoteSmooth
         public Transform It; public bool Usable, Checked;
         public Vector3 LastFusionP, LastWrittenP; public Quaternion LastFusionQ = Quaternion.identity, LastWrittenQ = Quaternion.identity, LastDrawnQ = Quaternion.identity;
         public Quaternion Qo = Quaternion.identity; public Vector3 W; public bool HasQ, Wrote;
+        public float LastFusionMoveAt = -1;   // 0.1.9: per-car starve (global SnapshotAge wrongly freezes all remotes)
         public readonly Smoothness Raw = new();
     }
     static readonly Dictionary<IntPtr, Car> _cars = new();
@@ -31,17 +32,19 @@ internal static class RemoteSmooth
     public static readonly Smoothness RawAll = new();
     public static int Absorbs, Snaps, ExtrapFrames, NoTarget, FusionSkipped;
     static float _lastT = -1;
+    // Cars we made non-simulated for RemoteInterpolate (so a live F7 toggle can undo / redo it).
+    static readonly List<IntPtr> _interpolated = new();
 
     public static bool Enabled => Plugin.RemoteSmoothing?.Value ?? false;
 
-    static void ResetAll() { _cars.Clear(); RawAll.Reset(); Absorbs = Snaps = ExtrapFrames = NoTarget = FusionSkipped = ProxiesTuned = 0; _nextScan = 0; _lastT = -1; }
+    static void ResetAll() { _cars.Clear(); _interpolated.Clear(); RawAll.Reset(); Absorbs = Snaps = ExtrapFrames = NoTarget = FusionSkipped = ProxiesTuned = Interpolated = 0; _nextScan = 0; _lastT = -1; RemoteVisuals.Reset(); }
 
     public static string StateOf(IntPtr p) => _cars.TryGetValue(p, out var c) ? (c.Usable ? $"{c.S.Last}/off{c.S.OffsetLength * 100:0}cm" : "unusable") : "-";
     public static int StateCode(IntPtr p) => _cars.TryGetValue(p, out var c) && c.Usable ? (int)c.S.Last : -1;
     public static Vector3 OffsetOf(IntPtr p) => _cars.TryGetValue(p, out var c) ? new Vector3((float)c.S.Ox, (float)c.S.Oy, (float)c.S.Oz) : Vector3.zero;
 
     public static string Describe() =>
-        $"remote smoothing {(Enabled ? "on" : "off")}: raw (Fusion) {RawAll.Describe()} | absorbed={Absorbs} snaps={Snaps} extrapolatedFrames={ExtrapFrames} noTarget={NoTarget} fusionSkipped={FusionSkipped} proxiesTuned={ProxiesTuned} interpolated={Interpolated}";
+        $"remote smoothing {(Enabled ? "on" : Plugin.RemoteInterpolate?.Value == true ? "root-gap" : "off")}: raw (Fusion) {RawAll.Describe()} | absorbed={Absorbs} snaps={Snaps} extrapolatedFrames={ExtrapFrames} noTarget={NoTarget} fusionSkipped={FusionSkipped} proxiesTuned={ProxiesTuned} interpolated={Interpolated}";
 
     public static int ProxiesTuned;
 
@@ -62,22 +65,51 @@ internal static class RemoteSmooth
             if (Plugin.RemoteProxySnapMeters.Value > 0) nrb.CorrectionSnapDistance = Mathf.Max(d0, Plugin.RemoteProxySnapMeters.Value);
             if (Plugin.RemoteProxySnapDegrees.Value > 0) nrb.CorrectionSnapAngle = Mathf.Max(a0, Plugin.RemoteProxySnapDegrees.Value);
             ProxiesTuned++;
-            if (Plugin.RemoteInterpolate.Value)
-            {
-                // v4 2.3: other players' cars are drawn from Fusion's interpolation buffer (time-shifted, jitter-buffered
-                // playback of the host's snapshots) instead of being predicted: no corrections, no resimulation cost.
-                try
-                {
-                    var ok = fp.Runner != null && fp.Runner.SetIsSimulated(fp.Object, false);
-                    var rb = fp.rigidbody; if (rb != null) rb.isKinematic = true;
-                    Interpolated++;
-                    Plugin.L.LogInfo($"[RemoteSmooth] {fp.gameObject.name}: interpolated (not simulated) {(ok ? "ok" : "refused")}");
-                }
-                catch (Exception e) { Plugin.L.LogWarning($"[RemoteSmooth] interpolate: {e.Message}"); }
-            }
+            if (Plugin.RemoteInterpolate.Value) ApplyInterpolate(fp, true);
+            else ApplyInterpolate(fp, false);
+            // R1: non-simulated cars never get AfterAllTicks → apply headlights from CurrentFrameInput immediately
+            // (late join + first tune). Ongoing updates: RemoteVisuals.LateTick.
+            if (Plugin.RemoteInterpolate.Value) RemoteVisuals.ApplyLightsNow(fp);
             Plugin.L.LogInfo($"[RemoteSmooth] {fp.gameObject.name}: proxy correction {s0:0.##}s/{d0:0.#}m/{a0:0}deg -> {nrb.CorrectionSmoothingTime:0.##}s/{nrb.CorrectionSnapDistance:0.#}m/{nrb.CorrectionSnapAngle:0}deg");
         }
         catch (Exception e) { Plugin.L.LogWarning($"[RemoteSmooth] proxy tune: {e.Message}"); }
+    }
+
+    static void ApplyInterpolate(FusionPlayer fp, bool on)
+    {
+        try
+        {
+            if (fp?.Runner == null || fp.Object == null) return;
+            var ok = fp.Runner.SetIsSimulated(fp.Object, !on); // on = interpolate = not simulated
+            var rb = fp.rigidbody ?? fp.vehicleBase?.cachedRigidbody;
+            if (rb != null) rb.isKinematic = on;
+            if (on)
+            {
+                if (!_interpolated.Contains(fp.Pointer)) { _interpolated.Add(fp.Pointer); Interpolated++; }
+            }
+            else _interpolated.Remove(fp.Pointer);
+            Plugin.L.LogInfo($"[RemoteSmooth] {fp.gameObject.name}: {(on ? "interpolated (not simulated)" : "simulated again")} {(ok ? "ok" : "refused")}");
+        }
+        catch (Exception e) { Plugin.L.LogWarning($"[RemoteSmooth] interpolate: {e.Message}"); }
+    }
+
+    /// <summary>0.1.9 U0: live F7 toggle. Retunes every remote car already seen; new cars still go through TuneProxy.</summary>
+    public static void SetInterpolate(bool on, string why)
+    {
+        if (Plugin.RemoteInterpolate.Value == on) return;
+        Plugin.RemoteInterpolate.Value = on;
+        Plugin.L.LogInfo($"[RemoteSmooth] RemoteInterpolate {(on ? "on" : "off")} ({why})");
+        foreach (var fp in _players)
+        {
+            try
+            {
+                if (fp == null || fp.WasCollected || fp.Object == null || fp.Object.HasInputAuthority) continue;
+                ApplyInterpolate(fp, on);
+                if (on) RemoteVisuals.ApplyLightsNow(fp);
+            }
+            catch (Exception e) { Plugin.L.LogWarning($"[RemoteSmooth] retune: {e.Message}"); }
+        }
+        if (!on) RemoteVisuals.Reset();
     }
 
     /// <summary>Main thread, LateUpdate.</summary>
@@ -91,7 +123,11 @@ internal static class RemoteSmooth
         var t = Time.realtimeSinceStartup; var dt = _lastT < 0 ? 0 : t - _lastT; _lastT = t;
         if (t >= _nextScan) { _nextScan = t + 1f; try { _players = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { _players = Array.Empty<FusionPlayer>(); } }
         var client = r.IsClient && !r.IsServer;
-        var starved = client && NetStats.SnapshotAge > Plugin.RemoteStarvedSeconds.Value;
+        var starveS = Plugin.RemoteStarvedSeconds.Value;
+        // 0.1.9 U5: under RemoteInterpolate OTH cars have no InterpolationTarget (Usable=false), so the old
+        // RemoteSmoothing path never ran. Run RemoteSmoother on the root instead: Fusion freezes the kinematic
+        // remote car across snapshot gaps → dead-reckon ≤ ExtrapolateSeconds, then hold and blend back.
+        var rootGapSmooth = client && Plugin.RemoteInterpolate.Value;
         _cfg.ExtrapolateSeconds = Plugin.RemoteExtrapolateSeconds.Value; _cfg.Tau = Plugin.RemoteSmoothTau.Value; _cfg.TauLarge = Math.Min(_cfg.Tau, Plugin.RemoteSmoothTauLarge.Value);
         _cfg.MaxCorrection = Plugin.RemoteMaxCorrection.Value; _cfg.SnapMeters = Plugin.RemoteSnapMeters.Value;
         foreach (var fp in _players)
@@ -105,16 +141,31 @@ internal static class RemoteSmooth
                     c.Checked = true;
                     var nrb = fp.GetComponent<NetworkRigidbody3D>(); c.It = nrb != null ? nrb.InterpolationTarget : null;
                     c.Usable = c.It != null && c.It != fp.transform && c.It.GetComponent<Rigidbody>() == null;
-                    if (!c.Usable) { NoTarget++; Plugin.L.LogInfo($"[RemoteSmooth] {fp.gameObject.name}: no separate InterpolationTarget, not smoothed"); }
+                    if (!c.Usable)
+                    {
+                        NoTarget++;
+                        Plugin.L.LogInfo(rootGapSmooth
+                            ? $"[RemoteSmooth] {fp.gameObject.name}: no InterpolationTarget — root gap smoothing (RemoteInterpolate)"
+                            : $"[RemoteSmooth] {fp.gameObject.name}: no separate InterpolationTarget, not smoothed");
+                    }
                     if (client && nrb != null) TuneProxy(fp, nrb);
                 }
-                if (!c.Usable || c.It == null) continue;
-                var fpos = c.It.position; var fq = c.It.rotation;
+                Transform vis = null;
+                if (c.Usable && c.It != null) vis = c.It;
+                else if (rootGapSmooth) vis = fp.transform;
+                if (vis == null) continue;
+                var fpos = vis.position; var fq = vis.rotation;
                 // Fusion did not write the target this frame (our value is still there): its pose is the last one we saw.
                 if (c.Wrote && fpos == c.LastWrittenP && fq == c.LastWrittenQ) { fpos = c.LastFusionP; fq = c.LastFusionQ; FusionSkipped++; }
+                // Per-car starve: this remote's Fusion pose has not moved for RemoteStarvedSeconds (not global SnapshotAge —
+                // one stalled slot must not force Extrapolate/Hold on every other car in fc4).
+                if (c.LastFusionMoveAt < 0 || (fpos - c.LastFusionP).sqrMagnitude > 1e-8f || Quaternion.Angle(fq, c.LastFusionQ) > 1e-3f)
+                    c.LastFusionMoveAt = t;
+                var starved = client && (t - c.LastFusionMoveAt) > starveS;
                 // raw = what Fusion alone would have drawn (same metric as NetStats, for the A/B in one run)
                 if (dt > 0 && dt <= 0.25f) { var f0 = c.Raw.Frames; var h = c.Raw.Add(fpos.x, fpos.y, fpos.z, dt); if (c.Raw.Frames > f0) RawAll.Record(h); } else c.Raw.Break();
-                if (!Enabled) { c.S.Reset(); c.Wrote = false; c.LastFusionP = fpos; c.LastFusionQ = fq; continue; }
+                // IT path still needs RemoteSmoothing=true; root path is on whenever RemoteInterpolate is.
+                if (!(Enabled || (rootGapSmooth && !c.Usable))) { c.S.Reset(); c.Wrote = false; c.LastFusionP = fpos; c.LastFusionQ = fq; continue; }
                 var a0 = c.S.Absorbed; var s0 = c.S.Snaps; var e0 = c.S.ExtrapolatedFrames;
                 var (x, y, z) = c.S.Step(fpos.x, fpos.y, fpos.z, dt, _cfg, starved);
                 Absorbs += c.S.Absorbed - a0; Snaps += c.S.Snaps - s0; ExtrapFrames += c.S.ExtrapolatedFrames - e0;
@@ -142,7 +193,7 @@ internal static class RemoteSmooth
                 }
                 var drawn = new Vector3((float)x, (float)y, (float)z);
                 c.LastFusionP = fpos; c.LastFusionQ = fq;
-                if ((drawn - fpos).sqrMagnitude > 1e-8f || Quaternion.Angle(drawnQ, fq) > 1e-3f) { c.It.SetPositionAndRotation(drawn, drawnQ); c.Wrote = true; c.LastWrittenP = c.It.position; c.LastWrittenQ = c.It.rotation; }
+                if ((drawn - fpos).sqrMagnitude > 1e-8f || Quaternion.Angle(drawnQ, fq) > 1e-3f) { vis.SetPositionAndRotation(drawn, drawnQ); c.Wrote = true; c.LastWrittenP = vis.position; c.LastWrittenQ = vis.rotation; }
                 else c.Wrote = false;
                 c.LastDrawnQ = drawnQ;
             }

@@ -16,6 +16,10 @@
     <Compile Include="../../src/OthLan.Plugin/DiscoveryLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/Loc.cs" />
     <Compile Include="../../src/OthLan.Plugin/UpdateLogic.cs" />
+    <Compile Include="../../src/OthLan.Plugin/SuspendLogic.cs" />
+    <Compile Include="../../src/OthLan.Plugin/PosePlayback.cs" />
+    <Compile Include="../../src/OthLan.Plugin/ModLiveryGateLogic.cs" />
+    <Compile Include="../../src/OthLan.Launch/HangLogic.cs" />
     <EmbeddedResource Include="../../src/OthLan.Plugin/Lang/*.json" LogicalName="lang.%(Filename).json" />
     <Reference Include="$(BepInExCore)/Iced.dll" />
   </ItemGroup>

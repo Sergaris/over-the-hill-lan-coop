@@ -1,7 +1,34 @@
-# Changelog
+﻿# Changelog
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.1.9
+
+Both players need 0.1.9. From 0.1.8.1 the in-game updater offers this release; from 0.1.8 or older install by hand once.
+
+- Other players' headlights, brake/reverse lights and wheel spin/steer work again when remote interpolation is on.
+  Host Modio liveries re-apply on clients. Pre-join dialog lists missing Modio liveries with Download / Cancel.
+- `OTH-LAN-Launch.exe`: if BepInEx hangs more than 10 s downloading Unity base libraries, fetches `6000.0.75.zip`
+  from the release into `BepInEx/unity-libs/` and restarts.
+- F7 (client): live toggles for remote interpolation, own-car freeze smoothing, and export diagnostics. F7 no longer
+  auto-opens when joining a host.
+- Own-car local clock is cheaper and pauses during car contact / winch. Remote cars keep moving through short snapshot
+  gaps. Host pose playback (jitter + Hermite) on by default; SendHz 20 → 30.
+- Version is three-part `0.1.9` so both 0.1.8 and 0.1.8.1 updaters can see it.
+
+## 0.1.9 — изменения
+
+У обоих игроков должна быть 0.1.9. С 0.1.8.1 обновление предложит меню; с 0.1.8 и раньше — установите вручную один раз.
+
+- Снова работают фары, стоп/задний ход и вращение колёс чужих машин при интерполяции. Мод-раскраска хоста снова
+  применяется на клиентах. Перед входом — диалог недостающих Modio-раскрасок со Скачать / Отмена.
+- `OTH-LAN-Launch.exe`: если BepInEx больше 10 с висит на скачивании Unity base libraries, качает `6000.0.75.zip`
+  из релиза в `BepInEx/unity-libs/` и перезапускает игру.
+- F7 (клиент): живые переключатели интерполяции чужих, сглаживания заморозки и экспорт диагностики. F7 больше не
+  открывается само при входе к хосту.
+- Локальные часы своей машины дешевле и на паузе при контакте / лебёдке. Чужие машины едут через короткие разрывы
+  снапшотов. На хосте playback поз (jitter + Hermite) по умолчанию; SendHz 20 → 30.
+- Версия из трёх чисел `0.1.9`, чтобы её видели обновлялки и 0.1.8, и 0.1.8.1.
 ## 0.1.8.1
 
 Both players need 0.1.8.1. From 0.1.8 or older, update by hand once (download the zip, run OTH-LAN-Setup.exe → Install).
@@ -250,3 +277,4 @@ gate — PASS. Not verified: two PCs over Radmin with real players, SmartScreen 
 
 Direct-IP LAN mode (F7/F8/F9/F10), host-assigned player slots with rejoin, version gate with code-signature checks
 for untested game builds, ping label, CarSync smoothing, installer with full uninstall.
+

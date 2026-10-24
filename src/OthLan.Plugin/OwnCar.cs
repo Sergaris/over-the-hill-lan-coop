@@ -159,10 +159,23 @@ internal static unsafe class OwnCar
         Plugin.L.LogInfo($"[OwnCar] prediction-reset hooks {(HooksOk ? "installed" : "FAILED")}, after-resim restore {(ResimHookOk ? "installed" : "unavailable (restore at the first forward tick, 0.1.7 style)")}; mode={Configured}");
     }
 
-    /// <summary>Phase 2 really active right now (client in a LAN session with CarSync on, hooks ok, not in a fallback).</summary>
+    /// <summary>Phase 2 really active right now (client in a LAN session with CarSync on, hooks ok, not in a fallback).
+    /// Suspended during contact/winch (R3): Fusion's host-authoritative result is kept so both sides share one collision.</summary>
     public static bool Phase2Active(double now) =>
         HooksOk && Configured == Mode.Suppress && LanState.Active == LanRole.Client && CarSync.HostFlag == 1 && now >= _fallbackUntil
+        && !InteractionSuspended
         && (_spawned || _foundAt > 0 && now - _foundAt > SettleSeconds);
+
+    /// <summary>0.1.9 R3: OwnLocal + phase 2 paused while the own car touches another player's car or a winch is involved.</summary>
+    public static bool InteractionSuspended;
+    public static int Suspends, SuspendFrames;
+    static double _suspendLast; static float _nextSuspendScan; static FusionPlayer[] _suspendPeers = Array.Empty<FusionPlayer>();
+    static SuspendLogic.Cfg SuspendCfg() => new()
+    {
+        SuspendOnContact = Plugin.SuspendOnContact.Value,
+        SuspendOnWinch = Plugin.SuspendOnWinch.Value,
+        ResumeSeconds = Plugin.SuspendResumeSeconds.Value,
+    };
 
     // The game parks a new car (y ~ 1000) and then teleports it to the spawn point. If the spawn is late, the parked
     // car falls and phase 2 would keep (and make the host follow) that fall (seen in self-test r1). So phase 2 starts
@@ -205,7 +218,8 @@ internal static unsafe class OwnCar
                 }
         }
         var now = Now;
-        State = _own == null ? "off" : Phase2Active(now) ? "client" : "soft";
+        UpdateSuspend(now);
+        State = _own == null ? "off" : InteractionSuspended ? "suspend" : Phase2Active(now) ? "client" : "soft";
         // Phase 1: soften the correction that follows a gap (no snapshot resets for > GapSeconds).
         if (_nrb != null && _origSmooth >= 0)
         {
@@ -234,6 +248,7 @@ internal static unsafe class OwnCar
         if (_nrb != null && _origSmooth >= 0) { try { _nrb.CorrectionSmoothingTime = _origSmooth; _nrb.CorrectionSnapDistance = _origSnap; } catch { } }
         _own = null; _ownPtr = IntPtr.Zero; _rb = null; _nrb = null; _vb = null; _captured = false; _boostUntil = -1; _origSmooth = -1;
         _acceptUntil = -1; _fallbackUntil = -1; _bigSince = -1; _patchedSim = IntPtr.Zero;
+        InteractionSuspended = false; _suspendLast = 0; _nextSuspendScan = 0;
     }
 
     static void BeforeResetDetour(IntPtr self, IntPtr mi)
@@ -389,7 +404,62 @@ internal static unsafe class OwnCar
         return _noLinkAt;
     }
 
+    static void UpdateSuspend(double now)
+    {
+        if (_own == null || _rb == null || (!Plugin.SuspendOnContact.Value && !Plugin.SuspendOnWinch.Value))
+        { InteractionSuspended = false; return; }
+        if (Time.realtimeSinceStartup >= _nextSuspendScan)
+        {
+            _nextSuspendScan = Time.realtimeSinceStartup + 0.5f;
+            try { _suspendPeers = UnityEngine.Object.FindObjectsOfType<FusionPlayer>(); } catch { _suspendPeers = Array.Empty<FusionPlayer>(); }
+        }
+        bool localC = false, localW = false;
+        try
+        {
+            if (Plugin.SuspendOnWinch.Value)
+            {
+                PlayerRef pref = default;
+                try { pref = _own.Object.InputAuthority; } catch { }
+                localW = CarSync.WinchInvolved(_own, pref);
+            }
+            if (Plugin.SuspendOnContact.Value && !localW)
+            {
+                var lookAhead = 0.15 + (double.IsNaN(PingHud.SmoothedMs) ? 0.1 : PingHud.SmoothedMs / 2000.0);
+                var inv = Quaternion.Inverse(_rb.rotation);
+                var halfW = Plugin.CarHalfWidth.Value; var halfL = Plugin.CarHalfLength.Value; var halfH = Plugin.CarHalfHeight.Value;
+                foreach (var o in _suspendPeers)
+                {
+                    if (o == null || o == _own || o.Object == null || o.Object.HasInputAuthority) continue;
+                    var orb = o.rigidbody ?? o.vehicleBase?.cachedRigidbody; if (orb == null) continue;
+                    var d = inv * (orb.position - _rb.position);
+                    var rel = (orb.linearVelocity - _rb.linearVelocity).magnitude;
+                    var m = SuspendLogic.PredictiveMargin(Plugin.CarContactMargin.Value, rel, lookAhead);
+                    if (CarSyncLogic.InContact(d.x, d.y, d.z, halfW, halfL, halfH, m)) { localC = true; break; }
+                }
+            }
+        }
+        catch { }
+        var cfg = SuspendCfg();
+        var want = SuspendLogic.ActiveNow(localC, localW, CarSync.HostSuspendContact, CarSync.HostSuspendWinch, cfg);
+        var resume = SuspendLogic.ResumeDelay(cfg, PingHud.SmoothedMs, 0.1);
+        var was = InteractionSuspended;
+        InteractionSuspended = SuspendLogic.Hold(want, now, ref _suspendLast, resume);
+        if (InteractionSuspended) SuspendFrames++;
+        if (InteractionSuspended && !was)
+        {
+            Suspends++;
+            try { OwnLocal.RestoreSkip(); OwnLocal.Forget(); OwnRender.Forget(); } catch { }
+            Plugin.L.LogInfo($"[OwnCar] suspend OwnLocal/phase2 ({SuspendLogic.Why(localC, localW, CarSync.HostSuspendContact, CarSync.HostSuspendWinch, cfg)})");
+        }
+        else if (!InteractionSuspended && was)
+        {
+            try { OwnLocal.Forget(); OwnRender.Forget(); } catch { }
+            Plugin.L.LogInfo("[OwnCar] resume OwnLocal/phase2 after contact/winch");
+        }
+    }
+
     public static string Describe() =>
         $"state={State} resets={Resets} restores={Restores} (afterResim={ResimRestores} late={LateFixes} words={WordRestores} vpp={VppRestores} prev={PrevRestores} prevNA={PrevUnavailable}) accepts={Accepts} (otac={AcceptsOtac} dist={AcceptsDistance} distIgnoredAfterGap={DistanceIgnoredAfterGap}) fallbacks={Fallbacks} boosts={Boosts} inputCap={InputCapacity} " +
+        $"suspends={Suspends}/{SuspendFrames} " +
         $"rollback mean={(ErrSamples > 0 ? SumErr / ErrSamples : 0):0.000} m max={MaxErr:0.00} m >1m={ErrOver1m} >5m={ErrOver5m}";
 }

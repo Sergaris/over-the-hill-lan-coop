@@ -5,7 +5,7 @@ direct UDP instead of Photon Cloud. The mod is **version-locked** to a game buil
 installer exe** plus a BepInEx plugin.
 
 Status legend: **[built]** compiled here; **[tested-box]** executed on the Linux box; **[UNVERIFIED]** needs the
-real game on Windows (host and friend PCs). Nothing in this document has run inside the game yet.
+real game on Windows (the test PC and the friend's PC). Nothing in this document has run inside the game yet.
 
 ---
 
@@ -29,11 +29,11 @@ downloads it from the official URL, sha256-verified.
 
 | Item | Pin | Evidence |
 |---|---|---|
-| Game | buildid **26062472**, Unity 6000.0.75f1, IL2CPP metadata v31.1 | Steam acf + local copy |
+| Game | buildid **26062472**, Unity 6000.0.75f1, IL2CPP metadata v31.1 | acf on the test PC (12:44 EEST), box copy |
 | Fusion inside the game | **2.1.2.0** (AssemblyVersion of Fusion.Runtime) | interop/Cpp2IL |
 | BepInEx | **6.0.0-be.788+5b766a3**, Unity.IL2CPP win-x64, sha256 `f4cc496b…817a` | builds.bepinex.dev; OTH-Unlimited uses it with this game |
 | Unity base libs | `6000.0.75.zip`, sha256 `53c15d57…5655` | unity.bepinex.dev |
-| Game hashes (lock) | `GameAssembly.dll` `57da2280…b9b4`, `global-metadata.dat` `3908c1a9…c61f` | Steam depot == local copy |
+| Game hashes (lock) | `GameAssembly.dll` `57da2280…b9b4`, `global-metadata.dat` `3908c1a9…c61f` | the test PC manifest == box copy |
 
 ## 3. How LAN works: Fusion internals and hooks
 
@@ -159,9 +159,9 @@ netsh is not testable on Linux.
 5. Optional: Steam beta branch / depot download of the older build lets friends stay on a supported build. That is
    the user's own licensed copy, not redistribution.
 
-## 8. Test plan (Windows; PC A = host, PC B = client)
+## 8. Test plan (Windows; the test PC = host, friend's PC = client)
 Preconditions: same buildid on both (`OTH-LAN-Setup verify`), Radmin VPN network joined, both ping each other's 26.x IP.
-1. **Install**: run installer on PC A → check log, `install-state.json`, firewall rule (`netsh advfirewall firewall
+1. **Install**: run installer on the test PC → check log, `install-state.json`, firewall rule (`netsh advfirewall firewall
    show rule name="OTH-LAN UDP 27015"`).
 2. **BepInEx boot**: start game, wait for interop generation (1-3 min). `BepInEx/LogOutput.log` must show
    `[BuildLock] OK`, four `[Hooks] … RVA 0x…` lines equal to the manifest, and `4 native detours applied`.
@@ -169,7 +169,7 @@ Preconditions: same buildid on both (`OTH-LAN-Setup verify`), Radmin VPN network
 4. **IMGUI**: F7 window renders; otherwise confirm F8/F9/F10 work.
 5. **Host LAN**: F8, Create Server. Expect `Initialize as Host… bind=0.0.0.0:27015`, `Simulation socket =
    NetSocketNative`, and the game world loads. `netstat -ano -p udp | findstr 27015` shows the game listening.
-6. **Client LAN** (friend PC): install, F7, enter PC A's Radmin IP:27015, Join. Expect `connecting to …`, then the
+6. **Client LAN** (friend PC): install, F7, enter the test PC's Radmin IP:27015, Join. Expect `connecting to …`, then the
    player spawns in host's world. Check both logs for token refusal / PlayerCount mismatch.
 7. **Gameplay**: drive together 15+ min, scene/level change, a third player if available, client leave and rejoin,
    host quits (client should get a clean disconnect).

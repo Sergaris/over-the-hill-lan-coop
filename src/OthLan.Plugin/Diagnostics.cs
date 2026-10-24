@@ -1,5 +1,8 @@
 using System;
+using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Text;
 using Fusion;
 using UnityEngine;
 
@@ -7,11 +10,12 @@ namespace OthLan;
 
 /// <summary>Logs, once per LAN session, the runtime network/physics facts that the IL2CPP dump cannot show
 /// (they live in serialized assets): tick rate, input transfer mode, client physics mode, car components and
-/// the Overland prediction-correction smoothing values.</summary>
+/// the Overland prediction-correction smoothing values. Also F7 "Export diagnostics" zip for live A/B with a friend.</summary>
 internal static class Diagnostics
 {
     static IntPtr _loggedRunner, _loggedCarsRunner;
     static float _next; static int _retries;
+    public static string LastExportPath;
 
     public static void Tick()
     {
@@ -58,5 +62,55 @@ internal static class Diagnostics
             _loggedRunner = IntPtr.Zero; Plugin.L.LogInfo($"[Diag] runner not ready yet ({e.Message}); retrying");
         }
         catch (Exception e) { Plugin.L.LogWarning($"[Diag] {e.Message}"); _loggedRunner = r.Pointer; _loggedCarsRunner = r.Pointer; }
+    }
+
+    /// <summary>0.1.9 U0: zip BepInEx + Unity logs, cfg and a NetStats snapshot to the Desktop (no personal Steam paths).</summary>
+    public static string ExportZip(string why)
+    {
+        try
+        {
+            var desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            if (string.IsNullOrEmpty(desk) || !Directory.Exists(desk)) desk = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var path = Path.Combine(desk, $"OTH-LAN-diag-{stamp}.zip");
+            using (var zs = new FileStream(path, FileMode.Create, FileAccess.Write))
+            using (var zip = new ZipArchive(zs, ZipArchiveMode.Create))
+            {
+                void AddFile(string src, string entry)
+                {
+                    if (string.IsNullOrEmpty(src) || !File.Exists(src)) return;
+                    try { zip.CreateEntryFromFile(src, entry, System.IO.Compression.CompressionLevel.Optimal); } catch { }
+                }
+                AddFile(Path.Combine(BepInEx.Paths.BepInExRootPath, "LogOutput.log"), "LogOutput.log");
+                try { AddFile(Plugin.CfgPath, "OthLan.cfg"); } catch { }
+                try
+                {
+                    var pl = Path.Combine(Application.persistentDataPath, "Player.log");
+                    AddFile(pl, "Player.log");
+                }
+                catch { }
+                var snap = new StringBuilder();
+                snap.AppendLine($"OTH-LAN {Plugin.Version} diag ({why}) {DateTime.Now:o}");
+                snap.AppendLine($"role={LanState.Active} runner={(LanState.LanRunner != IntPtr.Zero)}");
+                snap.AppendLine(NetStats.Describe());
+                snap.AppendLine(NetStats.FrameDescribe());
+                snap.AppendLine(RemoteSmooth.Describe());
+                snap.AppendLine(RemoteVisuals.Describe());
+                snap.AppendLine(OwnCar.Describe());
+                snap.AppendLine(OwnRender.Describe());
+                snap.AppendLine(OwnLocal.Describe());
+                var e = zip.CreateEntry("netstats.txt");
+                using (var w = new StreamWriter(e.Open())) w.Write(snap.ToString());
+            }
+            LastExportPath = path;
+            Plugin.L.LogInfo($"[Diag] exported {path}");
+            return path;
+        }
+        catch (Exception e)
+        {
+            Plugin.L.LogWarning($"[Diag] export failed: {e.Message}");
+            LastExportPath = null;
+            return null;
+        }
     }
 }

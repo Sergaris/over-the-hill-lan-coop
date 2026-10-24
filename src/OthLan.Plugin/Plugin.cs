@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.othlan.lan";
     public const string Name = "OTH-LAN";
-    public const string Version = "0.1.8.1";
+    public const string Version = "0.1.9";
 
     internal static ManualLogSource L;
     internal static ConfigEntry<int> Port;
@@ -32,22 +32,25 @@ public class Plugin : BasePlugin
     internal static ConfigEntry<float> CarSendHz, CarHighPingMs, CarHysteresisMs, CarCheckpointSeconds, CarDesyncMeters, CarDesyncDegrees, CarBlendTau,
         CarCheckpointMinMeters, CarCheckpointMinDegrees, CarCheckpointSoftSeconds, CarContactHoldSeconds,
         CarHalfWidth, CarHalfLength, CarHalfHeight, CarContactMargin, PingShowLossFromPct;
-    internal static ConfigEntry<bool> CarContactPause;
+    internal static ConfigEntry<bool> CarContactPause, CarPosePlayback;
     internal static ConfigEntry<bool> OwnCarAuthority, ContactBoxFromColliders, MenuButton, AllowMods, NetStatsLog;
     internal static ConfigEntry<bool> RemoteSmoothing, CarFollowVelocity, CarTeleportOnGameMove;
     internal static ConfigEntry<float> CarServoTau, CarServoVelTau, CarServoMaxCorrection, CarServoMaxTurn, CarServoRotLerpTau, CarServoPosLerpTau;
     internal static ConfigEntry<float> RemoteExtrapolateSeconds, RemoteSmoothTau, RemoteSmoothTauLarge, RemoteMaxCorrection, RemoteMaxCorrectionDeg, RemoteSnapMeters, RemoteAbsorbDegrees, RemoteStarvedSeconds, RemoteProxySmoothing, RemoteProxySnapMeters, RemoteProxySnapDegrees;
     internal static ConfigEntry<float> InputBufferSeconds;
     internal static ConfigEntry<bool> OwnFreezeSmoothing, OwnLocalClock, RemoteInterpolate, OwnLocalFreshInput;
+    internal static ConfigEntry<bool> SuspendOnContact, SuspendOnWinch;
+    internal static ConfigEntry<float> SuspendResumeSeconds;
     internal static ConfigEntry<float> OwnFreezeExtrapSeconds, OwnFreezeDecaySeconds, OwnFreezeSnapMeters;
     internal static ConfigEntry<string> HostName, ManualHosts, RecentHosts;
     internal static ConfigEntry<bool> OutAutoRejoin, UpdateCheck;
     internal static ConfigEntry<string> UpdateSkipped, UpdateTestApi;
     internal static ConfigEntry<float> OutExtrapolateFrom, OutExtrapolateSeconds, OutBrakeFrom, OutBrakeSeconds, OutSnapMeters, OutContactWait;
     internal static ConfigEntry<float> OwnSoftGapSeconds, OwnSoftSeconds, OwnSoftSmoothing, OwnSoftSnapMeters, OwnAcceptSeconds, OwnAcceptMeters, OwnAcceptDegrees, OwnPostOutageSeconds,
-        OwnStuckMeters, OwnStuckSeconds, OwnFallbackSeconds;
+        OwnStuckMeters, OwnStuckSeconds, OwnFallbackSeconds; // AcceptDegrees/Stuck*: bound for cfg compat, unused since 0.1.8 (R4)
 
     static ConfigFile _cfg;
+    internal static string CfgPath => _cfg?.ConfigFilePath;
 
     public override void Load()
     {
@@ -138,6 +141,9 @@ public class Plugin : BasePlugin
             ConfigVersion.Value = 5;
         }
         OwnLocalFreshInput = Config.Bind("Netcode", "OwnLocalFreshInput", true, "With OwnLocalClock: local steps use your current steering/throttle/brake (read from the game's input code) instead of the last input Fusion took.");
+        SuspendOnContact = Config.Bind("Netcode", "SuspendOnContact", true, "0.1.9: client pauses OwnLocalClock and phase-2 authority while your car touches another player's car, so both sides share the host's collision. Resumes after SuspendResumeSeconds clear.");
+        SuspendOnWinch = Config.Bind("Netcode", "SuspendOnWinch", true, "0.1.9: same pause while a winch involves your car.");
+        SuspendResumeSeconds = Config.Bind("Netcode", "SuspendResumeSeconds", 1f, "0.1.9: how long after the last contact/winch before OwnLocal/phase2 resume (also stretched by RTT).");
         OwnFreezeExtrapSeconds = Config.Bind("Netcode", "OwnFreezeExtrapSeconds", 0.5f, "Client: longest freeze your car is drawn moving through (longer freezes hold the last extrapolated pose).");
         OwnFreezeDecaySeconds = Config.Bind("Netcode", "OwnFreezeDecaySeconds", 0.1f, "Client: time constant of the blend after a freeze.");
         OwnFreezeSnapMeters = Config.Bind("Netcode", "OwnFreezeSnapMeters", 2f, "Client: differences larger than this (respawn, rescue) snap instead of blending.");
@@ -155,7 +161,8 @@ public class Plugin : BasePlugin
         RemoteProxySmoothing = Config.Bind("Netcode", "RemoteProxySmoothingSeconds", 0.25f, "Client: Fusion's correction smoothing time for the other players' cars (game default 0.1 s). Remote cars are predicted ahead of the host; when the other driver brakes or turns, the correction is drawn over this time instead of in one frame. 0 = game default.");
         RemoteProxySnapMeters = Config.Bind("Netcode", "RemoteProxySnapMeters", 10f, "Client: corrections of the other players' cars larger than this snap (game default 2 m; respawns and rescues are larger). 0 = game default.");
         RemoteProxySnapDegrees = Config.Bind("Netcode", "RemoteProxySnapDegrees", 90f, "Client: rotation corrections of the other players' cars larger than this snap (game default 30). 0 = game default.");
-        CarSendHz = Config.Bind("CarSync", "SendHz", 20f, "Client: own-car pose packets per second.");
+        CarSendHz = Config.Bind("CarSync", "SendHz", 30f, "Client: own-car pose packets per second (0.1.9: was 20; higher rate shortens host follower lag).");
+        CarPosePlayback = Config.Bind("CarSync", "PosePlayback", true, "Host: jitter buffer + Hermite for the follower target (0.1.9). Play head holds the newest sample (tick-age still applied in CarSync); delay is jitter-only (~1 packet).");
         CarHighPingMs = Config.Bind("CarSync", "HighPingMs", 150f, "RTT above which the host switches from continuous blending to checkpoints.");
         CarHysteresisMs = Config.Bind("CarSync", "HysteresisMs", 15f, "Switch to checkpoint mode above HighPingMs+this, back below HighPingMs-this.");
         CarCheckpointSeconds = Config.Bind("CarSync", "CheckpointSeconds", 1.5f, "High-ping mode: force-align every N seconds.");
@@ -200,10 +207,10 @@ public class Plugin : BasePlugin
         OwnSoftSnapMeters = Config.Bind("OwnCar", "SoftSnapMeters", 20f, "Phase 1: CorrectionSnapDistance during that time (game default 2).");
         OwnAcceptMeters = Config.Bind("OwnCar", "AcceptMeters", 25f, "Phase 2 safety: if the host's position is further than this, take it (game teleport, rescue).");
         OwnPostOutageSeconds = Config.Bind("OwnCar", "PostOutageSeconds", 4f, "Phase 2: for this long after a link gap the turned-host-pose rule is off (the host copy turned under the repeated input during the outage and converges back to us; a real reset still arrives as the host's accept packet). Self-test fo1: without it 4 of 7 outages ended in a rollback to the host pose.");
-        OwnAcceptDegrees = Config.Bind("OwnCar", "AcceptDegrees", 30f, "Phase 2 safety: if the host's car is turned by more than this against ours, take it (reset upright, rescue).");
+        OwnAcceptDegrees = Config.Bind("OwnCar", "AcceptDegrees", 30f, "UNUSED since 0.1.8 (kept so old cfgs still load). Was: take host pose if heading differed by more than this.");
         OwnAcceptSeconds = Config.Bind("OwnCar", "AcceptSeconds", 1.5f, "Phase 2 safety: how long the host's position is taken after such an event.");
-        OwnStuckMeters = Config.Bind("OwnCar", "StuckMeters", 8f, "Phase 2 safety: host and client further apart than this ...");
-        OwnStuckSeconds = Config.Bind("OwnCar", "StuckSeconds", 3f, "... for this long (host does not converge): take the host's position briefly.");
+        OwnStuckMeters = Config.Bind("OwnCar", "StuckMeters", 8f, "UNUSED since 0.1.8 (kept so old cfgs still load). Was: take host pose if stuck far apart.");
+        OwnStuckSeconds = Config.Bind("OwnCar", "StuckSeconds", 3f, "UNUSED since 0.1.8 (kept so old cfgs still load). Was: stuck duration before taking host pose.");
         OwnFallbackSeconds = Config.Bind("OwnCar", "FallbackSeconds", 10f, "Phase 2 safety: after an invalid own physics state, use host corrections (phase 1) for this long.");
 
         UpdateCheck = Config.Bind("Update", "CheckForUpdates", true, "Once per game start, ask GitHub (github.com/Sergaris/over-the-hill-lan-coop, latest release) whether a newer OTH-LAN exists, and offer it in the main menu. Nothing is installed without your click; the download is sha256-checked.");

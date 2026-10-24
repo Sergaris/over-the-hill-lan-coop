@@ -161,10 +161,11 @@ public static class CarSyncLogic
         public double HighEnterMs = 165, HighExitMs = 135;     // hysteresis around the user's 150 ms
         public double CheckpointSeconds = 1.5;
         public double DesyncSnapMeters = 3.0, DesyncSnapDegrees = 25.0;
+        public double SoftDesyncHardMeters = 12.0;             // 0.1.9: above this, desync stays a hard snap (respawn-ish)
         public double LowSnapMeters = 8.0;                     // even in low-ping mode, very large errors snap
         public double MaxPoseAgeSeconds = 1.0;                 // older client poses are ignored (client stalled)
         public double CheckpointMinMeters = 0.25, CheckpointMinDegrees = 3.0;   // user 2026-10-21: skip tiny checkpoint snaps
-        public double CheckpointSoftSeconds = 0.2;             // 0 = hard checkpoint snap (old behaviour)
+        public double CheckpointSoftSeconds = 0.2;             // 0 = hard checkpoint/desync snap (old behaviour)
     }
 
     public static Mode NextMode(Mode current, double rttMs, Cfg c)
@@ -187,7 +188,10 @@ public static class CarSyncLogic
         if (contactPaused) return Action.None;
         if (mode == Mode.Low)
             return errMeters > c.LowSnapMeters ? Action.Snap : Action.Blend;
-        if (errMeters > c.DesyncSnapMeters || errDegrees > c.DesyncSnapDegrees) return Action.Snap;   // desync (unchanged)
+        // 0.1.9 U5: hard desync snaps looked like stutter to every viewer; soft-blend when CheckpointSoftSeconds > 0
+        // (same window as checkpoints). Teleport-sized gaps still return None above. Above SoftDesyncHardMeters → hard snap.
+        if (errMeters > c.DesyncSnapMeters || errDegrees > c.DesyncSnapDegrees)
+            return errMeters > c.SoftDesyncHardMeters || c.CheckpointSoftSeconds <= 0 ? Action.Snap : Action.SoftSnap;
         if (softActive) return Action.SoftBlend;
         if (sinceCheckpointS >= c.CheckpointSeconds)                                                  // checkpoint
         {
@@ -227,6 +231,8 @@ public static class CarSyncLogic
     public const int PingSize = 18;            // + optional flags byte from the host (bit0 = CarSync on for the session)
     public const byte HostSlot = 255;
     public const byte FlagCarSync = 1;
+    public const byte FlagSuspendContact = 2;   // 0.1.9: host tells this client its car is in contact/winch pause
+    public const byte FlagSuspendWinch = 4;
 
     public static byte[] EncodePing(byte kind, byte slot, uint seq, double t, int flags = -1)
     {

@@ -205,6 +205,8 @@ internal static unsafe class FusionHooks
             {
                 new NetworkRunner(runner)._GameMode_k__BackingField = redirected == LanRole.Host ? GameMode.Host : GameMode.Client;
                 LanState.Active = redirected;
+                // 0.1.9: client entered a host's world — F7 only on explicit keypress afterward.
+                if (redirected == LanRole.Client) Overlay.Hide();
             }
             catch (Exception e) { Plugin.L.LogError($"[LAN] StartGame post: {e}"); }
             finally { LanState.Pending = LanRole.Off; }

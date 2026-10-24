@@ -28,9 +28,12 @@ namespace OthLan;
 ///   --othlan-winch tAttach,tDetach        client: attach the own winch to the ground ~12 m ahead, detach later
 ///   --othlan-hostjump t                   host: move the client's car 6 m on the host once (like a game teleport)
 ///   --othlan-ram t0:t1                    while driving, from t0 to t1 s: steer at the nearest other car (collision test)
+///   --othlan-lights SEC:on|off,...        toggle own headlights at scenario second (U3/R1); metrics CSV gains lightWant/lightSeen columns
 ///   --othlan-cpmin t:metres,...           host: checkpoint skip threshold override (-1 = config) to exercise soft snaps
 ///   --othlan-contactbox t:metres,...      host: force the car-contact test box (0 = real size) to exercise the contact pause
 ///   --othlan-f7 t1,...                    open the F7 window, screenshot it, close it
+///   --othlan-fakeliverymods CSV           host: force HostInfo liverymods= (e.g. 999001:0) for the pre-join mod gate test
+///   --othlan-modgate cancel|download      client: when the missing-mods dialog appears, screenshot it then Cancel or Download
 ///   --othlan-demo NAME[:IP[:LOBBY]]       README shots: placeholder IP/lobby name in the mod UI, Steam name -> NAME in game texts
 ///   --othlan-shots t1,t2,...              ScreenCapture at those seconds (game renders it itself: no focus or input needed)
 ///   --othlan-simbuild unverified|incompatible   pretend the game files are unknown (read by BuildGate; files untouched)
@@ -65,10 +68,16 @@ internal static unsafe class Autopilot
     static readonly List<(float t, float box)> ContactBoxes = new(); static int _nextBox;
     static float _hostJumpAt = -1;
     static float _ramFrom = -1, _ramTo = -1, _ramSteer, _ramDist = -1; static bool _ramming; public static int RamContacts; static float _nextRamScan; static FusionPlayer[] _ramCars = Array.Empty<FusionPlayer>();
+    static readonly List<(float t, bool on)> Lights = new(); static int _nextLight; public static int LightToggles, LightMismatches;
     static readonly List<(float t, float v)> CpMins = new(); static int _nextCpMin;
     static float _winchAt = -1, _winchOffAt = -1, _winchCheckAt = -1;
     static readonly List<float> F7Shots = new();
     static int _nextToggle, _nextF7; static float _f7HideAt = -1, _f7ShotAt = -1; static string _f7Name;
+    /// <summary>Host self-test: override HostInfo liverymods= (null = collect for real).</summary>
+    public static string FakeLiveryMods;
+    /// <summary>Client self-test: when ModLiveryGate opens — "cancel" or "download".</summary>
+    public static string ModGateAction;
+    static float _modGateAt = -1; static bool _modGateShot;
     static int _nextShot, _nextNetem;
     static StreamWriter _log;
     static float _t0 = -1, _nextRow, _lastStatusLog, _pausedT = -1, _carSeenAt = -1;
@@ -162,11 +171,22 @@ internal static unsafe class Autopilot
             { var f = part.Split(':'); CpMins.Add((float.Parse(f[0], ci), float.Parse(f[1], ci))); }
         if (Arg("--othlan-hostjump") is { } hj) _hostJumpAt = float.Parse(hj, ci);
         if (Arg("--othlan-ram") is { } rm) { var rq = rm.Split(':'); _ramFrom = float.Parse(rq[0], ci); _ramTo = float.Parse(rq[1], ci); }
+        if (Arg("--othlan-lights") is { } lt)   // seconds:on|off,... (literal "t" is not a time — that killed Load with FormatException)
+            foreach (var part in lt.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var f = part.Split(':');
+                if (f.Length < 2 || !float.TryParse(f[0], NumberStyles.Float, ci, out var at))
+                { Plugin.L.LogWarning($"[Autopilot] --othlan-lights skip '{part}' (need seconds:on|off)"); continue; }
+                Lights.Add((at, f[1].Equals("on", StringComparison.OrdinalIgnoreCase)));
+            }
+        Lights.Sort((a, b) => a.t.CompareTo(b.t));
         if (Arg("--othlan-contactbox") is { } cb)
             foreach (var part in cb.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); ContactBoxes.Add((float.Parse(f[0], ci), float.Parse(f[1], ci))); }
         if (Arg("--othlan-f7") is { } f7)       // t,... : open the F7 window, screenshot it, close it
             foreach (var part in f7.Split(',', StringSplitOptions.RemoveEmptyEntries)) F7Shots.Add(float.Parse(part, ci));
+        FakeLiveryMods = Arg("--othlan-fakeliverymods");
+        ModGateAction = Arg("--othlan-modgate");
         if (Arg("--othlan-gate") is { } ga) { var f = ga.Split(':'); _gateAt = float.Parse(f[0], ci); _gateChoice = f[1]; }
         if (Arg("--othlan-menuf7") is { } mf) foreach (var part in mf.Split(',', StringSplitOptions.RemoveEmptyEntries)) MenuF7.Add(float.Parse(part, ci));
         if (Arg("--othlan-menuquit") is { } mq) _menuQuit = float.Parse(mq, ci);
@@ -390,6 +410,23 @@ internal static unsafe class Autopilot
             if (CarSync.LocalSetting != want) CarSync.UserToggle("autopilot (same call as the F7 button)");
             Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s toggle -> {(want ? "on" : "off")}: local={CarSync.LocalSetting} cfg={Plugin.CarSyncEnabled.Value}");
         }
+        while (_nextLight < Lights.Count && Lights[_nextLight].t <= t)
+        {
+            var want = Lights[_nextLight++].on;
+            try
+            {
+                var vi = _own?.GetComponentInChildren<VehicleInput>() ?? UnityEngine.Object.FindObjectOfType<VehicleInput>();
+                if (vi != null)
+                {
+                    var cur = vi.HeadlightsOn;
+                    if (cur != want) { vi.ToggleHeadlights(); LightToggles++; }
+                    Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s headlights want={want} was={cur} now={vi.HeadlightsOn}");
+                }
+                else Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s headlights: no VehicleInput");
+            }
+            catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] headlights: {e.Message}"); }
+        }
+        if (Lights.Count > 0) SampleRemoteLights(t);
         while (_nextCpMin < CpMins.Count && CpMins[_nextCpMin].t <= t)
         {
             CarSync.CheckpointMinOverride = CpMins[_nextCpMin++].v;
@@ -526,8 +563,33 @@ internal static unsafe class Autopilot
         if (_menuQuit >= 0 && now >= _menuQuit) Finish("menu quit (gate-only run)");
         if (CoopAction != null) CoopSteps(now);
         if (UpdAction != null) UpdSteps(now);
+        ModGateTick(now);
         LangTick(now);
         Scrub(now);
+    }
+
+    /// <summary>Pre-join missing-mods dialog: screenshot, then Cancel or Download (self-test).</summary>
+    static void ModGateTick(float now)
+    {
+        if (string.IsNullOrEmpty(ModGateAction) || !ModLiveryGate.Active) return;
+        if (_modGateAt < 0) { _modGateAt = now + 1.5f; Plugin.L.LogWarning($"[Autopilot] mod gate visible → {ModGateAction} at rt {_modGateAt:0.0}s"); }
+        if (!_modGateShot && now >= _modGateAt)
+        {
+            var path = Path.Combine(OutDir, $"{Tag}-modgate.png");
+            ScreenCapture.CaptureScreenshot(path);
+            _modGateShot = true;
+            Checks.Add($"PASS realtime {now:0}s mod gate dialog (action={ModGateAction}) shot {Path.GetFileName(path)}");
+            Plugin.L.LogWarning($"[Autopilot] mod gate screenshot {path}");
+            _modGateAt = now + 1.0f;
+            return;
+        }
+        if (_modGateShot && now >= _modGateAt)
+        {
+            var act = ModGateAction; ModGateAction = null;
+            if (act.Equals("download", StringComparison.OrdinalIgnoreCase)) ModLiveryGate.StartDownload();
+            else ModLiveryGate.Cancel();
+            Checks.Add($"INFO realtime {now:0}s mod gate answered '{act}'");
+        }
     }
 
     // ---------- 0.1.8 updater ----------
@@ -859,6 +921,32 @@ internal static unsafe class Autopilot
     static string R(Rect r) => $"{r.x:0},{r.y:0},{r.width:0},{r.height:0}";
     static string F(double v) => double.IsNaN(v) ? "" : v.ToString("0.###", CultureInfo.InvariantCulture);
 
+    /// <summary>U3: every remote car's LightsController.AreHeadlightsOn must match the Headlights bit of its
+    /// CurrentFrameInput (what RemoteVisuals applies under RemoteInterpolate).</summary>
+    static float _nextLightSample = -1;
+    static void SampleRemoteLights(float t)
+    {
+        if (t < _nextLightSample) return;
+        _nextLightSample = t + 0.5f;
+        try
+        {
+            foreach (var fp in UnityEngine.Object.FindObjectsOfType<FusionPlayer>())
+            {
+                if (fp == null || fp.Object == null || fp.Object.HasInputAuthority) continue;
+                var want = fp.ButtonDown(NetworkInputData.VehicleButtons.Headlights);
+                var lc = fp.GetComponentInChildren<LightsController>();
+                var seen = lc != null && lc.AreHeadlightsOn;
+                if (want != seen)
+                {
+                    LightMismatches++;
+                    if (LightMismatches <= 8)
+                        Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s light mismatch {fp.gameObject.name}: input={want} lights={seen}");
+                }
+            }
+        }
+        catch { }
+    }
+
     static void CheckLabel(float t)
     {
         void C(bool ok, string what) { (ok ? ref _passed : ref _failed)++; Checks.Add($"{(ok ? "PASS" : "FAIL")} t={t:0} {what}"); }
@@ -962,8 +1050,9 @@ internal static unsafe class Autopilot
         sb.AppendLine($"slots: role={LanState.Active} clientId={LanState.ClientId} seen=[{string.Join(",", SlotsSeen)}] rejoins={Rejoins} hostTable=[{LanState.Slots.Describe()}]");
         sb.AppendLine($"carsync: local={CarSync.LocalSetting} hostFlag={CarSync.HostFlag} sent={CarSync.PosesSent} recv={CarSync.PosesReceived} rejected={CarSync.PosesRejected} teleportFramesIgnored={CarSync.TeleportsIgnored}");
         sb.AppendLine($"carsync: snaps={CarSync.Snaps} snapLoopsBroken={CarSync.SnapLoopsBroken} softSnaps={CarSync.SoftSnaps} checkpointsSkipped={CarSync.CheckpointsSkipped} contactPauses={CarSync.ContactPauses} winchPauses={CarSync.WinchPauses} hostJumps={CarSync.HostJumps} teleports={CarSync.Teleports} rams={RamContacts} blends={CarSync.Blends} servos={CarSync.Servos} modeSwitches={CarSync.ModeSwitches} {string.Join(" ", CarSync.HostStats.Select(kv => $"slot{kv.Key}: {kv.Value}"))}");
-        sb.AppendLine($"carsync v2: frozenClientPoses={CarSync.FrozenClientPoses} jumpsTowardClient={CarSync.JumpsTowardClient} lowConverges={CarSync.LowConverges} acceptsSent={CarSync.AcceptsSent} recoveries={CarSync.Recoveries} (quiet={CarSync.RecoverQuiet} converge={CarSync.RecoverConverge} snap={CarSync.RecoverSnap}) converge times=[{string.Join(",", CarSync.ConvergeTimes.Select(x => x.ToString("0.00", CultureInfo.InvariantCulture)))}]");
+        sb.AppendLine($"carsync v2: frozenClientPoses={CarSync.FrozenClientPoses} jumpsTowardClient={CarSync.JumpsTowardClient} lowConverges={CarSync.LowConverges} acceptsSent={CarSync.AcceptsSent} recoveries={CarSync.Recoveries} (quiet={CarSync.RecoverQuiet} converge={CarSync.RecoverConverge} snap={CarSync.RecoverSnap}) playbackOk={CarSync.PlaybackOk} playbackExtraps={CarSync.PlaybackExtraps} converge times=[{string.Join(",", CarSync.ConvergeTimes.Select(x => x.ToString("0.00", CultureInfo.InvariantCulture)))}]");
         sb.AppendLine($"netstats: {NetStats.Describe()}");
+        sb.AppendLine($"remoteVisuals: {RemoteVisuals.Describe()} lightToggles={LightToggles} lightMismatches={LightMismatches}");
         sb.AppendLine($"fusion netem: delayed={OutageSim.Delayed} stalled={OutageSim.Stalled} lostOut={OutageSim.LostOut} lostIn={OutageSim.LostIn}");
         sb.AppendLine($"menu nav: fixes={CoopMenu.NavFixes} order={CoopMenu.NavInfo}");
         sb.AppendLine(OthLan.FreezeWatch.Describe());

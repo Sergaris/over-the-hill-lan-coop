@@ -28,6 +28,10 @@ internal static class NetStats
     static UnityEngine.Events.UnityAction _cb;
     public static double LastOwnHitch;
     static FusionPlayer[] _players = Array.Empty<FusionPlayer>(); static float _nextScan;
+    // 0.1.9 R2: wall-clock frame time (ms) for OwnLocal ON/OFF A/B
+    static readonly double[] _ft = new double[240]; static int _ftN, _ftI;
+    public static int FramesOver25ms, FramesOver50ms;
+    static float _lastFtAt = -1;
 
     static void Hook()
     {
@@ -52,6 +56,32 @@ internal static class NetStats
         Own.Reset(); OwnWindow.Reset(); RemoteWindow.Reset(); _remoteHitchLogs = 0; OwnSim.Reset(); _lastRenderTime = -1; _hitchLogs = 0; _nextScan = 0; _hasOwnPos = false; Remote.Reset(); Gaps.Reset(); _remote.Clear();
         InputDropped = TimeResets = Corrections = CorrOver1m = CorrOver5m = 0; CorrMax = CorrSum = 0;
         _lastServerTick = _lastTick = int.MinValue; _serverTickAt = -1; _lastSampleAt = -1;
+        _ftN = _ftI = FramesOver25ms = FramesOver50ms = 0; _lastFtAt = -1;
+    }
+
+    static void NoteFrameTime()
+    {
+        var t = Time.realtimeSinceStartup;
+        if (_lastFtAt > 0)
+        {
+            var ms = (t - _lastFtAt) * 1000.0;
+            if (ms > 0 && ms < 500)
+            {
+                _ft[_ftI++ % _ft.Length] = ms; if (_ftN < _ft.Length) _ftN++;
+                if (ms > 25) FramesOver25ms++; if (ms > 50) FramesOver50ms++;
+            }
+        }
+        _lastFtAt = t;
+    }
+
+    public static string FrameDescribe()
+    {
+        if (_ftN <= 0) return "frameMs=-";
+        var n = _ftN; var tmp = new double[n];
+        for (int i = 0; i < n; i++) tmp[i] = _ft[i];
+        Array.Sort(tmp);
+        double P(double q) => tmp[Math.Clamp((int)(q * (n - 1)), 0, n - 1)];
+        return $"frameMs p50={P(0.50):0.0} p99={P(0.99):0.0} max={tmp[n - 1]:0.0} >25ms={FramesOver25ms} >50ms={FramesOver50ms}";
     }
 
     static NetworkRunner Runner()
@@ -65,6 +95,7 @@ internal static class NetStats
     public static void Tick()
     {
         Hook();
+        NoteFrameTime();
         var r = Runner();
         if (r == null) { if (_runner != IntPtr.Zero) { Log("session end"); _runner = IntPtr.Zero; } return; }
         if (r.Pointer != _runner) { if (_runner != IntPtr.Zero) Log("runner changed"); _runner = r.Pointer; ResetAll(); _nextLog = Time.realtimeSinceStartup + 30f; }
@@ -180,6 +211,7 @@ internal static class NetStats
     static void Log(string why)
     {
         if (!Plugin.NetStatsLog.Value) return;
-        Plugin.L.LogInfo($"[NetStats] ({why}) {Describe()} | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()} | {RemoteSmooth.Describe()} | {OwnCar.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()}");
+        Plugin.L.LogInfo($"[NetStats] ({why}) {Describe()} | {FrameDescribe()} | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()} | {RemoteSmooth.Describe()} | {RemoteVisuals.Describe()} | {OwnCar.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()}");
+        FramesOver25ms = FramesOver50ms = 0; // per-window counters
     }
 }

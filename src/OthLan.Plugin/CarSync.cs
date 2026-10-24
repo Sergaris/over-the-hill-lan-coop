@@ -32,9 +32,11 @@ internal static class CarSync
 {
     sealed class Latest { public CarSyncLogic.Pose Pose; public double ReceivedAt, AdvancedAt; public uint LastAppliedSeq; }
     public static int FrozenClientPoses;
+    public static int PlaybackOk, PlaybackExtraps;   // 0.1.9 PosePlayback counters (host)
 
     static readonly object _lock = new();
     static readonly Dictionary<int, Latest> _poses = new();
+    static readonly Dictionary<int, PosePlayback> _playback = new();   // 0.1.9 jitter buffer per slot
     static readonly Dictionary<int, CarSyncLogic.Mode> _mode = new();
     static readonly Dictionary<int, double> _lastCheckpoint = new();
     static readonly Dictionary<int, double> _softUntil = new();      // slot -> end of the current soft checkpoint blend
@@ -73,7 +75,7 @@ internal static class CarSync
     public static FusionPlayer[] Players => _players;
     static float _nextScan, _nextSend;
     static uint _seq;
-    static readonly List<(int slot, Latest l)> _work = new();
+    static readonly List<(int slot, Latest l, PosePlayback.Target play)> _work = new();
     public static Msg ClientStat = Msg.Raw("");
     public static int Snaps, Blends, ModeSwitches, PosesSent, PosesReceived, PosesRejected, TeleportsIgnored,
         SoftSnaps, CheckpointsSkipped, ContactPauses;
@@ -86,11 +88,21 @@ internal static class CarSync
     /// <summary>Host: session state = the host's own setting.</summary>
     public static bool HostEnabled => LocalSetting;
     public static int HostFlags => HostEnabled ? CarSyncLogic.FlagCarSync : 0;
+    static readonly Dictionary<int, byte> _slotSuspend = new();
+    /// <summary>0.1.9: per-slot host ping flags (CarSync bit + optional contact/winch suspend for that client).</summary>
+    public static int HostFlagsFor(int slot)
+    {
+        var f = HostFlags;
+        lock (_slotSuspend) if (_slotSuspend.TryGetValue(slot, out var s)) f |= s;
+        return f;
+    }
 
     // client: what the host said (-1 unknown) and when
     static volatile int _hostFlag = -1;
     static double _hostFlagAt = -1;
     public static int HostFlag => _hostFlag;
+    /// <summary>0.1.9 R3: host says this client's car is in a contact/winch pause (authoritative backup for OwnCar.Suspend).</summary>
+    public static bool HostSuspendContact, HostSuspendWinch;
     /// <summary>0.1.7: the last flag the host sent in this session (it only changes when the host toggles; a link outage
     /// must not switch the client to vanilla in the middle of a gap). Reset when the session ends.</summary>
     public static bool ClientEnabled => _hostFlag == 1;
@@ -110,6 +122,8 @@ internal static class CarSync
         var v = (flags & CarSyncLogic.FlagCarSync) != 0 ? 1 : 0;
         var old = _hostFlag;
         _hostFlag = v; _hostFlagAt = now;
+        HostSuspendContact = (flags & CarSyncLogic.FlagSuspendContact) != 0;
+        HostSuspendWinch = (flags & CarSyncLogic.FlagSuspendWinch) != 0;
         if (old != v) Plugin.L.LogInfo($"[CarSync] host says CarSync {(v == 1 ? "ON" : "OFF")} for this session");
     }
 
@@ -134,7 +148,7 @@ internal static class CarSync
         DesyncSnapMeters = Plugin.CarDesyncMeters.Value,
         DesyncSnapDegrees = Plugin.CarDesyncDegrees.Value,
         // 0.1.8 netcode v2: one continuous follower for every ping (the 0.1.7 "High" checkpoint mode let the host copy
-        // drift and then snapped it; at a tester's 200 ms that meant frequent big corrections). HighPingMs is ignored.
+        // drift and then snapped it; at Witness's 200 ms that meant frequent big corrections). HighPingMs is ignored.
         HighEnterMs = double.MaxValue, HighExitMs = double.MaxValue,
         CheckpointMinMeters = CheckpointMinOverride >= 0 ? CheckpointMinOverride : Plugin.CarCheckpointMinMeters.Value,
         CheckpointMinDegrees = CheckpointMinOverride >= 0 ? CheckpointMinOverride : Plugin.CarCheckpointMinDegrees.Value,
@@ -210,8 +224,33 @@ internal static class CarSync
         catch { return false; }
     }
 
+    /// <summary>v3 velocity servo (also used in outage Extrapolate so the host proxy keeps chasing the client's
+    /// last extrapolated pose instead of only blending linear velocity — NETCODE-v4 §2.3 / 0.1.9 U5 follow-up).</summary>
+    static void ApplyVelocityFollow(Rigidbody rb, Vector3 target, Quaternion trot, Vector3 vel, Vector3 ang, float dt)
+    {
+        var e = target - rb.position; var el = e.magnitude;
+        var sv = (float)HostFollowLogic.ServoSpeed(el, Plugin.CarServoTau.Value, Plugin.CarServoMaxCorrection.Value, 0.5, vel.magnitude);
+        var want = vel + (el > 1e-4f ? e * (sv / el) : Vector3.zero);
+        var kv = (float)CarSyncLogic.BlendFactor(dt, Plugin.CarServoVelTau.Value);
+        rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, want, kv);
+        var qe = trot * Quaternion.Inverse(rb.rotation); qe.ToAngleAxis(out var qang, out var axis);
+        if (qang > 180) qang -= 360;
+        var wc = Vector3.zero;
+        if (!float.IsNaN(axis.x) && Mathf.Abs(qang) > 0.01f)
+        {
+            var rad = qang * Mathf.Deg2Rad; var ws = Mathf.Min(Mathf.Abs(rad) / Plugin.CarServoTau.Value, Plugin.CarServoMaxTurn.Value);
+            wc = axis * (Mathf.Sign(rad) * ws);
+        }
+        rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, ang + wc, kv);
+        var kr = (float)CarSyncLogic.BlendFactor(dt, Plugin.CarServoRotLerpTau.Value);
+        rb.rotation = Quaternion.Slerp(rb.rotation, trot, kr);
+        if (el < 0.5f) rb.position = Vector3.Lerp(rb.position, target, (float)CarSyncLogic.BlendFactor(dt, Plugin.CarServoPosLerpTau.Value));
+        Blends++; Servos++;
+    }
+
     /// <summary>Host, no fresh poses: extrapolation (pull velocity and heading toward the last pose's, never the position
-    /// toward a frozen point), physics only, or gentle braking.</summary>
+    /// toward a frozen point), physics only, or gentle braking. Extrapolate with FollowByVelocity uses
+    /// <see cref="ApplyVelocityFollow"/> instead (caller).</summary>
     static void HostOutage(Rigidbody rb, OutageLogic.Phase phase, double g, CarSyncLogic.Pose p, int hostTick, double tickDt, float dt, OutageLogic.Cfg c, FusionPlayer car)
     {
         if (phase == OutageLogic.Phase.Extrapolate)
@@ -336,6 +375,16 @@ internal static class CarSync
             var adv = l == null || p.Tick == 0 || p.Tick != l.Pose.Tick ? now : l.AdvancedAt;
             if (adv != now) FrozenClientPoses++;
             _poses[p.Slot] = new Latest { Pose = p, ReceivedAt = now, AdvancedAt = adv, LastAppliedSeq = l?.LastAppliedSeq ?? 0 };
+            if (Plugin.CarPosePlayback.Value)
+            {
+                if (!_playback.TryGetValue(p.Slot, out var pb)) _playback[p.Slot] = pb = new PosePlayback();
+                pb.Push(new PosePlayback.Sample
+                {
+                    T = now, Tick = p.Tick, Seq = p.Seq,
+                    Px = p.Px, Py = p.Py, Pz = p.Pz, Vx = p.Vx, Vy = p.Vy, Vz = p.Vz,
+                    Rx = p.Rx, Ry = p.Ry, Rz = p.Rz, Rw = p.Rw, Ax = p.Ax, Ay = p.Ay, Az = p.Az,
+                });
+            }
             PosesReceived++;
         }
     }
@@ -418,7 +467,8 @@ internal static class CarSync
 
     static void Reset()
     {
-        lock (_lock) _poses.Clear();
+        lock (_lock) { _poses.Clear(); _playback.Clear(); }
+        PlaybackOk = PlaybackExtraps = 0;
         _out.Clear();
         _mode.Clear(); _lastCheckpoint.Clear(); _softUntil.Clear(); _lastContact.Clear(); _lastHost.Clear(); _selfMoveUntil.Clear(); _jumpHoldUntil.Clear(); HostStats.Clear(); Metrics.Clear(); LastAction.Clear();
     }
@@ -454,7 +504,20 @@ internal static class CarSync
         var nowS = Clock.Elapsed.TotalSeconds;
         var dt = Time.unscaledDeltaTime;
         _work.Clear();
-        lock (_lock) foreach (var kv in _poses) _work.Add((kv.Key, kv.Value));
+        lock (_lock)
+        {
+            foreach (var kv in _poses)
+            {
+                PosePlayback.Target play = default;
+                if (_playback.TryGetValue(kv.Key, out var pb))
+                {
+                    play = pb.SampleAt(nowS);
+                    if (play.Ok) PlaybackOk++;
+                    if (play.Extrapolated) PlaybackExtraps++;
+                }
+                _work.Add((kv.Key, kv.Value, play));
+            }
+        }
         if (_work.Count == 0) return;
         var pings = HostPings.Snapshot();   // once per frame, not per car
         var hostTick = r.Tick.Raw; var tickDt = (double)r.DeltaTime;
@@ -463,10 +526,10 @@ internal static class CarSync
         finally { NetTrace.FollowFlush(LastAction, dt); }
     }
 
-    static void HostApplyCars(NetworkRunner r, List<(int slot, Latest l)> work, CarSyncLogic.Cfg cfg, OutageLogic.Cfg ocfg, double nowS, float dt,
+    static void HostApplyCars(NetworkRunner r, List<(int slot, Latest l, PosePlayback.Target play)> work, CarSyncLogic.Cfg cfg, OutageLogic.Cfg ocfg, double nowS, float dt,
                               Dictionary<int, (double ms, bool timedOut, double loss, double noLinkS)> pings, int hostTick, double tickDt)
     {
-        foreach (var (slot, l) in work)
+        foreach (var (slot, l, play) in work)
         {
             var pref = PlayerRef.FromIndex(slot);
             if (!r.IsPlayerValid(pref)) continue;
@@ -487,15 +550,34 @@ internal static class CarSync
             if (mode != prevMode) { ModeSwitches++; Plugin.L.LogInfo($"[CarSync] slot {slot}: mode {prevMode} -> {mode} at rtt {rtt:0} ms"); }
             _mode[slot] = mode;
             var p = l.Pose;
-            // Move the pose to the host's current tick (see CarSyncLogic.PoseAgeFromTicks; was RTT/2 + time since receipt).
-            var age = CarSyncLogic.PoseAgeFromTicks(hostTick, p.Tick, tickDt);
-            var target = new Vector3((float)CarSyncLogic.Extrapolate(p.Px, p.Vx, age), (float)CarSyncLogic.Extrapolate(p.Py, p.Vy, age),
+            // 0.1.9: prefer jitter-buffered Hermite playback; fall back to tick-age extrapolate from the latest pose.
+            double age;
+            Vector3 target, vel, ang;
+            Quaternion trot;
+            if (play.Ok)
+            {
+                // Hermite-smoothed pose from the jitter buffer, then the same tick-age lead as before (one-way /
+                // prediction). Delay inside PosePlayback is jitter-only (≤ ~80 ms), not a second latency.
+                age = CarSyncLogic.PoseAgeFromTicks(hostTick, play.Tick > 0 ? play.Tick : p.Tick, tickDt);
+                target = new Vector3((float)CarSyncLogic.Extrapolate(play.Px, play.Vx, age),
+                                     (float)CarSyncLogic.Extrapolate(play.Py, play.Vy, age),
+                                     (float)CarSyncLogic.Extrapolate(play.Pz, play.Vz, age));
+                vel = new Vector3((float)play.Vx, (float)play.Vy, (float)play.Vz);
+                ang = new Vector3((float)play.Ax, (float)play.Ay, (float)play.Az);
+                trot = new Quaternion((float)play.Rx, (float)play.Ry, (float)play.Rz, (float)play.Rw);
+                var turn = ang.magnitude * (float)age;
+                if (turn > 1e-5f) trot = Quaternion.AngleAxis(turn * Mathf.Rad2Deg, ang.normalized) * trot;
+            }
+            else
+            {
+                age = CarSyncLogic.PoseAgeFromTicks(hostTick, p.Tick, tickDt);
+                target = new Vector3((float)CarSyncLogic.Extrapolate(p.Px, p.Vx, age), (float)CarSyncLogic.Extrapolate(p.Py, p.Vy, age),
                                      (float)CarSyncLogic.Extrapolate(p.Pz, p.Vz, age));
-            var vel = new Vector3(p.Vx, p.Vy, p.Vz); var ang = new Vector3(p.Ax, p.Ay, p.Az);
-            // Rotation is moved to the host tick too (world-space angular velocity, rad/s); before, only position was.
-            var trot = new Quaternion(p.Rx, p.Ry, p.Rz, p.Rw);
-            var turn = ang.magnitude * (float)age;
-            if (turn > 1e-5f) trot = Quaternion.AngleAxis(turn * Mathf.Rad2Deg, ang.normalized) * trot;
+                vel = new Vector3(p.Vx, p.Vy, p.Vz); ang = new Vector3(p.Ax, p.Ay, p.Az);
+                trot = new Quaternion(p.Rx, p.Ry, p.Rz, p.Rw);
+                var turn = ang.magnitude * (float)age;
+                if (turn > 1e-5f) trot = Quaternion.AngleAxis(turn * Mathf.Rad2Deg, ang.normalized) * trot;
+            }
             var err = Vector3.Distance(rb.position, target);
             var errDeg = Quaternion.Angle(rb.rotation, trot);
             if (_lastHost.TryGetValue(slot, out var lh)
@@ -532,7 +614,13 @@ internal static class CarSync
             if (jumpHold) { _lastHost[slot] = (rb.position, rb.rotation); _lastCheckpoint[slot] = nowS; LastAction[slot] = "jump-hold";
                             st.ConvStart = -1; st.WaitSince = -1;
                             HostStats[slot] = new Msg("cs.slotGameMoved", slot); continue; }
-            var contactNow = winch || (Plugin.CarContactPause.Value && TouchesOtherCar(car, rb));
+            var touching = Plugin.CarContactPause.Value && TouchesOtherCar(car, rb);
+            var contactNow = winch || touching;
+            // 0.1.9 R3: tell that client to suspend OwnLocal/phase2 (per-slot ping flags).
+            byte sus = 0;
+            if (winch) sus |= CarSyncLogic.FlagSuspendWinch;
+            else if (touching) sus |= CarSyncLogic.FlagSuspendContact;
+            lock (_slotSuspend) { if (sus != 0) _slotSuspend[slot] = sus; else _slotSuspend.Remove(slot); }
             if (winch && !(LastAction.TryGetValue(slot, out var la) && la == "winch")) WinchPauses++;
             if (contactNow) { if (!CarSyncLogic.ContactPaused(nowS, _lastContact.TryGetValue(slot, out var lc0) ? lc0 : 0, Plugin.CarContactHoldSeconds.Value)) ContactPauses++; _lastContact[slot] = nowS; }
             var paused = CarSyncLogic.ContactPaused(nowS, _lastContact.TryGetValue(slot, out var lc) ? lc : 0, Plugin.CarContactHoldSeconds.Value);
@@ -544,7 +632,14 @@ internal static class CarSync
                 if (!st.InGap) { st.InGap = true; Gaps++; Plugin.L.LogInfo($"[CarSync] slot {slot}: no poses for {g:0.00} s -> {phase}"); }
                 if (st.Phase != phase) { if (st.Phase != OutageLogic.Phase.Normal) Plugin.L.LogInfo($"[CarSync] slot {slot}: gap {g:0.0} s -> {phase}"); st.Phase = phase; }
                 st.GapMax = g; st.ConvStart = -1; st.WaitSince = -1; st.TrackSince = -1;
-                if (ApplyEnabled && !winch && !paused) HostOutage(rb, phase, g, p, hostTick, tickDt, dt, ocfg, car);
+                if (ApplyEnabled && !winch && !paused)
+                {
+                    // 0.1.9: during Extrapolate chase the already age-extrapolated client target with the same servo as
+                    // Normal/Blend (keeps host proxy closer → fewer recovery snaps). PhysicsOnly/Brake unchanged.
+                    if (phase == OutageLogic.Phase.Extrapolate && Plugin.CarFollowVelocity.Value)
+                    { ApplyVelocityFollow(rb, target, trot, vel, ang, dt); Extrapolations++; }
+                    else HostOutage(rb, phase, g, p, hostTick, tickDt, dt, ocfg, car);
+                }
                 LastAction[slot] = winch ? "winch" : paused ? "contact" : PhaseName(phase);
                 _lastHost[slot] = (rb.position, rb.rotation);
                 HostStats[slot] = new Msg("cs.slotNoData", slot, g, PhaseMsg(phase));
@@ -627,30 +722,8 @@ internal static class CarSync
             }
             else if (act == CarSyncLogic.Action.Blend && Plugin.CarFollowVelocity.Value)
             {
-                // v3: drive the host copy through its velocity, never by moving the body (a position write can push it
-                // into another car, a prop or the ground; PhysX then pushes it out within one step = a jump everyone
-                // sees, and the next write pushes it in again). Collisions stay physical; the error decays with
-                // ServoTau, at most ServoMaxCorrection (+ half the client's speed) m/s faster than the client drives.
-                var e = target - rb.position; var el = e.magnitude;
-                var sv = (float)HostFollowLogic.ServoSpeed(el, Plugin.CarServoTau.Value, Plugin.CarServoMaxCorrection.Value, 0.5, vel.magnitude);
-                var want = vel + (el > 1e-4f ? e * (sv / el) : Vector3.zero);
-                var kv = (float)CarSyncLogic.BlendFactor(dt, Plugin.CarServoVelTau.Value);
-                rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, want, kv);
-                var qe = trot * Quaternion.Inverse(rb.rotation); qe.ToAngleAxis(out var qang, out var axis);
-                if (qang > 180) qang -= 360;
-                var wc = Vector3.zero;
-                if (!float.IsNaN(axis.x) && Mathf.Abs(qang) > 0.01f)
-                {
-                    var rad = qang * Mathf.Deg2Rad; var ws = Mathf.Min(Mathf.Abs(rad) / Plugin.CarServoTau.Value, Plugin.CarServoMaxTurn.Value);
-                    wc = axis * (Mathf.Sign(rad) * ws);
-                }
-                rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, ang + wc, kv);
-                // small direct terms (Unreal AngleLerp / PositionLerp): remove the last centimetres/degrees the servo
-                // leaves against friction; far too small to push a body into anything
-                var kr = (float)CarSyncLogic.BlendFactor(dt, Plugin.CarServoRotLerpTau.Value);
-                rb.rotation = Quaternion.Slerp(rb.rotation, trot, kr);
-                if (el < 0.5f) rb.position = Vector3.Lerp(rb.position, target, (float)CarSyncLogic.BlendFactor(dt, Plugin.CarServoPosLerpTau.Value));
-                Blends++; Servos++;
+                // v3: drive the host copy through velocity (never a hard body write into collisions). See ApplyVelocityFollow.
+                ApplyVelocityFollow(rb, target, trot, vel, ang, dt);
             }
             else if (act == CarSyncLogic.Action.Blend)
             {

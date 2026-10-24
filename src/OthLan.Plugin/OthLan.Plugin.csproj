@@ -5,7 +5,7 @@
     <TargetFramework>net6.0</TargetFramework>
     <AssemblyName>OthLan</AssemblyName>
     <RootNamespace>OthLan</RootNamespace>
-    <Version>0.1.8</Version>
+    <Version>0.1.9</Version>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>disable</Nullable>
@@ -48,6 +48,7 @@
     <Reference Include="$(Interop)/Fusion.Common.dll" Private="false" />
     <Reference Include="$(Interop)/Fusion.Realtime.dll" Private="false" />
     <Reference Include="$(Interop)/Assembly-CSharp.dll" Private="false" />
+    <Reference Include="$(Interop)/Modio.dll" Private="false" Condition="Exists('$(Interop)/Modio.dll')" />
     <Reference Include="$(Interop)/Funselektor.FunCore.Runtime.dll" Private="false" />
     <Reference Include="$(Interop)/UnityEngine.dll" Private="false" Condition="Exists('$(Interop)/UnityEngine.dll')" />
     <Reference Include="$(Interop)/UnityEngine.CoreModule.dll" Private="false" />

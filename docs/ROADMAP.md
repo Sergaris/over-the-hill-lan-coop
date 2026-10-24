@@ -13,6 +13,8 @@ Thresholds below are **[estimate]** unless stated otherwise.
   interpolation buffer, short freezes are smoothed (all on by default); update checker; five 0.1.7 reports fixed.
   Measured with scripted runs of 2–4 game instances on one PC with simulated ping and loss, **not yet on two real PCs**.
 
+- **0.1.9** — remote lights/wheels/liveries under interpolation; pre-join Modio livery download dialog;
+  `OTH-LAN-Launch.exe` for InteropManager unity-libs hang; host PosePlayback; F7 no longer auto-opens on join.
 ## 1. Still to verify in the real world
 
 - Sessions on two or more PCs over Radmin VPN / Hamachi / ZeroTier with real players (3–4 players, real ping

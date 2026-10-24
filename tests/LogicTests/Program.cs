@@ -384,7 +384,8 @@ static class Program
         Eq(CarSyncLogic.Decide(M.High, 0.3, 1, 1.5, 0.05, c), A.SoftSnap, "high: checkpoint not skipped when error >= 0.25 m");
         Eq(CarSyncLogic.Decide(M.High, 1, 5, 1.5, 0.05, new CarSyncLogic.Cfg { CheckpointSoftSeconds = 0 }), A.Snap, "high: soft=0 -> hard checkpoint snap");
         Eq(CarSyncLogic.Decide(M.High, 1, 5, 0.1, 0.05, c, softActive: true), A.SoftBlend, "high: inside soft window -> soft blend");
-        Eq(CarSyncLogic.Decide(M.High, 3.5, 5, 0.1, 0.05, c, softActive: true), A.Snap, "high: desync still hard-snaps inside soft window");
+        Eq(CarSyncLogic.Decide(M.High, 3.5, 5, 0.1, 0.05, c, softActive: true), A.SoftSnap, "high: desync soft-snaps inside soft window (0.1.9 U5)");
+        Eq(CarSyncLogic.Decide(M.High, 13, 5, 0.1, 0.05, c, softActive: true), A.Snap, "high: huge desync still hard-snaps");
         Eq(CarSyncLogic.Decide(M.Low, 0.5, 2, 0.1, 0.05, c, contactPaused: true), A.None, "low: contact pause leaves host physics alone");
         Eq(CarSyncLogic.Decide(M.High, 3.5, 40, 5, 0.05, c, contactPaused: true), A.None, "high: contact pause also suppresses desync snap");
         Eq(CarSyncLogic.InContact(2.0, 0, 0.5, 1.1, 2.4, 1.2, 0.3), true, "contact: side by side 2 m apart");
@@ -401,8 +402,10 @@ static class Program
         Eq(CarSyncLogic.HostJumped(14, 1, 30, 0.25), false, "jump: 0.25 s frame hitch at 30 m/s is not a jump");
         Eq(Math.Round(CarSyncLogic.JumpHoldSeconds(200), 2), 0.6, "jump hold at 200 ms = 0.6 s");
         Eq(CarSyncLogic.JumpHoldSeconds(20), 0.5, "jump hold minimum 0.5 s");
-        Eq(CarSyncLogic.Decide(M.High, 3.5, 5, 0.2, 0.05, c), A.Snap, "high: desync distance");
-        Eq(CarSyncLogic.Decide(M.High, 0.5, 30, 0.2, 0.05, c), A.Snap, "high: desync angle");
+        Eq(CarSyncLogic.Decide(M.High, 3.5, 5, 0.2, 0.05, c), A.SoftSnap, "high: desync distance soft (0.1.9 U5)");
+        Eq(CarSyncLogic.Decide(M.High, 0.5, 30, 0.2, 0.05, c), A.SoftSnap, "high: desync angle soft (0.1.9 U5)");
+        Eq(CarSyncLogic.Decide(M.High, 13, 5, 0.2, 0.05, c), A.Snap, "high: desync above SoftDesyncHardMeters");
+        Eq(CarSyncLogic.Decide(M.High, 3.5, 5, 0.2, 0.05, new CarSyncLogic.Cfg { CheckpointSoftSeconds = 0 }), A.Snap, "high: soft=0 -> hard desync");
         Eq(CarSyncLogic.Decide(M.High, 10, 90, 5, 1.5, c), A.None, "stale pose ignored");
         Eq(Math.Round(CarSyncLogic.BlendFactor(0.1, 0.1), 4), Math.Round(1 - Math.Exp(-1), 4), "blend factor");
         Eq(CarSyncLogic.Extrapolate(10, 20, 0.05), 11.0, "extrapolate 50 ms at 20 m/s");
@@ -581,11 +584,97 @@ static class Program
             Eq(DiscoveryLogic.TryParseManual("host.example:27015", out _, out _), false, "names not accepted");
         }
 
+        Suspend();
         I18n();
         NetcodeV2();
         Updates();
         Smooth();
+        Playback();
+        ModGate();
+        Hang();
         Console.WriteLine($"{total - fails}/{total} checks passed");
         return fails == 0 ? 0 : 1;
+    }
+
+    // ---------- 0.1.9 pre-join Modio livery gate (wire + diff) ----------
+    static void ModGate()
+    {
+        var a = new ModLiveryGateLogic.ModRef(10, 0);
+        var b = new ModLiveryGateLogic.ModRef(20, 2);
+        Eq(ModLiveryGateLogic.Format(new[] { a, b, a }), "10,20:2", "modgate: format unique");
+        var p = ModLiveryGateLogic.Parse("10,20:2,bad,0,30");
+        Eq(p.Count == 3 && p[0].Id == 10 && p[1].Id == 20 && p[1].SubId == 2 && p[2].Id == 30, true, "modgate: parse");
+        var miss = ModLiveryGateLogic.Missing(p, m => m.Id == 10 || m.Id == 30);
+        Eq(miss.Count == 1 && miss[0].Id == 20, true, "modgate: missing only 20");
+        Eq(ModLiveryGateLogic.Parse("").Count, 0, "modgate: empty");
+        Eq(UpdateLogic.TryFindAsset("{\"draft\":false,\"prerelease\":false,\"assets\":[{\"name\":\"6000.0.75.zip\",\"browser_download_url\":\"https://github.com/Sergaris/over-the-hill-lan-coop/releases/download/v0.1.9/6000.0.75.zip\"}]}",
+            UpdateLogic.UnityLibsAssetName, out var u, out var why) && u.Contains("6000.0.75.zip"), true, $"modgate: unity-libs asset ({why})");
+    }
+
+    // ---------- 0.1.9 Launch hang detector ----------
+    static void Hang()
+    {
+        Eq(OthLan.Launch.HangLogic.Classify("[Message:InteropManager] Downloading unity base libraries from https://unity.bepinex.dev/libraries/6000.0.75.zip"),
+            OthLan.Launch.HangLogic.LineKind.UnityLibsDownload, "hang: download line");
+        Eq(OthLan.Launch.HangLogic.Classify("[Info:OTH-LAN] 0.1.9 loaded. Press F7"),
+            OthLan.Launch.HangLogic.LineKind.BootReady, "hang: boot ready");
+        Eq(OthLan.Launch.HangLogic.IsHung(true, false, 10.0), true, "hang: 10s hung");
+        Eq(OthLan.Launch.HangLogic.IsHung(true, false, 9.9), false, "hang: under 10s");
+        Eq(OthLan.Launch.HangLogic.IsHung(true, true, 60), false, "hang: already ready");
+        Eq(OthLan.Launch.HangLogic.IsHung(false, false, 60), false, "hang: never saw download");
+    }
+
+    // ---------- 0.1.9 host PosePlayback (jitter buffer + Hermite) ----------
+    static void Playback()
+    {
+        var pb = new PosePlayback(new PosePlayback.Cfg { MinDelayS = 0.033, MaxDelayS = 0.10, DelayEwma = 1, JitterEwma = 1 });
+        for (int i = 0; i < 25; i++)
+        {
+            double t = i * 0.02;
+            pb.Push(new PosePlayback.Sample { T = t, Px = 10 * t, Vx = 10, Rw = 1, Tick = i });
+        }
+        Eq(pb.Count >= 16, true, $"playback: ring filled ({pb.Count})");
+        var mid = pb.SampleAt(0.40);
+        Eq(mid.Ok, true, "playback: sample ok");
+        var playT = 0.40 - pb.DelayS;
+        Eq(Math.Abs(mid.Px - 10 * playT) < 0.12, true, $"playback: Hermite steady ({mid.Px:0.000} vs {10 * playT:0.000})");
+        Eq(pb.DelayS <= 0.10 + 1e-9, true, $"playback: delay capped ({pb.DelayS:0.000}s)");
+        // past newest: hold (CarSync tick-age extrapolates — no double dead-reckon)
+        var held = pb.SampleAt(0.40 + 1.0);
+        Eq(held.Ok && !held.Extrapolated, true, "playback: past newest holds");
+        Eq(Math.Abs(held.Px - 10 * 0.48) < 0.05, true, $"playback: hold = newest ({held.Px:0.000})");
+        Eq(new PosePlayback().SampleAt(1).Ok, false, "playback: empty not ok");
+        pb = new PosePlayback(new PosePlayback.Cfg { MinDelayS = 0.0, MaxDelayS = 0.01, DelayEwma = 1, JitterEwma = 1 });
+        pb.Push(new PosePlayback.Sample { T = 0.0, Px = 0, Vx = 0, Rw = 1, Tick = 1 });
+        pb.Push(new PosePlayback.Sample { T = 0.02, Px = 0.2, Vx = 10, Rw = 1, Tick = 2 });
+        pb.Push(new PosePlayback.Sample { T = 0.04, Px = 0.4, Vx = 10, Rw = 1, Tick = 3 });
+        var h = pb.SampleAt(0.04);
+        Eq(h.Ok, true, "playback: short delay sample");
+        Eq(Math.Abs(h.Px - 0.4) < 0.15, true, $"playback: near newest ({h.Px:0.000})");
+        Eq(h.Tick, 3, "playback: tick from bracketing sample");
+    }
+
+    // ---------- 0.1.9 R3 contact/winch suspend ----------
+    static void Suspend()
+    {
+        var c = new SuspendLogic.Cfg();
+        Eq(SuspendLogic.ActiveNow(true, false, false, false, c), true, "suspend: local contact");
+        Eq(SuspendLogic.ActiveNow(false, false, true, false, c), true, "suspend: host contact flag");
+        Eq(SuspendLogic.ActiveNow(false, true, false, false, c), true, "suspend: local winch");
+        Eq(SuspendLogic.ActiveNow(false, false, false, false, c), false, "suspend: idle");
+        c.SuspendOnContact = false;
+        Eq(SuspendLogic.ActiveNow(true, false, false, false, c), false, "suspend: contact disabled");
+        c.SuspendOnContact = true; c.SuspendOnWinch = false;
+        Eq(SuspendLogic.ActiveNow(false, true, false, false, c), false, "suspend: winch disabled");
+        Eq(SuspendLogic.Why(true, true, false, false, new SuspendLogic.Cfg()), SuspendLogic.Reason.Both, "suspend: both");
+        Eq(SuspendLogic.Why(true, false, false, false, new SuspendLogic.Cfg()), SuspendLogic.Reason.Contact, "suspend: contact reason");
+        double last = 0;
+        Eq(SuspendLogic.Hold(true, 1.0, ref last, 1.0), true, "suspend: enter");
+        Eq(last, 1.0, "suspend: lastActive set");
+        Eq(SuspendLogic.Hold(false, 1.5, ref last, 1.0), true, "suspend: hold within resume");
+        Eq(SuspendLogic.Hold(false, 2.1, ref last, 1.0), false, "suspend: leave after resume");
+        Eq(SuspendLogic.ResumeDelay(new SuspendLogic.Cfg { ResumeSeconds = 1 }, 200, 0.1) >= 1.2, true, "suspend: resume stretched by RTT");
+        Eq(SuspendLogic.PredictiveMargin(0.2, 10, 0.2, 3), 2.2, "suspend: predictive margin");
+        Eq(SuspendLogic.PredictiveMargin(0.2, 100, 1, 3), 3.0, "suspend: predictive margin capped");
     }
 }

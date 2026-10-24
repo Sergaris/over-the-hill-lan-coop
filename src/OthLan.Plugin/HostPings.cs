@@ -40,7 +40,7 @@ internal static class HostPings
             {
                 if (kv.Value.Ep == null || now - kv.Value.LastSeen > 10) continue;
                 var seq = kv.Value.T.NextSeq(now);
-                HostInfo.SendTo(CarSyncLogic.EncodePing(0, (byte)kv.Key, seq, now, CarSync.HostFlags), kv.Value.Ep);
+                HostInfo.SendTo(CarSyncLogic.EncodePing(0, (byte)kv.Key, seq, now, CarSync.HostFlagsFor(kv.Key)), kv.Value.Ep);
             }
     }
 

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>OTH-LAN-Launch</AssemblyName>
+    <Version>0.1.9</Version>
+    <RootNamespace>OthLan.Launch</RootNamespace>
+    <Root>$(MSBuildThisFileDirectory)../../</Root>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <PathMap>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../..'))=/_/</PathMap>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(Root)manifest/supported-builds.json" LogicalName="supported-builds.json" />
+    <Compile Include="..\OthLan.Installer\Steam.cs" Link="Steam.cs" />
+    <Compile Include="..\OthLan.Plugin\UpdateLogic.cs" Link="UpdateLogic.cs" />
+  </ItemGroup>
+</Project>

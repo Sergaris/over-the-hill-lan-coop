@@ -62,7 +62,7 @@ The label uses ONLY our UDP echo over the real Radmin path, never Fusion or clou
 - **Host authoritative.** The host's setting is carried as a flags byte (bit0) appended to the 27016 ping packets
   (replies to client pings and the host's own pings; 19 bytes, old 18-byte peers still parse) and as `carsync=0/1` in the
   info reply. A client sends poses only while the latest host flag is 1 and less than 5 s old, so a client can never be
-  half-on. Client F7 shows a greyed button `CarSync: ON/OFF (host decides)`.
+  half-on. Client F7 shows a greyed button `CarSync: ON/OFF (управляет хост)`.
 - **Toggle:** F7 button on the host (or when not connected) calls `CarSync.UserToggle`, which writes the cfg (persisted) and
   takes effect at once; clients follow within about 0.2 s (5 pings/s). The autopilot's `--othlan-toggle` calls the same function.
 
@@ -115,7 +115,7 @@ The label uses ONLY our UDP echo over the real Radmin path, never Fusion or clou
 ### Host outage phases (per slot, g = time without a fresh pose; `[Outage]` cfg)
 normal < 0.15 s; extrapolation 0.15-1.5 s (velocity lerp toward the last pose velocity with tau = 0.1 / confidence,
 yaw only, rotation horizon 0.25 s, no pull toward a frozen point); from 1.5 s (`BrakeFromSeconds`, default 1.5 since
-o1m/o2m) gentle braking (exp, ~1 s; label "⚠ no link N s" over the car for everyone: the host broadcasts `OTST` at 5 Hz).
+o1m/o2m) gentle braking (exp, ~1 s; label "⚠ нет связи N с" over the car for everyone: the host broadcasts `OTST` at 5 Hz).
 With `BrakeFromSeconds = 5` the old physics-only phase 1.5-5 s returns. Measured link-back error (one PC, in-process
 outage, client phase 2): BrakeFrom 5 → 7.1 / 14.3 / 14.3 m after 3 / 4.9 / 6 s; BrakeFrom 1.5 → 3.2 / 2.7 / 1.1 m (o2m),
 1.3 / 4.3 / 1.8 m (o5); 12 s → 4.8-6.2 m at 80-92 deg (snap: the host copy still turns under the repeated input). In the air: no yaw

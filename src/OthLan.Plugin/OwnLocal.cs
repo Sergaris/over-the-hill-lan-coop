@@ -86,7 +86,8 @@ internal static unsafe class OwnLocal
 
     public static void Forget() { HasPrev = false; Debt = 0; _skipPending = false; LastStepAt = -1; _lastFrameAt = -1; }
 
-    static bool Active(double now) => Enabled && OwnCar.Phase2Active(now) && OwnCar.Rb != null && OwnCar.Own != null && !OwnCar.Rb.isKinematic && !OwnCar.AcceptingHostPose(now);
+    static bool Active(double now) => Enabled && OwnCar.Phase2Active(now) && !OwnCar.InteractionSuspended
+        && OwnCar.Rb != null && OwnCar.Own != null && !OwnCar.Rb.isKinematic && !OwnCar.AcceptingHostPose(now);
 
     /// <summary>Own car, forward tick, from OwnCar.BeforeTickDetour (after the after-resim restore).</summary>
     public static void OnForwardTick()
@@ -124,16 +125,46 @@ internal static unsafe class OwnLocal
         if (Debt < -3) Debt = -3;
         // Pure accumulator (single-player style): whatever real time Fusion's kept ticks did not cover is stepped here.
         if (LastStepAt < 0) return;
+        // 0.1.9 R2: never pile local Physics.Simulate on top of a Fusion tick in the same frame (double scene step),
+        // and cap at 2 local steps/frame (was 4) to bound frame-time spikes on weaker PCs.
+        if (_tickFrame == Time.frameCount) return;
         int n = 0;
         if (Debt >= 1) RefreshInput();
-        while (Debt >= 1 && n < 4) { if (!LocalStep(step)) break; Debt -= 1; n++; }
+        while (Debt >= 1 && n < 2) { if (!LocalStep(step)) break; Debt -= 1; n++; }
     }
 
     public static int WordSyncs;
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void CopyToBufferFn(IntPtr self, byte force, IntPtr mi);
+    static CopyToBufferFn _copyFn; static IntPtr _copyMi; static bool _copyTried;
+    const string K_Copy = "NetworkRigidbody::CopyToBuffer(bool)";
+    static void InitCopy()
+    {
+        if (_copyTried) return; _copyTried = true;
+        try
+        {
+            var f = typeof(NetworkRigidbody<Rigidbody, RunnerSimulatePhysics3D>).GetField(
+                "NativeMethodInfoPtr_CopyToBuffer_Protected_Virtual_New_Void_Boolean_0", BindingFlags.NonPublic | BindingFlags.Static);
+            if (f != null) _copyMi = (IntPtr)f.GetValue(null);
+            // Prefer a direct IL2CPP call (R2): skip OptionalHooks RVA gate — CopyToBuffer is not a detour target, we only
+            // invoke it. Fall back to managed reflection if the MethodInfo* is missing.
+            if (_copyMi != IntPtr.Zero)
+            {
+                unsafe { var fn = *(IntPtr*)_copyMi; if (fn != IntPtr.Zero) _copyFn = Marshal.GetDelegateForFunctionPointer<CopyToBufferFn>(fn); }
+                if (_copyFn != null) Plugin.L.LogInfo("[OwnLocal] CopyToBuffer: direct IL2CPP call");
+            }
+            if (_copyFn == null)
+            {
+                _copyToBuffer = typeof(NetworkRigidbody<Rigidbody, RunnerSimulatePhysics3D>).GetMethod("CopyToBuffer", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                Plugin.L.LogInfo($"[OwnLocal] CopyToBuffer: reflection fallback ({(_copyToBuffer != null ? "ok" : "missing")})");
+            }
+        }
+        catch (Exception e) { Plugin.L.LogWarning($"[OwnLocal] CopyToBuffer init: {e.Message}"); }
+    }
     static void SyncWords()
     {
         var nrb = OwnCar.Nrb; if (nrb == null) return;
-        _copyToBuffer ??= typeof(NetworkRigidbody<Rigidbody, RunnerSimulatePhysics3D>).GetMethod("CopyToBuffer", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        InitCopy();
+        if (_copyFn != null) { try { _copyFn(nrb.Pointer, 0, _copyMi); WordSyncs++; return; } catch { } }
         _copyToBuffer?.Invoke(nrb, _false); WordSyncs++;
     }
 
@@ -147,8 +178,9 @@ internal static unsafe class OwnLocal
             MarkPrev();
             vb.FixedUpdateNetwork();
             Physics.Simulate(step);
-            _copyToBuffer ??= typeof(NetworkRigidbody<Rigidbody, RunnerSimulatePhysics3D>).GetMethod("CopyToBuffer", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-            _copyToBuffer?.Invoke(nrb, _false);
+            InitCopy();
+            if (_copyFn != null) _copyFn(nrb.Pointer, 0, _copyMi);
+            else { _copyToBuffer ??= typeof(NetworkRigidbody<Rigidbody, RunnerSimulatePhysics3D>).GetMethod("CopyToBuffer", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public); _copyToBuffer?.Invoke(nrb, _false); }
             LocalSteps++; StepCount++; LastStepAt = OwnCar.Now;
             return true;
         }
