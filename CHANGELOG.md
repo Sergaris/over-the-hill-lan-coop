@@ -2,6 +2,19 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.1.9.3
+
+Both players need 0.1.9.3. From 0.1.8.1+ the in-game updater offers this release; from 0.1.8 or older install by hand once.
+
+- Pre-join: enable menu runner AllowMods before Modio asks (RequestTempMod no-ops while ModsAllowed is false).
+- Do not restart AddTempModAsync on a timer (can abort installs); refresh only. Join without mods still available.
+
+## 0.1.9.3 — изменения
+
+У обоих игроков должна быть 0.1.9.3. С 0.1.8.1+ обновление предложит меню; с 0.1.8 и раньше — вручную один раз.
+
+- Перед Modio на menu-runner включается AllowMods (иначе RequestTempMod молчит).
+- AddTempModAsync не перезапускается по таймеру; только Refresh. «Войти без модов» по-прежнему есть.
 ## 0.1.9.2
 
 Both players need 0.1.9.2. From 0.1.8.1 / 0.1.9 / 0.1.9.1 the in-game updater offers this release; from 0.1.8 or older install by hand once.
@@ -305,6 +318,7 @@ gate — PASS. Not verified: two PCs over Radmin with real players, SmartScreen 
 
 Direct-IP LAN mode (F7/F8/F9/F10), host-assigned player slots with rejoin, version gate with code-signature checks
 for untested game builds, ping label, CarSync smoothing, installer with full uninstall.
+
 
 
 

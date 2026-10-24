@@ -616,7 +616,7 @@ static class Program
     {
         Eq(OthLan.Launch.HangLogic.Classify("[Message:InteropManager] Downloading unity base libraries from https://unity.bepinex.dev/libraries/6000.0.75.zip"),
             OthLan.Launch.HangLogic.LineKind.UnityLibsDownload, "hang: download line");
-        Eq(OthLan.Launch.HangLogic.Classify("[Info:OTH-LAN] 0.1.9.2 loaded. Press F7"),
+        Eq(OthLan.Launch.HangLogic.Classify("[Info:OTH-LAN] 0.1.9.3 loaded. Press F7"),
             OthLan.Launch.HangLogic.LineKind.BootReady, "hang: boot ready");
         Eq(OthLan.Launch.HangLogic.IsHung(true, false, 10.0), true, "hang: 10s hung");
         Eq(OthLan.Launch.HangLogic.IsHung(true, false, 9.9), false, "hang: under 10s");
