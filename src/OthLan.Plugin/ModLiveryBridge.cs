@@ -22,9 +22,13 @@ internal static class ModLiveryBridge
     static float _nextRefresh, _nextRetry, _ensureDeadline, _waitDeadline, _nextDiag;
     static List<ModLiveryGateLogic.ModRef> _target = new();
     static readonly HashSet<long> _asked = new();
+    static readonly Dictionary<long, string> _names = new();
+    static readonly Dictionary<long, float> _progress = new(); // 0..1 when known; absent = unknown
+    static readonly Dictionary<long, Modio.Mods.Mod> _watched = new();
     static int _ensureKicks, _retries;
-    static bool _registryHooked;
+    static bool _registryHooked, _progressHooked;
     static Il2CppSystem.Action _onRegistry;
+    static Il2CppSystem.Action<Modio.Mods.Mod, Modio.Mods.ModChangeType> _onModProgress;
 
     /// <summary>Host: unique equipped mod liveries from the local profile (and session RuntimePlayer when available).</summary>
     public static List<ModLiveryGateLogic.ModRef> CollectHostRequired()
@@ -92,11 +96,87 @@ internal static class ModLiveryBridge
     public static List<ModLiveryGateLogic.ModRef> MissingOf(IReadOnlyList<ModLiveryGateLogic.ModRef> required) =>
         ModLiveryGateLogic.Missing(required, HasLocal);
 
+    /// <summary>Display name from livery cache / Modio watch; null if only the id is known.</summary>
+    public static string TryGetDisplayName(ModLiveryGateLogic.ModRef m)
+    {
+        if (m.Id == 0) return null;
+        if (_names.TryGetValue(m.Id, out var cached) && !string.IsNullOrWhiteSpace(cached)) return cached;
+        try
+        {
+            var svc = ModManager.Instance?.Liveries;
+            if (svc != null)
+            {
+                if (TryReadLiveryName(svc, m.Id, m.SubId, out var n) || TryReadLiveryName(svc, m.Id, 0, out n))
+                {
+                    _names[m.Id] = n;
+                    return n;
+                }
+            }
+        }
+        catch { }
+        return TryNameFromWatched(m.Id);
+    }
+
+    static string TryNameFromWatched(long id)
+    {
+        if (!_watched.TryGetValue(id, out var mod) || mod == null || mod.WasCollected) return null;
+        try
+        {
+            var n = mod.Name;
+            if (!string.IsNullOrWhiteSpace(n)) { _names[id] = n; return n; }
+        }
+        catch { }
+        return null;
+    }
+
+    static bool TryReadLiveryName(ModLiveryService svc, long id, int sub, out string name)
+    {
+        name = null;
+        try
+        {
+            if (!svc.TryGetLivery(id, sub, out var L) || L == null || L.WasCollected) return false;
+            name = L.DisplayName;
+            return !string.IsNullOrWhiteSpace(name);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>0..1 download progress when Modio reported it; otherwise -1.</summary>
+    public static float TryGetProgress(ModLiveryGateLogic.ModRef m)
+    {
+        if (m.Id == 0) return -1f;
+        if (_progress.TryGetValue(m.Id, out var p)) return p;
+        try
+        {
+            if (_watched.TryGetValue(m.Id, out var mod) && mod != null && !mod.WasCollected)
+            {
+                var file = mod.File;
+                if (file != null && !file.WasCollected)
+                {
+                    var pct = file.FileStateProgress;
+                    if (pct >= 0f && pct <= 1.0001f) { _progress[m.Id] = pct; return pct; }
+                }
+            }
+        }
+        catch { }
+        return -1f;
+    }
+
+    /// <summary>UI row kind for one required mod (decision table in <see cref="ModLiveryGateLogic.ClassifyItem"/>).</summary>
+    public static ModLiveryGateLogic.ItemKind Classify(ModLiveryGateLogic.ModRef m)
+    {
+        var active = DownloadPhase is Phase.Ensuring or Phase.Waiting;
+        var failed = DownloadPhase == Phase.Failed;
+        return ModLiveryGateLogic.ClassifyItem(HasLocal(m), active, _asked.Contains(m.Id), failed);
+    }
+
     /// <summary>Start / restart download of the given missing set. Non-blocking; drive with <see cref="TickDownload"/>.</summary>
     public static void BeginDownload(IReadOnlyList<ModLiveryGateLogic.ModRef> missing)
     {
+        ClearWatch();
         _target = missing != null ? new List<ModLiveryGateLogic.ModRef>(missing) : new();
         _asked.Clear();
+        _progress.Clear();
         _ensureKicks = _retries = 0;
         _nextRetry = 0;
         _nextDiag = 0;
@@ -105,6 +185,7 @@ internal static class ModLiveryBridge
         _ensureDeadline = Time.realtimeSinceStartup + 45f;
         _waitDeadline = 0;
         HookRegistry();
+        EnsureProgressHook();
         Plugin.L.LogInfo($"[ModLivery] download begin: {ModLiveryGateLogic.Format(_target)}");
         KickEnsure();
     }
@@ -116,8 +197,73 @@ internal static class ModLiveryBridge
     {
         DownloadPhase = Phase.Idle;
         _target.Clear(); _asked.Clear();
+        _progress.Clear();
+        ClearWatch();
         StatusKey = ""; StatusArg = "";
         UnhookRegistry();
+    }
+
+    static void ClearWatch()
+    {
+        if (_progressHooked && _onModProgress != null)
+        {
+            try { Modio.Mods.Mod.RemoveChangeListener(Modio.Mods.ModChangeType.DownloadProgress, _onModProgress); }
+            catch { }
+        }
+        _progressHooked = false;
+        _watched.Clear();
+        _onModProgress = null;
+    }
+
+    static void EnsureProgressHook()
+    {
+        if (_progressHooked) return;
+        _onModProgress ??= (Il2CppSystem.Action<Modio.Mods.Mod, Modio.Mods.ModChangeType>)((m, _) =>
+        {
+            try
+            {
+                if (m == null || m.WasCollected) return;
+                var mid = m.Id;
+                if (mid == 0) return;
+                _watched[mid] = m;
+                try
+                {
+                    var nn = m.Name;
+                    if (!string.IsNullOrWhiteSpace(nn)) _names[mid] = nn;
+                }
+                catch { }
+                var file = m.File;
+                if (file != null && !file.WasCollected)
+                {
+                    var pct = file.FileStateProgress;
+                    if (pct >= 0f && pct <= 1.0001f) _progress[mid] = pct;
+                }
+            }
+            catch { }
+        });
+        try
+        {
+            Modio.Mods.Mod.AddChangeListener(Modio.Mods.ModChangeType.DownloadProgress, _onModProgress);
+            _progressHooked = true;
+        }
+        catch (Exception e) { Plugin.L.LogWarning($"[ModLivery] progress hook: {e.Message}"); }
+    }
+
+    /// <summary>Best-effort: remember a Modio <see cref="Modio.Mods.Mod"/> for name + download %.</summary>
+    public static void WatchMod(Modio.Mods.Mod mod)
+    {
+        if (mod == null || mod.WasCollected) return;
+        long id;
+        try { id = mod.Id; } catch { return; }
+        if (id == 0) return;
+        try
+        {
+            var n = mod.Name;
+            if (!string.IsNullOrWhiteSpace(n)) _names[id] = n;
+        }
+        catch { }
+        _watched[id] = mod;
+        EnsureProgressHook();
     }
 
     static void HookRegistry()
@@ -350,6 +496,7 @@ internal static class ModLiveryBridge
         {
             DownloadPhase = Phase.Done;
             StatusKey = ""; StatusArg = "";
+            ClearWatch();
             UnhookRegistry();
             Plugin.L.LogInfo("[ModLivery] download done — all required liveries local");
             return;

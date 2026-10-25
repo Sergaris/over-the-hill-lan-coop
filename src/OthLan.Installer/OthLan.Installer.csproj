@@ -13,7 +13,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <Nullable>disable</Nullable>
     <AssemblyName>OTH-LAN-Setup</AssemblyName>
-    <Version>0.2.2</Version>
+    <Version>0.2.3</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RootNamespace>OthLan.Installer</RootNamespace>
     <Root>$(MSBuildThisFileDirectory)../../</Root>

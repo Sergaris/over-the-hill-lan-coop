@@ -658,8 +658,10 @@ internal static unsafe class Autopilot
                 if (now < _updAt) return;
                 UpdCheck(Updater.TestButtons() == "upd.install,upd.later,upd.skip", $"buttons {Updater.TestButtons()}");
                 UpdCheck(Updater.TestFocus == 0, $"keyboard/gamepad focus on the first button ({Updater.TestFocus})");
-                bool esOff; try { esOff = UnityEngine.EventSystems.EventSystem.current == null || !UnityEngine.EventSystems.EventSystem.current.enabled; } catch { esOff = true; }
-                UpdCheck(esOff, "game menu navigation paused behind the prompt");
+                // T6.7: EventSystem stays on; UiModal owns the slot and dim blocks menu clicks (no ES disable).
+                UpdCheck(UiModal.Current == "update", $"UiModal owns update prompt (current={UiModal.Current ?? "null"})");
+                bool esOn; try { var es = UnityEngine.EventSystems.EventSystem.current; esOn = es != null && es.enabled; } catch { esOn = false; }
+                UpdCheck(esOn, "EventSystem stays enabled for Canvas UiNav");
                 if (a == "skip") { Updater.TestPress("upd.skip"); UpdCheck(Plugin.UpdateSkipped.Value == Updater.Latest?.Version, $"skipped version saved '{Plugin.UpdateSkipped.Value}'"); UpdAction = null; Finish("update test done"); return; }
                 Updater.TestPress("upd.install"); _updStep = 3; _updAt = now; return;
             case 3:

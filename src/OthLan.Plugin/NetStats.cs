@@ -168,7 +168,7 @@ internal static class NetStats
                             ? PoseSpeedLogic.FromDelta(_lastOwnPos.x, _lastOwnPos.y, _lastOwnPos.z, p.x, p.y, p.z, dt)
                             : 0;
                         string rbd = "-"; try { var rb = fp.GetComponent<Rigidbody>(); if (rb != null) rbd = $"{(rb.position - p).magnitude * 100:0}cm"; } catch { }
-                        Plugin.L.LogInfo($"[NetStats] hitch {LastOwnHitch * 100:0}cm (sim clock {simH * 100:0}cm) dt={dt * 1000:0}ms simDt={sdt * 1000:0}ms v={v:0.0}m/s render-rb={rbd} resets+{OwnCar.Resets - _lastResets} restores+{OwnCar.Restores - _lastRestores} sinceReset={(OwnCar.LastResetAt > 0 ? (OwnCar.Now - OwnCar.LastResetAt) * 1000 : -1):0}ms");
+                        Plugin.L.LogInfo($"[NetStats] hitch {LastOwnHitch * 100:0}cm (sim clock {simH * 100:0}cm) dt={dt * 1000:0}ms simDt={sdt * 1000:0}ms v={v:0.0}m/s render-rb={rbd} resets+{OwnCar.Resets - _lastResets} restores+{OwnCar.Restores - _lastRestores} sinceReset={(OwnCar.LastResetAt > 0 ? (NetClock.Now - OwnCar.LastResetAt) * 1000 : -1):0}ms");
                     }
                     _lastResets = OwnCar.Resets; _lastRestores = OwnCar.Restores; _lastOwnPos = p; _hasOwnPos = true;
                 }

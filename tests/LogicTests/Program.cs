@@ -638,6 +638,9 @@ static class Program
         SessionWire();
         ReleaseGate022();
         InteractEdge();
+        SessionNotifyEdges();
+        ReleaseGate023();
+        WireEdges023();
         Console.WriteLine($"{total - fails}/{total} checks passed");
         return fails == 0 ? 0 : 1;
     }
@@ -1025,6 +1028,18 @@ static class Program
         var miss = ModLiveryGateLogic.Missing(p, m => m.Id == 10 || m.Id == 30);
         Eq(miss.Count == 1 && miss[0].Id == 20, true, "modgate: missing only 20");
         Eq(ModLiveryGateLogic.Parse("").Count, 0, "modgate: empty");
+        Eq(ModLiveryGateLogic.ClassifyItem(true, true, true, false), ModLiveryGateLogic.ItemKind.Installed, "modgate: installed wins");
+        Eq(ModLiveryGateLogic.ClassifyItem(false, false, false, false), ModLiveryGateLogic.ItemKind.Pending, "modgate: pending");
+        Eq(ModLiveryGateLogic.ClassifyItem(false, true, false, false), ModLiveryGateLogic.ItemKind.Queued, "modgate: queued");
+        Eq(ModLiveryGateLogic.ClassifyItem(false, true, true, false), ModLiveryGateLogic.ItemKind.Downloading, "modgate: downloading");
+        Eq(ModLiveryGateLogic.ClassifyItem(false, false, true, true), ModLiveryGateLogic.ItemKind.Error, "modgate: error");
+        Eq(ModLiveryGateLogic.ItemTitle("Cool Paint", "id", "idsub", 0), "Cool Paint", "modgate: title prefers name");
+        Eq(ModLiveryGateLogic.ItemTitle("  ", "id10", "id10:2", 0), "id10", "modgate: title blank→id");
+        Eq(ModLiveryGateLogic.ItemTitle(null, "id10", "id10:2", 2), "id10:2", "modgate: title null→sub");
+        Eq(ModLiveryGateLogic.ItemStatusKey(ModLiveryGateLogic.ItemKind.Downloading, -1f), "modGate.stateDownloading", "modgate: status no pct");
+        Eq(ModLiveryGateLogic.ItemStatusKey(ModLiveryGateLogic.ItemKind.Downloading, 0.42f), "modGate.stateDownloadingPct", "modgate: status pct");
+        Eq(ModLiveryGateLogic.ItemStatusPercent(ModLiveryGateLogic.ItemKind.Downloading, 0.42f), 42, "modgate: pct round");
+        Eq(ModLiveryGateLogic.ItemStatusPercent(ModLiveryGateLogic.ItemKind.Queued, 0.5f), -1, "modgate: pct only when downloading");
         Eq(UpdateLogic.TryFindAsset("{\"draft\":false,\"prerelease\":false,\"assets\":[{\"name\":\"6000.0.75.zip\",\"browser_download_url\":\"https://github.com/Sergaris/over-the-hill-lan-coop/releases/download/v0.1.9/6000.0.75.zip\"}]}",
             UpdateLogic.UnityLibsAssetName, out var u, out var why) && u.Contains("6000.0.75.zip"), true, $"modgate: unity-libs asset ({why})");
     }
@@ -1034,7 +1049,7 @@ static class Program
     {
         Eq(OthLan.Launch.HangLogic.Classify("[Message:InteropManager] Downloading unity base libraries from https://unity.bepinex.dev/libraries/6000.0.75.zip"),
             OthLan.Launch.HangLogic.LineKind.UnityLibsDownload, "hang: download line");
-        Eq(OthLan.Launch.HangLogic.Classify("[Info:OTH-LAN] 0.2.2 loaded. Press F7"),
+        Eq(OthLan.Launch.HangLogic.Classify("[Info:OTH-LAN] 0.2.3 loaded. Press F7"),
             OthLan.Launch.HangLogic.LineKind.BootReady, "hang: boot ready");
         Eq(OthLan.Launch.HangLogic.IsHung(true, false, 10.0), true, "hang: 10s hung");
         Eq(OthLan.Launch.HangLogic.IsHung(true, false, 9.9), false, "hang: under 10s");
@@ -1257,5 +1272,103 @@ static class Program
         Eq(InteractionLogic.PredictiveMargin(0.5, 100, 1, 3), 3.0, "interact-edge: margin capped");
         Eq(InteractionLogic.WantShared(false, true, WinchKindLogic.Kind.None, WinchKindLogic.Kind.None, ic), true, "interact-edge: host contact alone");
         Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.None, WinchKindLogic.Kind.Car, ic), true, "interact-edge: host car winch");
+    }
+
+    static void SessionNotifyEdges()
+    {
+        Eq(SessionNotifyLogic.BecameNoLink(false, true), true, "notify: no-link rising");
+        Eq(SessionNotifyLogic.BecameNoLink(true, true), false, "notify: stay no-link");
+        Eq(SessionNotifyLogic.BecameLinked(true, false), true, "notify: link restored");
+        Eq(SessionNotifyLogic.HostSessionEnded(true, true, false), true, "notify: host session end");
+        Eq(SessionNotifyLogic.HostSessionEnded(true, false, false), false, "notify: never had runner");
+        Eq(SessionNotifyLogic.HostSessionEnded(false, true, false), false, "notify: not client");
+        Eq(SessionNotifyLogic.BecamePresent(false, true), true, "notify: player join");
+        Eq(SessionNotifyLogic.BecameAbsent(true, false), true, "notify: player leave edge");
+        Eq(SessionNotifyLogic.BecamePresent(true, true), false, "notify: already present");
+        Eq(SessionNotifyLogic.JoinLines(new[] { "a", "b" }), "a · b", "notify: join two lines");
+        Eq(SessionNotifyLogic.JoinLines(new[] { "only" }), "only", "notify: join one line");
+        Eq(SessionNotifyLogic.JoinLines(new string[0]), "", "notify: join empty");
+        Eq(SessionNotifyLogic.JoinLines(new[] { "a", "", null, "b" }), "a · b", "notify: join skips blanks");
+        Eq(SessionNotifyLogic.BecameLinked(false, false), false, "notify: linked false when never timed out");
+        Eq(SessionNotifyLogic.BecameLinked(false, true), false, "notify: linked false on rising no-link");
+        Eq(SessionNotifyLogic.HostSessionEnded(true, true, true), false, "notify: host end false while runner lives");
+    }
+
+    /// <summary>0.2.3: updater version format, garbage Compare, release-assets host, no-sums gate, skip.</summary>
+    static void ReleaseGate023()
+    {
+        Eq(UpdateLogic.TryParseVersion("v0.2.3", out var v23) && UpdateLogic.Format(v23) == "0.2.3", true, "023: format v0.2.3");
+        Eq(UpdateLogic.Format((0, 1, 8, 1)), "0.1.8.1", "023: format four-part");
+        Eq(UpdateLogic.Format((0, 1, 8, 0)), "0.1.8", "023: format drops zero build");
+        Eq(UpdateLogic.Compare("garbage", "0.2.2"), -1, "023: garbage < version");
+        Eq(UpdateLogic.Compare("0.2.2", "garbage"), 1, "023: version > garbage");
+        Eq(UpdateLogic.Compare("x", "y"), 0, "023: both garbage equal");
+        Eq(UpdateLogic.AllowedUrl("https://release-assets.githubusercontent.com/a"), true, "023: release-assets host");
+        Eq(UpdateLogic.ShouldOffer("0.2.3", "0.2.2", "0.2.3"), false, "023: skipped 0.2.3 not offered");
+        Eq(UpdateLogic.ShouldOffer("0.2.3", "0.2.2", "0.2.2"), true, "023: skip of older still offers 0.2.3");
+        string JnoSums = "{\"tag_name\":\"v0.2.3\",\"name\":\"n\",\"body\":\"x\",\"draft\":false,\"prerelease\":false,\"assets\":[" +
+            "{\"name\":\"OTH-LAN-0.2.3.zip\",\"size\":12,\"browser_download_url\":\"https://github.com/Sergaris/over-the-hill-lan-coop/releases/download/v0.2.3/OTH-LAN-0.2.3.zip\"}]}";
+        var nos = UpdateLogic.ParseRelease(JnoSums, out var whyNos);
+        Eq(nos == null && whyNos != null && whyNos.Contains("SHA256SUMS"), true, $"023: no sums refused ({whyNos})");
+        string Jok = "{\"tag_name\":\"v0.2.3\",\"name\":\"n\",\"body\":\"## What's new in 0.2.3\\n\\n- B\\n\\n## Что нового в 0.2.3\\n\\n- Б\\n\",\"draft\":false,\"prerelease\":false,\"assets\":[" +
+            "{\"name\":\"OTH-LAN-0.2.3.zip\",\"size\":12,\"browser_download_url\":\"https://github.com/Sergaris/over-the-hill-lan-coop/releases/download/v0.2.3/OTH-LAN-0.2.3.zip\"}," +
+            "{\"name\":\"SHA256SUMS.txt\",\"browser_download_url\":\"https://github.com/Sergaris/over-the-hill-lan-coop/releases/download/v0.2.3/SHA256SUMS.txt\"}]}";
+        var rel = UpdateLogic.ParseRelease(Jok, out var whyOk);
+        Eq(rel != null && rel.Version == "0.2.3" && whyOk == null, true, $"023: parse v0.2.3 ({whyOk})");
+        Eq(UpdateLogic.ShortNotes(rel.Notes, "en"), "• B", "023: short notes en");
+        Eq(UpdateLogic.ShortNotes(rel.Notes, "ru"), "• Б", "023: short notes ru");
+    }
+
+    /// <summary>0.2.3: OTPL sanitize, OTC3 version/quat/count, StatePlayback old-epoch, Interaction NaN RTT.</summary>
+    static void WireEdges023()
+    {
+        var rows = new System.Collections.Generic.List<CoopSessionLogic.Row>
+        {
+            new() { Slot = 1, Name = "X", PingMs = 200_000, LossPct = 0, Status = 99 },
+        };
+        var pkt = CoopSessionLogic.EncodeList(rows);
+        var back = new System.Collections.Generic.List<CoopSessionLogic.Row>();
+        Eq(CoopSessionLogic.TryDecodeList(pkt, back) && back.Count == 1 && back[0].Status == CoopSessionLogic.StatusOk, true, "023: status 99→Ok on wire");
+        Eq(back[0].PingMs == 65534, true, $"023: ping clamp ({back[0].PingMs})");
+        pkt[8] = 101; // LossPct after Slot(1)+Ping(2) at offset 5+1+2=8
+        Eq(CoopSessionLogic.TryDecodeList(pkt, back), false, "023: loss 101 rejected");
+        pkt = CoopSessionLogic.EncodeList(rows);
+        pkt[9] = 3; // Status byte
+        Eq(CoopSessionLogic.TryDecodeList(pkt, back), false, "023: status 3 rejected");
+        var a = new CoopSessionLogic.Row { Slot = 1, Name = "A", PingMs = 10, Status = CoopSessionLogic.StatusOk };
+        var b = new CoopSessionLogic.Row { Slot = 2, Name = "B", PingMs = 20, Status = CoopSessionLogic.StatusOk };
+        var block = CoopSessionLogic.FormatBlock(new[] { a, b });
+        Eq(block == CoopSessionLogic.FormatRow(a) + "\n" + CoopSessionLogic.FormatRow(b), true, "023: FormatBlock joins with NL");
+        Eq(CoopSessionLogic.FormatBlock(null), "", "023: FormatBlock null");
+        Eq(CoopSessionLogic.FormatBlock(new CoopSessionLogic.Row[0]), "", "023: FormatBlock empty");
+
+        var s = new CarWire.CarStateSample
+        {
+            Seq = 1, SendTime = 1.0, Px = 0, Py = 0, Pz = 0, Qx = 0, Qy = 0, Qz = 0, Qw = 0,
+            Vx = 0, Vy = 0, Vz = 0, Flags = 0, SteerDeg = 0, WheelCount = 0,
+        };
+        var p = new CarWire.CarStatePacket { Slot = 1, Epoch = 1, Count = 1 };
+        p.SetState(0, s);
+        var buf = new byte[CarWire.MaxPacketBytes];
+        var n = CarWire.Encode(p, buf);
+        Eq(n > 0 && CarWire.TryDecode(buf.AsSpan(0, n), out var d) && Math.Abs(d.S0.Qw - 1f) < 1e-5, true, "023: zero quat → Qw=1");
+        buf[4] = 99;
+        Eq(CarWire.TryDecode(buf.AsSpan(0, n), out _), false, "023: bad OTC3 version rejected");
+        buf[4] = CarWire.Version;
+        var bad = p; bad.Count = 4;
+        Eq(CarWire.Encode(bad, buf), -1, "023: count 4 rejected");
+
+        var pb = new StatePlayback();
+        pb.Push(Mk(10, 1.0, 0, 0, 0, 0, epoch: 2), 1.05);
+        Eq(pb.Count, 1, "023: epoch2 stored");
+        pb.Push(Mk(9, 0.5, 9, 0, 0, 0, epoch: 1), 1.06); // older epoch, older send
+        Eq(pb.Count == 1 && pb.EpochDrops == 0, true, "023: old epoch ignored");
+        pb.Push(Mk(8, 0.9, 1, 0, 0, 0, epoch: 2), 1.07); // reorder seq within epoch
+        Eq(pb.Reorders >= 1, true, "023: reorder counted");
+
+        var ic = new InteractionLogic.Cfg { ResumeSeconds = 1.0 };
+        Eq(InteractionLogic.ResumeDelay(ic, double.NaN, 0) >= 1.2, true, "023: NaN RTT → default 200ms net");
+        Eq(ModLiveryGateLogic.Format(null), "", "023: mod format null");
+        Eq(ModLiveryGateLogic.Format(new[] { new ModLiveryGateLogic.ModRef(0, 0), new ModLiveryGateLogic.ModRef(5, 1) }), "5:1", "023: mod format skips id0");
     }
 }

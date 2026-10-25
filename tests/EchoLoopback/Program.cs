@@ -23,7 +23,7 @@ namespace OthLan {
      ClientLink.Ensure("127.0.0.1",27400);
      int fails=0; void Check(bool ok,string what){ Console.WriteLine((ok?"OK   ":"FAIL ")+what); if(!ok) fails++; }
      delayMs=20; Run(2.0);   // 20 ms each way => ~40 ms RTT
-     double c; bool to; lock(ClientLink.Tracker){ c=ClientLink.Tracker.Value(ClientLink.Now); to=ClientLink.Tracker.TimedOut(ClientLink.Now);} 
+     double c; bool to; lock(ClientLink.Tracker){ c=ClientLink.Tracker.Value(NetClock.Now); to=ClientLink.Tracker.TimedOut(NetClock.Now);} 
      var h=HostPings.Snapshot();
      Check(!to && c>35 && c<80, $"client echo RTT {c:0.0} ms (40 ms simulated)");
      Check(h.ContainsKey(2) && !h[2].timedOut && h[2].ms>35 && h[2].ms<80, $"host RTT to slot 2: {(h.ContainsKey(2)?h[2].ms:double.NaN):0.0} ms via client's source port; client echoed {ClientLink.HostPingsEchoed} host pings");
@@ -33,16 +33,16 @@ namespace OthLan {
      CarSync.HostFlagsValue = 1; Run(0.6);
      Check(CarSync.SeenFlags == 1, "client follows host flag back ON");
      delayMs=100; Run(2.5);
-     lock(ClientLink.Tracker) c=ClientLink.Tracker.Value(ClientLink.Now);
+     lock(ClientLink.Tracker) c=ClientLink.Tracker.Value(NetClock.Now);
      Check(c>150 && c<260, $"latency change tracked: {c:0.0} ms (200 ms simulated)");
      drop=true; Run(1.5);
-     lock(ClientLink.Tracker) to=ClientLink.Tracker.TimedOut(ClientLink.Now);
+     lock(ClientLink.Tracker) to=ClientLink.Tracker.TimedOut(NetClock.Now);
      Check(!to, "1.5 s of loss: not timed out yet");
      Run(1.0);
-     lock(ClientLink.Tracker){ to=ClientLink.Tracker.TimedOut(ClientLink.Now); c=ClientLink.Tracker.Value(ClientLink.Now);} h=HostPings.Snapshot();
+     lock(ClientLink.Tracker){ to=ClientLink.Tracker.TimedOut(NetClock.Now); c=ClientLink.Tracker.Value(NetClock.Now);} h=HostPings.Snapshot();
      Check(to && double.IsNaN(c) && PingLogic.ClassifyEcho(c,to,150,250)==PingLogic.Level.Red && PingLogic.Format(c)=="local --", "2.5 s of loss: client 'local --' red");
      Check(h[2].timedOut, $"host side timeout for slot 2 too (loss {h[2].loss:0}%)");
      drop=false; delayMs=20; Run(1.0);
-     lock(ClientLink.Tracker){ to=ClientLink.Tracker.TimedOut(ClientLink.Now); c=ClientLink.Tracker.Value(ClientLink.Now);} 
+     lock(ClientLink.Tracker){ to=ClientLink.Tracker.TimedOut(NetClock.Now); c=ClientLink.Tracker.Value(NetClock.Now);} 
      Check(!to && c>0, $"recovered: {c:0.0} ms, loss {ClientLink.Tracker.LossPercent:0}%");
      Console.WriteLine(fails==0?"ALL PASSED":"FAILURES: "+fails); return fails; } } }

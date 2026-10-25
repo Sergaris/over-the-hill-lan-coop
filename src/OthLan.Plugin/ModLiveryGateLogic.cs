@@ -75,4 +75,58 @@ public static class ModLiveryGateLogic
             if (m.Id != 0 && !hasLocal(m)) miss.Add(m);
         return miss;
     }
+
+    /// <summary>Per-row state for the mod gate list (UI labels live in Loc; this owns the kind matrix).</summary>
+    public enum ItemKind { Pending, Queued, Downloading, Installed, Error }
+
+    /// <summary>
+    /// Classify one required row. <paramref name="hasLocal"/> / <paramref name="wasAsked"/> / phase flags
+    /// come from the bridge; this method only owns the decision table.
+    /// </summary>
+    public static ItemKind ClassifyItem(bool hasLocal, bool downloadActive, bool wasAsked, bool failed)
+    {
+        if (hasLocal) return ItemKind.Installed;
+        if (failed) return ItemKind.Error;
+        if (!downloadActive) return ItemKind.Pending;
+        if (wasAsked) return ItemKind.Downloading;
+        return ItemKind.Queued;
+    }
+
+    /// <summary>
+    /// Title for a list row: prefer <paramref name="displayName"/>; else id / id+sub (same shape as Loc
+    /// <c>modGate.item</c> / <c>modGate.itemSub</c> placeholders — callers pass already-localized fallbacks
+    /// via <paramref name="idFallback"/> / <paramref name="idSubFallback"/>).
+    /// </summary>
+    public static string ItemTitle(string displayName, string idFallback, string idSubFallback, int subId)
+    {
+        if (!string.IsNullOrWhiteSpace(displayName)) return displayName.Trim();
+        return subId == 0 ? idFallback ?? "" : idSubFallback ?? idFallback ?? "";
+    }
+
+    /// <summary>
+    /// Status suffix for a row. <paramref name="progress01"/> in 0..1 shows percent when Downloading;
+    /// negative = no percent known.
+    /// </summary>
+    public static string ItemStatusKey(ItemKind kind, float progress01)
+    {
+        if (kind == ItemKind.Downloading && progress01 >= 0f && progress01 <= 1.0001f)
+            return "modGate.stateDownloadingPct";
+        return kind switch
+        {
+            ItemKind.Pending => "modGate.statePending",
+            ItemKind.Queued => "modGate.stateQueued",
+            ItemKind.Downloading => "modGate.stateDownloading",
+            ItemKind.Installed => "modGate.stateInstalled",
+            ItemKind.Error => "modGate.stateError",
+            _ => "modGate.statePending",
+        };
+    }
+
+    /// <summary>Percent 0..100 for Loc arg; -1 if not applicable.</summary>
+    public static int ItemStatusPercent(ItemKind kind, float progress01)
+    {
+        if (kind != ItemKind.Downloading || progress01 < 0f) return -1;
+        if (progress01 > 1f) progress01 = 1f;
+        return (int)Math.Round(progress01 * 100.0);
+    }
 }

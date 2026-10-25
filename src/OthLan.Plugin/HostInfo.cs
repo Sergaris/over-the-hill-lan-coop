@@ -123,7 +123,7 @@ internal static class HostInfo
                     string hosting; lock (_lock) hosting = _reply;
                     if (hosting == null) continue;
                     var id = Field(text, "id"); int.TryParse(Field(text, "hint"), out var hint);
-                    var slot = LanState.Slots.Request(id, hint, HostPings.Now);
+                    var slot = LanState.Slots.Request(id, hint, NetClock.Now);
                     var rb = Encoding.UTF8.GetBytes($"OTHLAN SLOT1 slot={slot}\n");
                     _udp.Send(rb, rb.Length, ep);
                     Plugin.L.LogInfo($"[LAN] slot request from {ep} id={id} hint={hint} -> {slot}  [{LanState.Slots.Describe()}]");

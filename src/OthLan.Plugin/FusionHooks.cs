@@ -365,7 +365,7 @@ internal static unsafe class FusionHooks
                                 return Reply_Refuse;
                             }
                             var tag = (uint)(bytes[2] | bytes[3] << 8 | bytes[4] << 16 | bytes[5] << 24);
-                            if (!LanState.Slots.Admit(slot, tag, HostPings.Now, out var why))
+                            if (!LanState.Slots.Admit(slot, tag, NetClock.Now, out var why))
                             {
                                 Plugin.L.LogWarning($"[LAN] refusing client: {why} (tag {tag:x8}) [{LanState.Slots.Describe()}]");
                                 return Reply_Refuse;

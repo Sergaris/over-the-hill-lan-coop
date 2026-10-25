@@ -156,7 +156,7 @@ internal static class JoinFlow
         { LanState.Status("status.full", info.Players); Plugin.L.LogWarning("[LAN] " + LanState.LastStatus.En()); Overlay.Show(); return false; }
         LanState.AssignedSlot = _slotResult ?? -1;
         Plugin.L.LogInfo(_slotResult.HasValue ? $"[LAN] host assigned player slot {_slotResult}" : $"[LAN] no slot from the host ({_slotError}); using the IP-derived slot");
-        if (info.CarSync >= 0) CarSync.OnHostFlags(info.CarSync, ClientLink.Now);
+        if (info.CarSync >= 0) CarSync.OnHostFlags(info.CarSync, NetClock.Now);
         _joinAllowMods = RoomPropsLogic.AllowMods(info.Props) ?? Plugin.AllowMods.Value;
         Plugin.L.LogInfo($"[LAN] host session: mods {(_joinAllowMods ? "allowed" : "off")}");
         return !DeferLiveries(info, ip, port, areaName);

@@ -19,8 +19,6 @@ internal static class ClientLink
     static IPEndPoint _host;
     static Thread _rx;
     public static readonly EchoTracker Tracker = new();
-    /// <summary>T5.4: alias of <see cref="NetClock.Now"/> (kept for call-site clarity).</summary>
-    public static double Now => NetClock.Now;
     public static int HostPingsEchoed;
 
     // ---- self-test network emulation (client side only, our side channel only; Fusion traffic is NOT affected) ----
@@ -65,7 +63,7 @@ internal static class ClientLink
     public static void SendPing(byte slot)
     {
         var u = _udp; var h = _host; if (u == null) return;
-        uint seq; var now = Now;
+        uint seq; var now = NetClock.Now;
         lock (Tracker) seq = Tracker.NextSeq(now);
         var b = CarSyncLogic.EncodePing(0, slot, seq, now);
         Out(u, b, h);
@@ -86,15 +84,15 @@ internal static class ClientLink
             {
                 var from = new IPEndPoint(IPAddress.Any, 0);
                 var d = u.Receive(ref from);
-                if (d.Length >= 5 && BitConverter.ToUInt32(d, 0) == OutageLogic.StatusMagic) { if (!Drop()) LinkLabels.OnStatus(d, Now); continue; }
+                if (d.Length >= 5 && BitConverter.ToUInt32(d, 0) == OutageLogic.StatusMagic) { if (!Drop()) LinkLabels.OnStatus(d, NetClock.Now); continue; }
                 if (OutageLogic.TryDecodeAccept(d, out var aslot, out var actr)) { if (!Drop()) OwnCar.OnAccept(aslot, actr); continue; }
-                if (d.Length >= 4 && BitConverter.ToUInt32(d, 0) == CarWire.Magic) { if (!Drop()) CarRelay.OnClientPacket(d, d.Length, Now); continue; }
+                if (d.Length >= 4 && BitConverter.ToUInt32(d, 0) == CarWire.Magic) { if (!Drop()) CarRelay.OnClientPacket(d, d.Length, NetClock.Now); continue; }
                 if (d.Length >= 4 && BitConverter.ToUInt32(d, 0) == CoopSessionLogic.ListMagic) { if (!Drop()) CoopSession.OnList(d); continue; }
                 if (d.Length >= 4 && BitConverter.ToUInt32(d, 0) == CoopSessionLogic.DiagMagic) { if (!Drop()) CoopSession.OnDiag(); continue; }
                 if (!CarSyncLogic.TryDecodePing(d, out var kind, out _, out var seq, out var flags)) continue;
                 if (Drop()) continue;
-                if (flags >= 0) Later(() => CarSync.OnHostFlags(flags, Now));   // host's session CarSync state
-                if (kind == 1) Later(() => { lock (Tracker) Tracker.OnReply(seq, Now); });
+                if (flags >= 0) Later(() => CarSync.OnHostFlags(flags, NetClock.Now));   // host's session CarSync state
+                if (kind == 1) Later(() => { lock (Tracker) Tracker.OnReply(seq, NetClock.Now); });
                 else { d = d[..CarSyncLogic.PingSize]; d[4] = 1; var src = from; Later(() => { HostPingsEchoed++; Out(u, d, src); }); }   // host's ping: echo to its source
             }
             catch (ObjectDisposedException) { return; }

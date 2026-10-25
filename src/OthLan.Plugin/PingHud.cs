@@ -67,7 +67,7 @@ internal static class PingHud
                 ClientLink.Tracker.Alpha = Plugin.PingSmoothing.Value;
                 ClientLink.SendPing((byte)LanState.ClientSlot);
                 double v, nl; bool to; double loss;
-                lock (ClientLink.Tracker) { var t = ClientLink.Now; v = ClientLink.Tracker.Value(t); to = ClientLink.Tracker.TimedOut(t); nl = ClientLink.Tracker.NoLinkSeconds(t); loss = ClientLink.Tracker.LossPercent; }
+                lock (ClientLink.Tracker) { var t = NetClock.Now; v = ClientLink.Tracker.Value(t); to = ClientLink.Tracker.TimedOut(t); nl = ClientLink.Tracker.NoLinkSeconds(t); loss = ClientLink.Tracker.LossPercent; }
                 _smoothed = v; TimedOut = to; NoLinkS = nl; LossPct = loss;
                 Source = $"udp echo {LanState.TargetIp}:{LanState.TargetPort + 1}, loss {loss:0}%";
                 var fus = r.GetPlayerRtt(r.LocalPlayer) * 1000.0;

@@ -197,8 +197,6 @@ internal static unsafe class OwnCar
     /// <summary>Client: the game moved our car to its spawn point (spawn map done).</summary>
     public static bool SpawnSeen => _spawned;
 
-    /// <summary>T5.4: alias of <see cref="NetClock.Now"/>.</summary>
-    internal static double Now => NetClock.Now;
 
     /// <summary>Main thread, every frame (Overlay.Update): find the own car, phase 1 boost, state text.</summary>
     public static void Tick()
@@ -208,7 +206,7 @@ internal static unsafe class OwnCar
         if (r == null || r.Pointer != LanState.LanRunner || !r.IsRunning) { Forget(); State = "off"; return; }
         // link-gap clock for the post-outage rule: side channel down, or our Fusion tick stalled (> 0.3 s)
         LastNoLinkAt();
-        try { var tk = r.Tick.Raw; if (tk != _gapTick) { _gapTick = tk; _gapTickAt = Now; } else if (Now - _gapTickAt > 0.3) _noLinkAt = Now; } catch { }
+        try { var tk = r.Tick.Raw; if (tk != _gapTick) { _gapTick = tk; _gapTickAt = NetClock.Now; } else if (NetClock.Now - _gapTickAt > 0.3) _noLinkAt = NetClock.Now; } catch { }
         _runner = r;
         try { PatchInputBuffer(r); } catch (Exception e) { if (_patchedSim == IntPtr.Zero) Plugin.L.LogWarning($"[OwnCar] input buffer: {e.Message}"); _patchedSim = (IntPtr)1; }
         if ((_own == null || _own.Object == null || _ownPtr == IntPtr.Zero) && Time.realtimeSinceStartup >= _nextFind)
@@ -218,16 +216,16 @@ internal static unsafe class OwnCar
             {
                 OwnSlot = e.Slot;
                 _own = e.Fp; _ownPtr = e.Fp.Pointer; _rb = e.Rb ?? e.Fp.rigidbody ?? e.Fp.vehicleBase?.cachedRigidbody;
-                _spawned = false; _foundAt = Now;
+                _spawned = false; _foundAt = NetClock.Now;
                 _nrb = e.Nrb ?? e.Fp.GetComponent<NetworkRigidbody3D>();
                 OwnRender.Forget(); OwnRender.OwnNrb = _nrb != null ? _nrb.Pointer : IntPtr.Zero;
                 _vb = e.Fp.vehicleBase;
                 try { Plugin.L.LogInfo($"[OwnCar] networked words: VehicleBase {(_vb != null ? _vb.WordCount : -1)} (restoring {VbWords}), NetworkRigidbody3D {(_nrb != null ? _nrb.WordCount : -1)}"); } catch { }
                 if (_nrb != null) { _origSmooth = _nrb.CorrectionSmoothingTime; _origSnap = _nrb.CorrectionSnapDistance; }
-                Plugin.L.LogInfo($"[OwnCar] own car found; phase 2 {(Phase2Active(Now) ? "ACTIVE (client-authoritative)" : "inactive")}, smoothing {_origSmooth} s / snap {_origSnap} m");
+                Plugin.L.LogInfo($"[OwnCar] own car found; phase 2 {(Phase2Active(NetClock.Now) ? "ACTIVE (client-authoritative)" : "inactive")}, smoothing {_origSmooth} s / snap {_origSnap} m");
             }
         }
-        var now = Now;
+        var now = NetClock.Now;
         UpdateSuspend(now);
         State = _own == null ? "off" : InteractionSuspended ? "suspend" : Phase2Active(now) ? "client" : "soft";
         // Phase 1: soften the correction that follows a gap (no snapshot resets for > GapSeconds).
@@ -268,7 +266,7 @@ internal static unsafe class OwnCar
             {
                 OwnLocal.RestoreSkip();
                 OwnRender.BeforeSim(_own.transform, _rb);
-                Resets++; LastResetAt = Now;
+                Resets++; LastResetAt = NetClock.Now;
                 _cp = _rb.position; _cq = _rb.rotation; _cv = _rb.linearVelocity; _ca = _rb.angularVelocity;
                 _capTick = _runner != null ? _runner.Tick.Raw : 0;
                 _vbN = _nrbN = 0;
@@ -327,7 +325,7 @@ internal static unsafe class OwnCar
         {
             {
                 _captured = false;
-                var now = Now;
+                var now = NetClock.Now;
                 var p = _rb.position; var q = _rb.rotation;
                 var err = Vector3.Distance(p, _cp); var errDeg = Quaternion.Angle(q, _cq);
                 LastErr = err; LastErrDeg = errDeg; SumErr += err; ErrSamples++; if (err > MaxErr) MaxErr = err;
@@ -417,7 +415,7 @@ internal static unsafe class OwnCar
     /// <summary>Last moment (OwnCar clock) the side channel to the host was down; a real outage kills both channels.</summary>
     static double LastNoLinkAt()
     {
-        try { bool to; lock (ClientLink.Tracker) to = ClientLink.Tracker.Started && ClientLink.Tracker.TimedOut(ClientLink.Now); if (to) _noLinkAt = Now; } catch { }
+        try { bool to; lock (ClientLink.Tracker) to = ClientLink.Tracker.Started && ClientLink.Tracker.TimedOut(NetClock.Now); if (to) _noLinkAt = NetClock.Now; } catch { }
         return _noLinkAt;
     }
 

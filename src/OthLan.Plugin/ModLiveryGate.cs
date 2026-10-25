@@ -27,6 +27,7 @@ internal static class ModLiveryGate
     static TMP_Text _title, _body, _list, _status;
     static UIButtonSelector _dlBtn, _skipBtn, _cancelBtn;
     static int _locGen = -1;
+    static string _listFp = "";
     static GameObject _prevSelected;
     static ContextUIMainMenu _menuHid;
     static bool _hidButtons;
@@ -119,7 +120,9 @@ internal static class ModLiveryGate
                 RefreshUi();
                 return;
             }
-            RefreshUiStatusOnly();
+            // T6.3: rebuild the list only when row state / progress fingerprint changes.
+            if (ListFingerprint() != _listFp) RefreshUi();
+            else RefreshUiStatusOnly();
         }
 
         // T1.3: EventSystem Submit owns A/Enter; we only keep B/Esc → Cancel and KeepFocus.
@@ -314,6 +317,25 @@ internal static class ModLiveryGate
         foreach (var t in b.GetComponentsInChildren<TMP_Text>(true)) { t.richText = true; t.text = text; }
     }
 
+    static string ListFingerprint()
+    {
+        var source = (State == St.Downloading || ModLiveryBridge.DownloadPhase == ModLiveryBridge.Phase.Failed)
+            && _required.Count > 0
+            ? _required
+            : _missing;
+        var sb = new StringBuilder(source.Count * 24);
+        sb.Append((int)State).Append('|').Append((int)ModLiveryBridge.DownloadPhase).Append('|');
+        foreach (var m in source)
+        {
+            var kind = ModLiveryBridge.Classify(m);
+            var pct = ModLiveryGateLogic.ItemStatusPercent(kind, ModLiveryBridge.TryGetProgress(m));
+            var name = ModLiveryBridge.TryGetDisplayName(m) ?? "";
+            sb.Append(m.Id).Append(':').Append(m.SubId).Append(':').Append((int)kind)
+                .Append(':').Append(pct).Append(':').Append(name).Append(';');
+        }
+        return sb.ToString();
+    }
+
     static void RefreshUi()
     {
         if (_root == null || _root.WasCollected) return;
@@ -321,19 +343,33 @@ internal static class ModLiveryGate
         if (_body != null) _body.text = Loc.T("modGate.body");
         if (_list != null)
         {
+            // Show the full required set while downloading / after failure so "installed" rows stay visible.
+            var source = (State == St.Downloading || ModLiveryBridge.DownloadPhase == ModLiveryBridge.Phase.Failed)
+                && _required.Count > 0
+                ? _required
+                : _missing;
             var sb = new StringBuilder();
-            var n = Math.Min(_missing.Count, 10);
+            var n = Math.Min(source.Count, 10);
             for (int i = 0; i < n; i++)
             {
-                var m = _missing[i];
-                var subLabel = m.SubId == 0 ? Loc.F("modGate.item", m.Id)
-                    : Loc.F("modGate.itemSub", m.Id, unchecked((uint)m.SubId).ToString());
-                sb.Append("• ").Append(subLabel).Append('\n');
+                var m = source[i];
+                var name = ModLiveryBridge.TryGetDisplayName(m);
+                var idFb = Loc.F("modGate.item", m.Id);
+                var idSubFb = Loc.F("modGate.itemSub", m.Id, unchecked((uint)m.SubId).ToString());
+                var title = ModLiveryGateLogic.ItemTitle(name, idFb, idSubFb, m.SubId);
+                var kind = ModLiveryBridge.Classify(m);
+                var prog = ModLiveryBridge.TryGetProgress(m);
+                var sk = ModLiveryGateLogic.ItemStatusKey(kind, prog);
+                var pct = ModLiveryGateLogic.ItemStatusPercent(kind, prog);
+                var status = pct >= 0 ? Loc.F(sk, pct) : Loc.T(sk);
+                sb.Append("• ").Append(title).Append(" — ").Append(status).Append('\n');
             }
-            if (_missing.Count > 10) sb.Append(Loc.F("modGate.more", _missing.Count - 10));
+            if (source.Count > 10) sb.Append(Loc.F("modGate.more", source.Count - 10));
             _list.text = sb.ToString();
         }
-        SetLabel(_dlBtn, Loc.T("modGate.download"));
+        _listFp = ListFingerprint();
+        var failed = ModLiveryBridge.DownloadPhase == ModLiveryBridge.Phase.Failed;
+        SetLabel(_dlBtn, failed ? Loc.T("modGate.retry") : Loc.T("modGate.download"));
         SetLabel(_skipBtn, Loc.T("modGate.joinWithout"));
         SetLabel(_cancelBtn, Loc.T("modGate.cancel"));
         if (_dlBtn != null) _dlBtn.gameObject.SetActive(State == St.Prompt);

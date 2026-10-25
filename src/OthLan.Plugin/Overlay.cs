@@ -57,6 +57,7 @@ public class Overlay : MonoBehaviour
         try { Autopilot.Tick(); } catch (Exception e) { LogOnce("autopilot", e); }
         try { CoopMenu.Tick(); } catch (Exception e) { LogOnce("coop", e); }
         try { CoopSession.Tick(); } catch (Exception e) { LogOnce("session", e); }
+        try { SessionNotify.Tick(); } catch (Exception e) { LogOnce("sessionnotify", e); }
         try { Updater.Tick(); } catch (Exception e) { LogOnce("update", e); }
         try
         {
@@ -112,11 +113,12 @@ public class Overlay : MonoBehaviour
         if (!CoopMenu.LobbyNameSet) CoopMenu.InitLobbyName();
         var r = OverlandNetworkRunner.Instance?.NetworkRunner;
         if (r == null || !r.IsRunning) return;
-        var released = LanState.Slots.Sync(i => r.IsPlayerValid(Fusion.PlayerRef.FromIndex(i)), HostPings.Now);
+        var released = LanState.Slots.Sync(i => r.IsPlayerValid(Fusion.PlayerRef.FromIndex(i)), NetClock.Now);
         int cur = 0;
         for (int i = 0; i < Math.Max(LanState.EffectivePlayers, 2); i++) if (r.IsPlayerValid(Fusion.PlayerRef.FromIndex(i))) cur++;
         HostInfo.CurPlayers = Math.Max(1, cur);
         foreach (var sl in released) Plugin.L.LogInfo($"[LAN] player slot {sl} released (player left) [{LanState.Slots.Describe()}]");
+        try { SessionNotify.OnSlotsReleased(released); } catch (Exception e) { LogOnce("sessionnotify-leave", e); }
     }
 
     static readonly System.Collections.Generic.HashSet<string> _logged = new();

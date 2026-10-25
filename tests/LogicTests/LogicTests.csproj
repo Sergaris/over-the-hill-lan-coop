@@ -31,6 +31,7 @@
     <Compile Include="../../src/OthLan.Plugin/CarWire.cs" />
     <Compile Include="../../src/OthLan.Plugin/StatePlayback.cs" />
     <Compile Include="../../src/OthLan.Plugin/RelayLogic.cs" />
+    <Compile Include="../../src/OthLan.Plugin/SessionNotifyLogic.cs" />
     <Compile Include="../../src/OthLan.Launch/HangLogic.cs" />
     <EmbeddedResource Include="../../src/OthLan.Plugin/Lang/*.json" LogicalName="lang.%(Filename).json" />
     <Reference Include="$(BepInExCore)/Iced.dll" />

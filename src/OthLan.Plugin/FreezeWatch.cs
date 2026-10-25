@@ -26,7 +26,7 @@ internal static class FreezeWatch
         int tick; try { tick = r.Tick.Raw; } catch { return; }
         if (tick != _lastTick || _tickMovedAt < 0) { _lastTick = tick; _tickMovedAt = now; }
         bool to; double loss;
-        lock (ClientLink.Tracker) { to = !ClientLink.Tracker.HasReply || ClientLink.Tracker.TimedOut(ClientLink.Now); loss = ClientLink.Tracker.LossPercent; }
+        lock (ClientLink.Tracker) { to = !ClientLink.Tracker.HasReply || ClientLink.Tracker.TimedOut(NetClock.Now); loss = ClientLink.Tracker.LossPercent; }
         if (FreezeLogic.Healthy(to, loss, C)) { if (_healthySince < 0) _healthySince = now; } else _healthySince = -1;
         var frozen = now - _tickMovedAt; var healthy = _healthySince < 0 ? 0 : now - _healthySince;
         LastFrozenS = frozen;

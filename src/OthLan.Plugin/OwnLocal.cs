@@ -24,7 +24,7 @@ internal static unsafe class OwnLocal
     public static double LastStepAt = -1;
     public static Vector3 PrevP; public static Quaternion PrevQ; public static bool HasPrev;   // own pose before the last step
     static void MarkPrev() { var rb = OwnCar.Rb; if (rb == null) return; PrevP = rb.position; PrevQ = rb.rotation; HasPrev = true; }
-    public static bool ActiveNow => Active(OwnCar.Now);
+    public static bool ActiveNow => Active(NetClock.Now);
     static int _tickFrame = -1; static double _lastFrameAt = -1;
     static bool _skipPending; static readonly OwnCar.Snap _skip = new();
     static MethodInfo _copyToBuffer; static readonly object[] _false = { false };
@@ -92,7 +92,7 @@ internal static unsafe class OwnLocal
     /// <summary>Own car, forward tick, from OwnCar.BeforeTickDetour (after the after-resim restore).</summary>
     public static void OnForwardTick()
     {
-        var now = OwnCar.Now;
+        var now = NetClock.Now;
         RestoreSkip();
         if (!Active(now)) { StepCount++; LastStepAt = now; Debt = 0; return; }
         if (Debt >= -0.5) { MarkPrev(); Debt -= 1; FusionSteps++; StepCount++; LastStepAt = now; _tickFrame = Time.frameCount; return; }
@@ -114,7 +114,7 @@ internal static unsafe class OwnLocal
     /// <summary>Main thread, after Fusion sim (OwnClock.FrameAfterFusion via NetFrame.AfterFusion / T2.3).</summary>
     public static void Frame()
     {
-        var now = OwnCar.Now;
+        var now = NetClock.Now;
         var dt = _lastFrameAt < 0 ? 0 : now - _lastFrameAt; _lastFrameAt = now;
         var r = OwnCar.Runner;
         if (r == null || !Active(now) || dt <= 0 || dt > 0.5) { Debt = 0; return; }
@@ -187,7 +187,7 @@ internal static unsafe class OwnLocal
             InitCopy();
             if (_copyFn != null) _copyFn(nrb.Pointer, 0, _copyMi);
             else { _copyToBuffer ??= typeof(NetworkRigidbody<Rigidbody, RunnerSimulatePhysics3D>).GetMethod("CopyToBuffer", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public); _copyToBuffer?.Invoke(nrb, _false); }
-            LocalSteps++; StepCount++; LastStepAt = OwnCar.Now;
+            LocalSteps++; StepCount++; LastStepAt = NetClock.Now;
             return true;
         }
         catch (Exception e) { StepErrors++; if (StepErrors < 4) Plugin.L.LogWarning($"[OwnLocal] local step: {e}"); return false; }

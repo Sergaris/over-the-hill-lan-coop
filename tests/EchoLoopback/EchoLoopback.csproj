@@ -1,3 +1,3 @@
 <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><ImplicitUsings>disable</ImplicitUsings><Nullable>disable</Nullable></PropertyGroup>
 <!-- Loopback test of the ping echo (client->host:Port+1, reply to source port) through a latency/loss proxy. Run: dotnet run -->
-<ItemGroup><Compile Include="../../src/OthLan.Plugin/HostInfo.cs;../../src/OthLan.Plugin/ClientLink.cs;../../src/OthLan.Plugin/HostPings.cs;../../src/OthLan.Plugin/SyncLogic.cs" /></ItemGroup></Project>
+<ItemGroup><Compile Include="../../src/OthLan.Plugin/HostInfo.cs;../../src/OthLan.Plugin/ClientLink.cs;../../src/OthLan.Plugin/HostPings.cs;../../src/OthLan.Plugin/SyncLogic.cs;../../src/OthLan.Plugin/NetClock.cs" /></ItemGroup></Project>

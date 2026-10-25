@@ -2,6 +2,19 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.3
+
+Both players need 0.2.3. From 0.1.8.1+ the in-game updater offers this release.
+
+- Mod gate: display names, per-row state, Retry after timeout; SessionNotify toasts; Canvas UpdatePrompt; NetClock-only Now.
+- Extra LogicTests for updater/OTPL/OTC3 edges.
+
+## 0.2.3 — изменения
+
+У обоих игроков должна быть 0.2.3. С 0.1.8.1+ обновление предложит меню.
+
+- Окно модов: имена, состояние строк, «Повторить»; тосты SessionNotify; Canvas UpdatePrompt; Now только через NetClock.
+- Доп. LogicTests для апдейтера/OTPL/OTC3.
 ## 0.2.2
 
 Both players need 0.2.2. From 0.1.8.1+ the in-game updater offers this release.
@@ -361,6 +374,7 @@ gate — PASS. Not verified: two PCs over Radmin with real players, SmartScreen 
 
 Direct-IP LAN mode (F7/F8/F9/F10), host-assigned player slots with rejoin, version gate with code-signature checks
 for untested game builds, ping label, CarSync smoothing, installer with full uninstall.
+
 
 
 

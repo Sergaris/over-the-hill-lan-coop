@@ -12,7 +12,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "dev.othlan.lan";
     public const string Name = "OTH-LAN";
-    public const string Version = "0.2.2";
+    public const string Version = "0.2.3";
 
     internal static ManualLogSource L;
     internal static ConfigEntry<int> Port;

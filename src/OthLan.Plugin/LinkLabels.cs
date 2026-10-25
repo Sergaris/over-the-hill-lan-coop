@@ -59,7 +59,7 @@ internal static class LinkLabels
         KeyValuePair<int, double>[] list;
         lock (_noLink)
         {
-            if (LanState.Active == LanRole.Client && ClientLink.Now - _statusAt > 1.0) _noLink.Clear();   // host stopped saying it
+            if (LanState.Active == LanRole.Client && NetClock.Now - _statusAt > 1.0) _noLink.Clear();   // host stopped saying it
             if (_noLink.Count == 0) { Last = ""; return; }
             list = new KeyValuePair<int, double>[_noLink.Count]; int i = 0; foreach (var kv in _noLink) list[i++] = kv;
         }
