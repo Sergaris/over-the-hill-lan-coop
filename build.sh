@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # Reproducible build. Inputs NOT in git (game-derived or third-party binaries):
 #   interop/      <- tools/InteropGen run against YOUR OWN copy of GameAssembly.dll + global-metadata.dat
 #   third_party/  <- official BepInEx be.788 zip, unpacked to third_party/bepinex-be788 (sha256 in manifest/supported-builds.json)

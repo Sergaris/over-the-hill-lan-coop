@@ -82,84 +82,79 @@ public sealed class StatePlayback
     public double DelayS => _delay;
     public double OffsetS => double.IsNaN(_off) ? 0 : _off;
 
+    /// <summary>Newest buffered sample (no Hermite / extrap). For §5.2 extrapErr vs SampleAt.</summary>
+    public bool TryNewest(out Sample s)
+    {
+        if (_count == 0) { s = default; return false; }
+        s = At(_count - 1);
+        return true;
+    }
+
     public void Push(in Sample s, double arrivalLocal)
     {
         LastArrivalLocal = arrivalLocal;
-        if (_count > 0)
-        {
-            var newest = At(_count - 1);
-            if (s.Epoch != newest.Epoch && s.SendTime >= newest.SendTime - 1e-6)
-            {
-                // new epoch: drop old samples
-                _count = 0; _head = 0; EpochDrops++;
-                _pendingSnap = true;
-                _epoch = s.Epoch;
-            }
-            else if (s.Epoch != newest.Epoch)
-            {
-                // older epoch — ignore
-                return;
-            }
-            // dedupe / reorder by seq (within epoch)
-            for (var i = 0; i < _count; i++)
-                if (At(i).Seq == s.Seq) { Dupes++; return; }
-            if (s.Seq < newest.Seq) Reorders++;
-        }
-        else _epoch = s.Epoch;
-
-        var skew = arrivalLocal - s.SendTime;
-        if (!double.IsNaN(skew) && !double.IsInfinity(skew))
-        {
-            _skew[_skewI] = skew;
-            _skewI = (_skewI + 1) % _skew.Length;
-            if (_skewN < _skew.Length) _skewN++;
-            // off = min skew over samples with sendTime in last OffsetWindowS (approx: all ring + skew buf)
-            var minSkew = skew;
-            for (var i = 0; i < _skewN; i++)
-                if (_skew[i] < minSkew) minSkew = _skew[i];
-            _off = minSkew;
-            // jit = p95(skew - off)
-            var tmp = new double[_skewN];
-            var n = 0;
-            for (var i = 0; i < _skewN; i++)
-            {
-                var d = _skew[i] - _off;
-                if (d >= 0) tmp[n++] = d;
-            }
-            Array.Sort(tmp, 0, n);
-            var p95 = n == 0 ? 0 : tmp[Math.Clamp((int)Math.Ceiling(n * 0.95) - 1, 0, n - 1)];
-            var want = Math.Clamp(p95 + 0.5 / Math.Max(1, _c.SendHz), _c.MinDelayS, _c.MaxDelayS);
-            _delay += _c.DelayEwma * (want - _delay);
-            _delay = Math.Clamp(_delay, _c.MinDelayS, _c.MaxDelayS);
-        }
-
-        // insert sorted by SendTime (usually append)
-        if (_count < _ring.Length)
-        {
-            _ring[_head] = s;
-            _head = (_head + 1) % _ring.Length;
-            _count++;
-            // bubble back if out of order
-            for (var i = _count - 1; i > 0; i--)
-            {
-                var a = At(i - 1); var b = At(i);
-                if (a.SendTime <= b.SendTime) break;
-                SetAt(i - 1, b); SetAt(i, a);
-            }
-        }
-        else
-        {
-            // full: drop oldest, append
-            _ring[_head] = s;
-            _head = (_head + 1) % _ring.Length;
-            for (var i = _count - 1; i > 0; i--)
-            {
-                var a = At(i - 1); var b = At(i);
-                if (a.SendTime <= b.SendTime) break;
-                SetAt(i - 1, b); SetAt(i, a);
-            }
-        }
+        if (!AcceptIncoming(in s)) return;
+        UpdateDelay(arrivalLocal - s.SendTime);
+        InsertBySendTime(in s);
         Pushes++;
+    }
+
+    /// <summary>Epoch snap / drop / seq dedupe. False → sample ignored (not counted as Push).</summary>
+    bool AcceptIncoming(in Sample s)
+    {
+        if (_count == 0) { _epoch = s.Epoch; return true; }
+        var newest = At(_count - 1);
+        if (s.Epoch != newest.Epoch && s.SendTime >= newest.SendTime - 1e-6)
+        {
+            _count = 0; _head = 0; EpochDrops++;
+            _pendingSnap = true;
+            _epoch = s.Epoch;
+            return true;
+        }
+        if (s.Epoch != newest.Epoch) return false; // older epoch
+        for (var i = 0; i < _count; i++)
+            if (At(i).Seq == s.Seq) { Dupes++; return false; }
+        if (s.Seq < newest.Seq) Reorders++;
+        return true;
+    }
+
+    /// <summary>Clock offset = min skew; delay tracks p95(skew−off) + half send period, EWMA-clamped.</summary>
+    void UpdateDelay(double skew)
+    {
+        if (double.IsNaN(skew) || double.IsInfinity(skew)) return;
+        _skew[_skewI] = skew;
+        _skewI = (_skewI + 1) % _skew.Length;
+        if (_skewN < _skew.Length) _skewN++;
+        var minSkew = skew;
+        for (var i = 0; i < _skewN; i++)
+            if (_skew[i] < minSkew) minSkew = _skew[i];
+        _off = minSkew;
+        var tmp = new double[_skewN];
+        var n = 0;
+        for (var i = 0; i < _skewN; i++)
+        {
+            var d = _skew[i] - _off;
+            if (d >= 0) tmp[n++] = d;
+        }
+        Array.Sort(tmp, 0, n);
+        var p95 = n == 0 ? 0 : tmp[Math.Clamp((int)Math.Ceiling(n * 0.95) - 1, 0, n - 1)];
+        var want = Math.Clamp(p95 + 0.5 / Math.Max(1, _c.SendHz), _c.MinDelayS, _c.MaxDelayS);
+        _delay += _c.DelayEwma * (want - _delay);
+        _delay = Math.Clamp(_delay, _c.MinDelayS, _c.MaxDelayS);
+    }
+
+    /// <summary>Append (drop oldest if full) and bubble so SendTime stays non-decreasing.</summary>
+    void InsertBySendTime(in Sample s)
+    {
+        if (_count < _ring.Length) _count++;
+        _ring[_head] = s;
+        _head = (_head + 1) % _ring.Length;
+        for (var i = _count - 1; i > 0; i--)
+        {
+            var a = At(i - 1); var b = At(i);
+            if (a.SendTime <= b.SendTime) break;
+            SetAt(i - 1, b); SetAt(i, a);
+        }
     }
 
     /// <param name="delayOverride">Host follower: pass 0 to sample the newest «present» without jitter delay.</param>
@@ -196,7 +191,12 @@ public sealed class StatePlayback
                 r.Ok = true; r.Extrapolated = delta > 1e-4;
                 return r;
             }
-            Fill(ref r, newest); r.Ok = true; r.Stale = true; return r;
+            // T4.0: past MaxExtrap → hold newest pose, freeze motion (do not keep sample velocity).
+            Fill(ref r, newest);
+            r.Vx = r.Vy = r.Vz = 0;
+            r.Wx = r.Wy = r.Wz = 0;
+            r.Ok = true; r.Stale = true;
+            return r;
         }
 
         int lo = 0;
@@ -266,11 +266,11 @@ public sealed class StatePlayback
             var qw = cy * r.Qw - sy * r.Qy;
             r.Qx = qx; r.Qy = qy; r.Qz = qz; r.Qw = qw;
         }
-        // integrate wheel roll from spin
+        // integrate wheel roll from spin (WheelVisualLogic owns wrap/integrate)
         for (var i = 0; i < r.WheelCount; i++)
         {
             var w = Wheel(r, i);
-            w.RollDeg = NormDeg(w.RollDeg + w.SpinRadS * (float)dt * (180f / MathF.PI));
+            w.RollDeg = WheelVisualLogic.IntegrateRollDeg(w.RollDeg, w.SpinRadS, (float)dt);
             SetWheel(ref r, i, w);
         }
     }
@@ -310,14 +310,7 @@ public sealed class StatePlayback
             var wb = i < b.WheelCount ? Wheel(b, i) : wa;
             var spin = Lerp(wa.SpinRadS, wb.SpinRadS, (float)u);
             var susp = Lerp(wa.SuspM, wb.SuspM, (float)u);
-            // integrate spin from A, soft-pull phase toward B (≤ 90°/s)
-            var integrated = NormDeg(wa.RollDeg + spin * dtFromA * (180f / MathF.PI));
-            var target = wb.RollDeg;
-            var err = DeltaDeg(integrated, target);
-            var maxPull = 90f * dtFromA;
-            if (err > maxPull) err = maxPull;
-            if (err < -maxPull) err = -maxPull;
-            var roll = NormDeg(integrated + err);
+            var roll = WheelVisualLogic.SoftPullRoll(wa.RollDeg, wb.RollDeg, spin, dtFromA);
             SetWheel(ref r, i, new CarWire.WheelSample { RollDeg = roll, SpinRadS = spin, SuspM = susp });
         }
     }
@@ -340,12 +333,4 @@ public sealed class StatePlayback
     }
 
     static float Lerp(float a, float b, float u) => a + (b - a) * u;
-    static float NormDeg(float d) { d %= 360f; if (d < 0) d += 360f; return d; }
-    static float DeltaDeg(float from, float to)
-    {
-        var d = to - from;
-        while (d > 180) d -= 360;
-        while (d < -180) d += 360;
-        return d;
-    }
 }

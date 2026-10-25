@@ -4,7 +4,9 @@ using Fusion.Addons.Physics;
 namespace OthLan;
 
 /// <summary>
-/// 0.2.0 T2.1: set Fusion client physics to SimulateForward so resim ticks do not Physics.Simulate the whole scene.
+/// 0.2.0 T2.1: opt-in ClientPhysicsMode=SimulateForward (resim ticks do not Physics.Simulate the scene).
+/// Any other value leaves the game default: with SimulateForward the prediction reset teleports the own car
+/// without stepping contacts/suspension, so it bounces and ignores steering (0.2.3 steer A/B).
 /// </summary>
 internal static class ClientPhysics
 {
@@ -15,22 +17,22 @@ internal static class ClientPhysics
     /// <summary>Main thread: apply once per runner while we are a pure client.</summary>
     public static void Tick()
     {
-        if (LanState.Active != LanRole.Client || LanState.LanRunner == IntPtr.Zero)
+        if (LanState.Active != LanRole.Client || !LanState.InSession)
         {
             if (_appliedRunner != IntPtr.Zero) Reset();
             return;
         }
         try
         {
+            var r = LanState.Runner();
+            if (r == null || !r.IsClient || r.IsServer) return;
             var onr = OverlandNetworkRunner.Instance;
-            var r = onr?.NetworkRunner;
-            if (r == null || r.Pointer != LanState.LanRunner || !r.IsRunning || !r.IsClient || r.IsServer) return;
             if (r.Pointer == _appliedRunner) return;
             var phys = onr.RunnerSimulatePhysics3D;
             if (phys == null) { _appliedRunner = r.Pointer; return; }
 
-            var mode = (Plugin.ClientPhysicsMode?.Value ?? "SimulateForward").Trim();
-            if (string.Equals(mode, "Game", StringComparison.OrdinalIgnoreCase))
+            var mode = Plugin.ClientPhysicsMode?.Value?.Trim();
+            if (!string.Equals(mode, "SimulateForward", StringComparison.OrdinalIgnoreCase))
             {
                 _appliedRunner = r.Pointer;
                 Plugin.L.LogInfo($"[Netcode] client physics: left at game default ({phys.ClientPhysicsSimulation})");

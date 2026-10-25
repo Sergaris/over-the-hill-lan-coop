@@ -115,6 +115,7 @@ internal static class SessionLogs
         try { snap.AppendLine(OwnCar.Describe()); } catch { }
         try { snap.AppendLine(OwnRender.Describe()); } catch { }
         try { snap.AppendLine(OwnLocal.Describe()); } catch { }
+        try { snap.AppendLine(CarRelay.Describe()); } catch { }
         return snap.ToString();
     }
 

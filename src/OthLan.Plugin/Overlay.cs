@@ -1,5 +1,4 @@
 using System;
-using FunCore.Managers;
 using Il2CppInterop.Runtime;
 using UnityEngine;
 
@@ -66,9 +65,9 @@ public class Overlay : MonoBehaviour
             var input = BepInEx.UnityInput.Current;
             if (Plugin.ToggleOverlayKey.Value.IsDown()) { _show = !_show; Plugin.L.LogInfo($"[UI] overlay {(_show ? "shown" : "hidden")}"); }
             if (_show) { Cursor.visible = true; Cursor.lockState = CursorLockMode.None; }
-            if (input.GetKeyDown(KeyCode.F8)) ArmHost();
+            if (input.GetKeyDown(KeyCode.F8)) LanStart.ArmHostFromUi();
             if (input.GetKeyDown(KeyCode.F9)) JoinFlow.Join(_show && !string.IsNullOrWhiteSpace(_join) ? _join : Plugin.JoinAddress.Value);
-            if (input.GetKeyDown(KeyCode.F10)) Disarm();
+            if (input.GetKeyDown(KeyCode.F10)) LanStart.Disarm();
         }
         catch (Exception e) { Plugin.L.LogError($"[UI] {e.Message}"); }
     }
@@ -155,116 +154,136 @@ public class Overlay : MonoBehaviour
             catch (Exception e) { _guiBroken = true; Plugin.L.LogWarning($"[UI] gate dialog unavailable ({e.Message}); answer in F7 is impossible, see cfg Safety.UnverifiedBuildChoices"); }
         }
         if (!_show || _guiBroken) return;
-        try
-        {
-            _join ??= NetInfo.DemoIp != null ? "26.10.20.40:27015" : Plugin.JoinAddress.Value ?? "";
-            var byUser = BuildGate.Outcome == GateLogic.Outcome.DisabledByUser;
-            _rect.height = 430 + Mathf.Max(0, HostFollower.HostStats.Count - 2) * 18 + (byUser ? 32 : 0) + (LanState.Active == LanRole.Client ? 144 : LanState.Active == LanRole.Host ? 54 : 0) + 56
-                + (OffWarnShown() ? 40 : 0);   // client: local + remote + freeze + export; host: export
-            GUI.Box(_rect, Loc.F("f7.title", Plugin.Version));
-            float x = _rect.x + 10, y = _rect.y + 25, w = _rect.width - 20;
-            var gate = BuildGate.Status();
-            GUI.Label(new Rect(x, y, w, 20), LanState.Disabled ? gate : gate.Length > 0 && LanState.Active == LanRole.Off && LanState.Armed == LanRole.Off ? gate : RoleText());
-            y += 22;
-            if (byUser)
-            {
-                if (GUI.Button(new Rect(x, y, w, 26), Loc.T("f7.enableAnyway"))) BuildGate.UserChoice(true, "F7 button");
-                y += 32;
-            }
-            GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.myIp", NetInfo.DisplayIp() ?? Loc.T("f7.ipNotFound"), Plugin.Port.Value, Plugin.PlayerCount.Value));
-            y += 22;
-            GUI.Label(new Rect(x, y, w, 44), NetInfo.Mask(Loc.F("f7.status", LanState.LastStatus)));
-            y += 46;
-            if (GUI.Button(new Rect(x, y, 245, 28), Loc.T("f7.host"))) ArmHost();
-            if (GUI.Button(new Rect(x + 255, y, 245, 28), Loc.T("f7.off"))) Disarm();
-            y += 36;
-            GUI.Label(new Rect(x, y, w, 20), Loc.T("f7.hostAddress"));
-            y += 20;
-            _join = GUI.TextField(new Rect(x, y, 300, 24), _join ?? "");
-            if (GUI.Button(new Rect(x + 310, y, 190, 24), Loc.T("f7.join"))) JoinFlow.Join(_join);
-            y += 30;
-            var same = Loc.T("f7.sameVersions");
-            var sameH = Mathf.Max(20f, GUI.skin.label.CalcHeight(new GUIContent(same), w));   // long translations wrap: no overlap
-            GUI.Label(new Rect(x, y, w, sameH), same);
-            y += sameH + 4;
-            var per = string.Join("  ", System.Linq.Enumerable.Select(PingHud.PerSlotMs, kv => Loc.F("f7.playerPing", kv.Key, double.IsNaN(kv.Value) ? "--" : kv.Value.ToString("0"))));
-            var pingTxt = double.IsNaN(PingHud.SmoothedMs) || PingHud.SmoothedMs <= 0 ? "--" : Loc.F("unit.ms", PingHud.SmoothedMs);
-            var pingNote = PingHud.TimedOut ? "  " + Loc.T("f7.noReply") : PingHud.LossPct >= 1 ? "  " + Loc.F("f7.loss", PingHud.LossPct) : "";
-            GUI.Label(new Rect(x, y, w, 20), LanState.Active == LanRole.Off ? Loc.T("f7.pingOff")
-                : Loc.F("f7.ping", $"{pingTxt}{pingNote}{(LanState.Active == LanRole.Host && per.Length > 0 ? "   (" + per + ")" : "")}"));
-            y += 20;
-            GUI.Label(new Rect(x, y, w, 20), PingHud.FusionCompare.ToString());
-            y += 22;
-            string cs;
-            if (LanState.Active == LanRole.Client) cs = HostFollower.ClientStat.ToString();
-            else if (LanState.Active == LanRole.Host)
-                cs = !CarSync.HostEnabled ? Loc.T("cs.hostOff")
-                   : HostFollower.HostStats.Count == 0 ? Loc.T("cs.hostWaiting")
-                   : string.Join("\n", System.Linq.Enumerable.Select(HostFollower.HostStats.Values, m => m.ToString()));
-            else cs = CarSync.LocalSetting ? Loc.T("cs.willBeOn") : Loc.T("cs.willBeOff");
-            if (string.IsNullOrEmpty(cs)) cs = "--";
-            var csLines = 1 + cs.Split('\n').Length;          // first line wraps after the caption
-            var csH = Mathf.Max(48f, 18f * csLines + 4f);
-            GUI.Label(new Rect(x, y, w, csH), Loc.F("cs.caption", cs));
-            y += csH + 2;
-            if (OffWarnShown())
-            { GUI.Label(new Rect(x, y, w, 40), Loc.T("cs.offWarn")); y += 40; }
-            if (LanState.Active == LanRole.Client)
-            {
-                var hs = CarSync.HostFlag < 0 ? "?" : CarSync.HostFlag == 1 ? Loc.T("common.on") : Loc.T("common.off");
-                var prev = GUI.enabled; GUI.enabled = false;
-                GUI.Button(new Rect(x, y, w, 26), Loc.F("cs.hostControls", hs));
-                GUI.enabled = prev;
-                y += 30;
-                var st = OwnCar.State == "client" ? Loc.T("own.client") : OwnCar.State == "soft" ? Loc.T("own.soft") : OwnCar.State == "suspend" ? Loc.T("own.suspend") : Loc.T("own.none");
-                GUI.Label(new Rect(x, y, w, 20), Loc.F("own.caption", st));
-                y += 20;
-                // 0.1.8.1: the client's own toggle is back (experimental): OwnLocalClock, applied live (OwnLocal.SetEnabled
-                // puts back a pending skipped tick and resets the local clock + render interpolation).
-                if (GUI.Button(new Rect(x, y, w, 26), Plugin.OwnLocalClock.Value ? Loc.T("own.localOn") : Loc.T("own.localOff")))
-                    OwnLocal.SetEnabled(!Plugin.OwnLocalClock.Value, "F7 button");
-                y += 30;
-                // 0.1.9 U0: live A/B for RemoteInterpolate (was cfg-only; TuneProxy ran once per car).
-                if (GUI.Button(new Rect(x, y, w, 26), Plugin.RemoteInterpolate.Value ? Loc.T("own.remoteOn") : Loc.T("own.remoteOff")))
-                    RemoteSmooth.SetInterpolate(!Plugin.RemoteInterpolate.Value, "F7 button");
-                y += 30;
-                if (GUI.Button(new Rect(x, y, w, 26), Plugin.OwnFreezeSmoothing.Value ? Loc.T("own.freezeOn") : Loc.T("own.freezeOff")))
-                    OwnRender.SetEnabled(!Plugin.OwnFreezeSmoothing.Value, "F7 button");
-                y += 30;
-                if (GUI.Button(new Rect(x, y, w, 26), Loc.T("f7.exportDiag")))
-                    Diagnostics.ExportZip("F7 button");
-                y += 30;
-                GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.netStats", NetStats.Gaps.Over500ms, NetStats.InputDropped, NetStats.Own.Over10cm));
-                y += 22;
-            }
-            else
-            {
-                // Turning compensation OFF lands everyone in vanilla Fusion (host-authoritative cars: thrown back by
-                // metres under loss, see DEV-0.1.8-LOG "Moment 15:06"): needs a second click within 4 s.
-                var confirming = CarSync.LocalSetting && Time.unscaledTime < _offConfirmUntil;
-                if (GUI.Button(new Rect(x, y, w, 26), confirming ? Loc.T("cs.confirmOff") : CarSync.LocalSetting ? Loc.T("cs.toggleOn") : Loc.T("cs.toggleOff")))
-                {
-                    if (CarSync.LocalSetting && !confirming) _offConfirmUntil = Time.unscaledTime + 4f;
-                    else { _offConfirmUntil = -1; CarSync.UserToggle("F7 button"); }
-                }
-                if (LanState.Active == LanRole.Host) { y += 30; GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.netStats", "-", "-", NetStats.Own.Over10cm)); }
-                y += 30;
-                if (LanState.Active == LanRole.Host || LanState.Active == LanRole.Off)
-                {
-                    if (GUI.Button(new Rect(x, y, w, 26), Loc.T("f7.exportDiag")))
-                        Diagnostics.ExportZip("F7 button");
-                    y += 30;
-                }
-            }
-            // 0.1.8 updates
-            GUI.Label(new Rect(x, y, w, 20), Loc.F("upd.f7", Updater.StatusMsg()));
-            y += 22;
-            if (GUI.Button(new Rect(x, y, 245, 26), Plugin.UpdateCheck.Value ? Loc.T("upd.toggleOn") : Loc.T("upd.toggleOff")))
-            { Plugin.UpdateCheck.Value = !Plugin.UpdateCheck.Value; Plugin.L.LogInfo($"[Update] check for updates {(Plugin.UpdateCheck.Value ? "on" : "off")} (F7)"); if (!Plugin.UpdateCheck.Value) Updater.State = Updater.St.Off; }
-            if (GUI.Button(new Rect(x + 255, y, 245, 26), Updater.State == Updater.St.Available ? Loc.T("upd.install") : Loc.T("upd.checkNow")))
-            { if (Updater.State == Updater.St.Available) Updater.Install(); else Updater.CheckNow(); }
-        }
+        try { DrawF7(); }
         catch (Exception e) { _guiBroken = true; Plugin.L.LogWarning($"[UI] IMGUI unavailable ({e.Message}); use F8/F9/F10 + config"); }
+    }
+
+    void DrawF7()
+    {
+        _join ??= NetInfo.DemoIp != null ? "26.10.20.40:27015" : Plugin.JoinAddress.Value ?? "";
+        var byUser = BuildGate.Outcome == GateLogic.Outcome.DisabledByUser;
+        _rect.height = 430 + Mathf.Max(0, HostFollower.HostStats.Count - 2) * 18 + (byUser ? 32 : 0) + (LanState.Active == LanRole.Client ? 144 : LanState.Active == LanRole.Host ? 54 : 0) + 56
+            + (OffWarnShown() ? 40 : 0);
+        GUI.Box(_rect, Loc.F("f7.title", Plugin.Version));
+        float x = _rect.x + 10, y = _rect.y + 25, w = _rect.width - 20;
+        DrawF7Header(ref x, ref y, w, byUser);
+        DrawF7Session(ref x, ref y, w);
+        if (LanState.Active == LanRole.Client) DrawF7Client(ref x, ref y, w);
+        else DrawF7Host(ref x, ref y, w);
+        DrawF7Updater(ref x, ref y, w);
+    }
+
+    void DrawF7Header(ref float x, ref float y, float w, bool byUser)
+    {
+        var gate = BuildGate.Status();
+        GUI.Label(new Rect(x, y, w, 20), LanState.Disabled ? gate : gate.Length > 0 && LanState.Active == LanRole.Off && LanState.Armed == LanRole.Off ? gate : RoleText());
+        y += 22;
+        if (byUser)
+        {
+            if (GUI.Button(new Rect(x, y, w, 26), Loc.T("f7.enableAnyway"))) BuildGate.UserChoice(true, "F7 button");
+            y += 32;
+        }
+        GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.myIp", NetInfo.DisplayIp() ?? Loc.T("f7.ipNotFound"), Plugin.Port.Value, Plugin.PlayerCount.Value));
+        y += 22;
+        GUI.Label(new Rect(x, y, w, 44), NetInfo.Mask(Loc.F("f7.status", LanState.LastStatus)));
+        y += 46;
+        if (GUI.Button(new Rect(x, y, 245, 28), Loc.T("f7.host"))) LanStart.ArmHostFromUi();
+        if (GUI.Button(new Rect(x + 255, y, 245, 28), Loc.T("f7.off"))) LanStart.Disarm();
+        y += 36;
+        GUI.Label(new Rect(x, y, w, 20), Loc.T("f7.hostAddress"));
+        y += 20;
+        _join = GUI.TextField(new Rect(x, y, 300, 24), _join ?? "");
+        if (GUI.Button(new Rect(x + 310, y, 190, 24), Loc.T("f7.join"))) JoinFlow.Join(_join);
+        y += 30;
+        var same = Loc.T("f7.sameVersions");
+        var sameH = Mathf.Max(20f, GUI.skin.label.CalcHeight(new GUIContent(same), w));
+        GUI.Label(new Rect(x, y, w, sameH), same);
+        y += sameH + 4;
+    }
+
+    void DrawF7Session(ref float x, ref float y, float w)
+    {
+        var per = string.Join("  ", System.Linq.Enumerable.Select(PingHud.PerSlotMs, kv => Loc.F("f7.playerPing", kv.Key, double.IsNaN(kv.Value) ? "--" : kv.Value.ToString("0"))));
+        var pingTxt = double.IsNaN(PingHud.SmoothedMs) || PingHud.SmoothedMs <= 0 ? "--" : Loc.F("unit.ms", PingHud.SmoothedMs);
+        var pingNote = PingHud.TimedOut ? "  " + Loc.T("f7.noReply") : PingHud.LossPct >= 1 ? "  " + Loc.F("f7.loss", PingHud.LossPct) : "";
+        GUI.Label(new Rect(x, y, w, 20), LanState.Active == LanRole.Off ? Loc.T("f7.pingOff")
+            : Loc.F("f7.ping", $"{pingTxt}{pingNote}{(LanState.Active == LanRole.Host && per.Length > 0 ? "   (" + per + ")" : "")}"));
+        y += 20;
+        GUI.Label(new Rect(x, y, w, 20), PingHud.FusionCompare.ToString());
+        y += 22;
+        string cs;
+        if (LanState.Active == LanRole.Client) cs = HostFollower.ClientStat.ToString();
+        else if (LanState.Active == LanRole.Host)
+            cs = !CarSync.HostEnabled ? Loc.T("cs.hostOff")
+               : HostFollower.HostStats.Count == 0 ? Loc.T("cs.hostWaiting")
+               : string.Join("\n", System.Linq.Enumerable.Select(HostFollower.HostStats.Values, m => m.ToString()));
+        else cs = CarSync.LocalSetting ? Loc.T("cs.willBeOn") : Loc.T("cs.willBeOff");
+        if (string.IsNullOrEmpty(cs)) cs = "--";
+        var csH = Mathf.Max(48f, 18f * (1 + cs.Split('\n').Length) + 4f);
+        GUI.Label(new Rect(x, y, w, csH), Loc.F("cs.caption", cs));
+        y += csH + 2;
+        if (OffWarnShown()) { GUI.Label(new Rect(x, y, w, 40), Loc.T("cs.offWarn")); y += 40; }
+    }
+
+    void DrawF7Client(ref float x, ref float y, float w)
+    {
+        var hs = CarSync.HostFlag < 0 ? "?" : CarSync.HostFlag == 1 ? Loc.T("common.on") : Loc.T("common.off");
+        var prev = GUI.enabled; GUI.enabled = false;
+        GUI.Button(new Rect(x, y, w, 26), Loc.F("cs.hostControls", hs));
+        GUI.enabled = prev;
+        y += 30;
+        var st = OwnCar.State == "client" ? Loc.T("own.client") : OwnCar.State == "soft" ? Loc.T("own.soft") : OwnCar.State == "suspend" ? Loc.T("own.suspend") : Loc.T("own.none");
+        GUI.Label(new Rect(x, y, w, 20), Loc.F("own.caption", st));
+        y += 20;
+        if (GUI.Button(new Rect(x, y, w, 26), Plugin.OwnLocalClock.Value ? Loc.T("own.localOn") : Loc.T("own.localOff")))
+            OwnLocal.SetEnabled(!Plugin.OwnLocalClock.Value, "F7 button");
+        y += 30;
+        if (GUI.Button(new Rect(x, y, w, 26), Plugin.RemoteInterpolate.Value ? Loc.T("own.remoteOn") : Loc.T("own.remoteOff")))
+            RemoteSmooth.SetInterpolate(!Plugin.RemoteInterpolate.Value, "F7 button");
+        y += 30;
+        if (GUI.Button(new Rect(x, y, w, 26), Plugin.OwnFreezeSmoothing.Value ? Loc.T("own.freezeOn") : Loc.T("own.freezeOff")))
+            OwnRender.SetEnabled(!Plugin.OwnFreezeSmoothing.Value, "F7 button");
+        y += 30;
+        if (GUI.Button(new Rect(x, y, w, 26), Loc.T("f7.exportDiag")))
+            Diagnostics.ExportZip("F7 button");
+        y += 30;
+        GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.netStats", NetStats.Gaps.Over500ms, NetStats.InputDropped, NetStats.Own.Over10cm));
+        y += 22;
+    }
+
+    void DrawF7Host(ref float x, ref float y, float w)
+    {
+        var confirming = CarSync.LocalSetting && Time.unscaledTime < _offConfirmUntil;
+        if (GUI.Button(new Rect(x, y, w, 26), confirming ? Loc.T("cs.confirmOff") : CarSync.LocalSetting ? Loc.T("cs.toggleOn") : Loc.T("cs.toggleOff")))
+        {
+            if (CarSync.LocalSetting && !confirming) _offConfirmUntil = Time.unscaledTime + 4f;
+            else { _offConfirmUntil = -1; CarSync.UserToggle("F7 button"); }
+        }
+        if (LanState.Active == LanRole.Host) { y += 30; GUI.Label(new Rect(x, y, w, 20), Loc.F("f7.netStats", "-", "-", NetStats.Own.Over10cm)); }
+        y += 30;
+        if (LanState.Active == LanRole.Host || LanState.Active == LanRole.Off)
+        {
+            if (GUI.Button(new Rect(x, y, w, 26), Loc.T("f7.exportDiag")))
+                Diagnostics.ExportZip("F7 button");
+            y += 30;
+        }
+    }
+
+    void DrawF7Updater(ref float x, ref float y, float w)
+    {
+        GUI.Label(new Rect(x, y, w, 20), Loc.F("upd.f7", Updater.StatusMsg()));
+        y += 22;
+        if (GUI.Button(new Rect(x, y, 245, 26), Plugin.UpdateCheck.Value ? Loc.T("upd.toggleOn") : Loc.T("upd.toggleOff")))
+        {
+            Plugin.UpdateCheck.Value = !Plugin.UpdateCheck.Value;
+            Plugin.L.LogInfo($"[Update] check for updates {(Plugin.UpdateCheck.Value ? "on" : "off")} (F7)");
+            if (!Plugin.UpdateCheck.Value) Updater.State = Updater.St.Off;
+        }
+        if (GUI.Button(new Rect(x + 255, y, 245, 26), Updater.State == Updater.St.Available ? Loc.T("upd.install") : Loc.T("upd.checkNow")))
+        {
+            if (Updater.State == Updater.St.Available) Updater.Install();
+            else Updater.CheckNow();
+        }
     }
 
     /// <summary>One-time warning for a game build that is not in the manifest but passed the code/layout checks.</summary>
@@ -299,92 +318,6 @@ public class Overlay : MonoBehaviour
         return Loc.T("role.off");
     }
 
-    /// <summary>AreaInfo ScriptableObject by asset name (null name = first loaded).
-    /// 0.1.8 (bug: "the host is on R1A3_Ridge, which you do not have (you have: )"): only AreaInfos already in memory were
-    /// searched; they are loaded when the game's server browser / area selection was opened. A client joining from our
-    /// Local Co-op screen right after start had none. The game's own resolver (BenchmarkBootRunner.ResolveArea: loads the
-    /// RegionsList addressable and looks the name up) used to be a self-test-only fallback, which is why the self-tests
-    /// passed. It is now always used.</summary>
-    internal static AreaInfo FindArea(string name, out string available)
-    {
-        var names = new System.Collections.Generic.List<string>();
-        AreaInfo first = null, hit = null;
-        void Scan()
-        {
-            names.Clear(); first = null; hit = null;
-            foreach (var a in Resources.FindObjectsOfTypeAll<AreaInfo>())
-            {
-                if (a == null) continue;
-                names.Add(a.name);
-                first ??= a;
-                if (!string.IsNullOrEmpty(name) && a.name == name) hit = a;
-            }
-        }
-        Scan();
-        var res = string.IsNullOrEmpty(name) ? first : hit;
-        if (res == null)
-        {
-            var want = string.IsNullOrEmpty(name) ? (Autopilot.Active ? Autopilot.Area : null) : name;
-            try
-            {
-                if (want != null)
-                {
-                    var m = typeof(BenchmarkBootRunner).GetMethod("ResolveArea", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-                    res = (AreaInfo)m.Invoke(null, new object[] { want });
-                    Plugin.L.LogInfo($"[LAN] area '{want}' not loaded yet: the game's resolver (RegionsList) -> {(res != null ? res.name : "null")}");
-                }
-            }
-            catch (Exception e) { Plugin.L.LogError($"[LAN] ResolveArea('{want}'): {e}"); }
-            if (res == null) Scan();   // the resolver loaded the regions list: report what exists now
-        }
-        available = names.Count > 0 ? string.Join(", ", names) : "-";
-        return res;
-    }
-
-    static void ArmHost()
-    {
-        if (LanState.Disabled) { LanState.SetStatus(BuildGate.StatusMsg()); Show(); return; }
-        LanState.Armed = LanRole.Host; LanState.HostPlayers = 0;
-        LanState.Status("status.armedHost", $"{NetInfo.DisplayIp() ?? "<IP>"}:{Plugin.Port.Value}");
-        Plugin.L.LogInfo("[LAN] " + LanState.LastStatus.En());
-        Show();
-    }
-
-    static void Disarm()
-    {
-        LanState.Armed = LanRole.Off; JoinFlow.Cancel(); HostInfo.Clear();
-        LanState.Status("status.off");
-        Plugin.L.LogInfo("[LAN] disarmed");
-    }
-
-    /// <summary>Starts the game's own StateStartGame flow with a minimal, valid GameSetupContext.</summary>
-    internal static void PushStart(Fusion.GameMode mode, string roomName, AreaInfo area)
-    {
-        var onr = OverlandNetworkRunner.Instance ?? throw new InvalidOperationException("game network runner not ready (wait for the main menu)");
-        if (area == null) throw new InvalidOperationException("no AreaInfo loaded yet (wait for the main menu)");
-        string region = null;
-        try { region = onr.ConnectedRegion; }
-        catch (Exception e) { Plugin.L.LogWarning($"[LAN] ConnectedRegion unavailable ({e.GetType().Name}); using none"); }
-        var ctx = new GameSetupContext
-        {
-            GameMode = mode,
-            RoomName = roomName,
-            RoomCode = "",
-            ServerRegion = region,  // equal region => no ChangeLobbyRegion round-trip
-            MaxPlayers = LanState.EffectivePlayers,
-            // StartGameAsync dereferences both (AreaInfo.sceneReference + inventory check; RoomProperties in
-            // GetSessionProperties): null => NullReferenceException and a stuck UI (seen in v0.1.0).
-            // 0.1.8: the game's own mods flag (OverlandNetworkRunner.ModsAllowed reads it; false = "mods are disabled in
-            // this session"). Host: [LocalCoop] AllowMods; client: the host's value from its session properties.
-            RoomProperties = new OverlandRoomProperties { AllowMods = mode == Fusion.GameMode.Client ? JoinFlow.AllowMods : Plugin.AllowMods.Value },
-            AreaInfo = area,
-        };
-        Plugin.L.LogInfo($"[LAN] start ctx built");
-        Plugin.L.LogInfo($"[LAN] start ctx: mode={mode} area={area.name} players={LanState.EffectivePlayers} region={ctx.ServerRegion ?? "null"} allowMods={ctx.RoomProperties.AllowMods}");
-        JoinFlow.BeginWatch(mode == Fusion.GameMode.Client ? LanRole.Client : LanRole.Host);
-        HybridSingleton<GameStateManager>.Instance.PushState(new StateStartGame(ctx));
-    }
-
     // ---------- dev ----------
     public static void RearmAutoTestForRejoin() { if (_inst != null) { _inst._autoDone = false; _inst._instTried = false; _inst._instReadyAt = Time.realtimeSinceStartup + 15f; } }
     bool _autoDone, _instTried;
@@ -397,7 +330,6 @@ public class Overlay : MonoBehaviour
         if (Time.realtimeSinceStartup < delay) return;
         if (OverlandNetworkRunner.Instance == null)
         {
-            // Vanilla creates the runner when the server browser opens; an unattended instance never gets there.
             if (Autopilot.Active && !_instTried)
             {
                 _instTried = true;
@@ -407,12 +339,16 @@ public class Overlay : MonoBehaviour
             return;
         }
         if (Autopilot.Active && Time.realtimeSinceStartup < _instReadyAt) return;
-        if (Autopilot.Active && _instReadyAt == 0) { _instReadyAt = Time.realtimeSinceStartup + 5f; return; }   // let it settle
+        if (Autopilot.Active && _instReadyAt == 0) { _instReadyAt = Time.realtimeSinceStartup + 5f; return; }
         _autoDone = true;
         Plugin.L.LogWarning($"[AutoTest] Debug.AutoTest={mode}: starting without user input (dev only)");
         try
         {
-            if (mode == "host") { ArmHost(); PushStart(Fusion.GameMode.Host, "LAN host autotest", FindArea(Plugin.JoinArea.Value, out _)); }
+            if (mode == "host")
+            {
+                LanStart.ArmHostFromUi();
+                LanStart.PushStart(Fusion.GameMode.Host, "LAN host autotest", LanStart.FindArea(Plugin.JoinArea.Value, out _));
+            }
             else if (mode.StartsWith("join:")) JoinFlow.Join(mode.Substring(5));
         }
         catch (Exception e) { Plugin.L.LogError($"[AutoTest] {e}"); JoinFlow.Cancel(); }

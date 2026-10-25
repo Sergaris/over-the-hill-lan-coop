@@ -27,11 +27,31 @@ comes from type layouts, interfaces, the disassembly with `tools/disasm.py`, and
 
 Up to 0.1.4, nothing about movement: only transport (direct UDP instead of Photon relay), local PlayerRefs and area info.
 
-0.1.5 adds two things:
-- **Ping indicator**: on by default, display only.
-- **CarSync**: **on by default** since 2026-10-21 08:04 (was off). Toggle in F7; the host's setting governs the session.
+0.1.5–0.1.9: **CarSync** side channel (`OTP2` poses) + OwnCar / OwnLocal / OwnRender / RemoteSmooth (see §3 historical and
+`docs/NETCODE-v4-LOCAL-OWN-CAR.md`).
 
-## 3. CarSync design (user requirements, 2026-10-21)
+**0.2.x (current):** movement sync is rebuilt around an explicit car-state stream. Switch remains one host-owned
+`[CarSync] Enabled` (F7). Defaults from `docs/DEV-0.2.0-PLAN.md` D-1/D-2/D-3:
+`ClientPhysicsMode=Game` (T2.1 `SimulateForward` reverted by migration v9: own car bounced), `ContactAuthority=Owner`, `WorldWinchAuthority=Owner`, `ProxyBody=Kinematic`,
+`OwnLocalClock` kept on (T2.4).
+
+| Piece | Owner | Role |
+|---|---|---|
+| `CarWire` / `OTC3` | Logic | Pose + wheels + flags + redundant history (≤3 states) |
+| `CarStreamSender` | both | Sample own car → UDP / host inject |
+| `CarRelay` + `RelayLogic` | host (+ client recv) | Accept/relay OTC3; feed `StatePlayback` |
+| `StatePlayback` | Logic | Jitter delay, Hermite, epoch snap, capped extrap |
+| `HostFollower` | host | Physical proxy of each client car (servo / recovery); still also consumes legacy `OTP2` until T3.8 |
+| `RemoteCarView` + `RemoteWheelVisuals` | observers | Draw remotes from stream; kinematic/servo body (T4.0) |
+| `InteractionLogic` | both | Owner contact; HostShared for car winch (optional world winch) |
+| `SyncProbe` / `tools/sync_compare.py` | both / offline | `[Sync] slot=… seq=… pos=(…)` ring dump for D-1 LIVE (§5.5) |
+
+`OTP2` (`CarSyncLogic` encode/decode) still runs in parallel until **T3.8** (after LIVE §5.1). Do not treat `OTP2` as the
+primary remote-view path in 0.2.x.
+
+## 3. Historical CarSync design (0.1.5–0.1.9, `OTP2`)
+
+Kept for archaeology and for the temporary dual-path period. New work should use §2 / OTC3.
 
 - The client is authoritative for its own car. It sends its pose (pos, rot, vel, angVel, seq, Fusion tick) to the host on UDP Port+1 at `SendHz` (20), packet `OTP2` (69 bytes).
 - The host applies it to that car's rigidbody. Because the host has State Authority, the result replicates to all other players through Fusion's normal interpolation; that is the smoothing "for others". The host never sends its own corrections.

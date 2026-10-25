@@ -194,7 +194,7 @@ internal static class JoinFlow
 
     static void FinishClientJoin(string ip, ushort port, string areaName)
     {
-        var area = Overlay.FindArea(areaName, out var avail);
+        var area = LanStart.FindArea(areaName, out var avail);
         if (area == null)
         {
             LanState.Status("status.noSuchArea", areaName, avail);
@@ -205,7 +205,7 @@ internal static class JoinFlow
         LanState.Armed = LanRole.Client;
         try
         {
-            Overlay.PushStart(Fusion.GameMode.Client, $"LAN {ip}:{port}", area);
+            LanStart.PushStart(Fusion.GameMode.Client, $"LAN {ip}:{port}", area);
             LanState.Status("status.joining", $"{ip}:{port}", area.name);
             Plugin.L.LogInfo("[LAN] " + LanState.LastStatus.En());
             // World start is imminent: close F7 even if the user had it open to click Join.

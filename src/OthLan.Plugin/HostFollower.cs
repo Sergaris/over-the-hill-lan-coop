@@ -11,6 +11,7 @@ namespace OthLan;
 /// 0.2.2 T5.1: physical proxy of a client car on the host.
 /// Fresh OTC3 → <see cref="CarRelay.PlaybackOf"/> <c>SampleAt(now, delayOverride: 0)</c>
 /// (freshness is <see cref="RemoteCarView.HasFreshStream"/>). Otherwise PosePlayback / OTP2, until T3.8.
+/// Winch pause / <c>FlagSuspendWinch</c> only when <see cref="InteractionLogic.WantShared"/> (T4.2).
 /// Servo length stays in <see cref="HostFollowLogic.ServoSpeed"/>.
 /// </summary>
 internal static class HostFollower
@@ -82,7 +83,6 @@ internal static class HostFollower
     static readonly Dictionary<int, (double at, int n)> _snapStreak = new();
     static readonly List<SlotWork> _work = new();
     static readonly Drive _drv = new();
-    static readonly System.Diagnostics.Stopwatch Clock = System.Diagnostics.Stopwatch.StartNew();
     static FusionPlayer[] _players = Array.Empty<FusionPlayer>();
     static VehicleWinchSystem[] _winches = Array.Empty<VehicleWinchSystem>();
     static float _nextScan, _nextSend;
@@ -91,7 +91,7 @@ internal static class HostFollower
     /// <summary>Frame tick: legacy OTP2 send on a client, host follow on the host.</summary>
     public static void Tick()
     {
-        var r = LanRunner();
+        var r = LanState.Runner();
         if (r == null) { CarSync.NoteNoRunner(); Reset(); return; }
         if (!CarSync.Enabled)
         {
@@ -115,8 +115,9 @@ internal static class HostFollower
         PlaybackOk = PlaybackExtraps = 0;
         _out.Clear();
         _mode.Clear(); _lastCheckpoint.Clear(); _softUntil.Clear(); _lastContact.Clear(); _lastHost.Clear();
-        _selfMoveUntil.Clear(); _jumpHoldUntil.Clear(); HostStats.Clear(); Metrics.Clear(); LastAction.Clear();
+        _selfMoveUntil.Clear(); _jumpHoldUntil.Clear(); HostStats.Clear(); Metrics.Clear(); LastAction.Clear(); _winchTags.Clear();
     }
+    static readonly Dictionary<int, string> _winchTags = new();
 
     /// <summary>Network thread (HostInfo): OTP2 pose, until T3.8.</summary>
     public static void OnPosePacket(byte[] data, IPEndPoint from)
@@ -125,7 +126,7 @@ internal static class HostFollower
         if (!CarSyncLogic.TryDecode(data, out var p)) return;
         var ep = HostPings.EndpointOf(p.Slot);
         if (ep == null || !ep.Equals(from)) { PosesRejected++; return; }
-        var now = Clock.Elapsed.TotalSeconds;
+        var now = NetClock.Now;
         lock (_lock)
         {
             if (_poses.TryGetValue(p.Slot, out var l) && !CarSyncLogic.AcceptSeq(p.Seq, l.Pose.Seq, now - l.ReceivedAt)) return;
@@ -194,13 +195,6 @@ internal static class HostFollower
         });
     }
 
-    static NetworkRunner LanRunner()
-    {
-        if (LanState.Active == LanRole.Off || LanState.LanRunner == IntPtr.Zero) return null;
-        var r = OverlandNetworkRunner.Instance?.NetworkRunner;
-        return r != null && r.Pointer == LanState.LanRunner && r.IsRunning ? r : null;
-    }
-
     static void Scan(float now)
     {
         if (now < _nextScan) return;
@@ -209,11 +203,15 @@ internal static class HostFollower
         var w = new VehicleWinchSystem[_players.Length];
         for (int i = 0; i < _players.Length; i++)
         {
-            try { var fp = _players[i]; if (fp != null) w[i] = fp.GetComponentInChildren<VehicleWinchSystem>() ?? fp.GetComponentInParent<VehicleWinchSystem>(); }
+            try { w[i] = WinchOf(_players[i]); }
             catch { w[i] = null; }
         }
         _winches = w;
     }
+
+    /// <summary>The winch of a player car (it may sit on a child or a parent object), or null.</summary>
+    public static VehicleWinchSystem WinchOf(FusionPlayer fp) =>
+        fp == null ? null : fp.GetComponentInChildren<VehicleWinchSystem>() ?? fp.GetComponentInParent<VehicleWinchSystem>();
 
     static void ClientSend(NetworkRunner r, float now)
     {
@@ -243,7 +241,7 @@ internal static class HostFollower
     {
         var cfg = Cfg();
         var ocfg = OCfg();
-        var nowS = Clock.Elapsed.TotalSeconds;
+        var nowS = NetClock.Now;
         var dt = Time.unscaledDeltaTime;
         Collect(nowS);
         if (_work.Count == 0) return;
@@ -311,7 +309,18 @@ internal static class HostFollower
         RememberTrace(d);
         PublishMetrics(d, cfg);
         if (HoldJump(d)) return;
-        d.Winch = WinchInvolved(d.Car, d.Pref);
+        // T4.2: pause follow + FlagSuspendWinch only when InteractionLogic wants HostShared (car tow,
+        // or world winch with WorldWinchAuthority=Host). World+Owner keeps stream follow (D-1).
+        var winchKind = WinchKindOf(d.Car, d.Pref, out var winchSlot);
+        var winchTag = WinchKindLogic.LogTag(winchKind, winchSlot);
+        var wasTag = _winchTags.TryGetValue(d.Slot, out var wt) ? wt : "none";
+        if (wasTag != winchTag)
+        {
+            _winchTags[d.Slot] = winchTag;
+            Plugin.L.LogInfo($"[CarSync] slot {d.Slot} winch: {wasTag} -> {winchTag}");
+        }
+        d.Winch = Plugin.SuspendOnWinch.Value
+            && InteractionLogic.WantShared(false, false, winchKind, WinchKindLogic.Kind.None, OwnCar.InteractCfg());
         ArmContact(d);
         if (ApplyOutage(d, ocfg, hostTick, tickDt)) return;
         if (ApplyRecovery(d, ocfg)) return;
@@ -382,7 +391,8 @@ internal static class HostFollower
         if (!RemoteCarView.HasFreshStream(slot, now)) return false;
         var pb = CarRelay.PlaybackOf(slot);
         var s = pb.SampleAt(now, delayOverride: 0);
-        if (!s.Ok || s.Stale) return false;
+        // Fresh arrival but past MaxExtrap → still hold OTC3 (vel already 0) instead of falling back to OTP2.
+        if (!s.Ok) return false;
         g.Target = new Vector3(s.Px, s.Py, s.Pz);
         g.Rot = new Quaternion(s.Qx, s.Qy, s.Qz, s.Qw);
         g.Vel = new Vector3(s.Vx, s.Vy, s.Vz);
@@ -664,7 +674,8 @@ internal static class HostFollower
         var wc = Vector3.zero;
         if (!float.IsNaN(axis.x) && Mathf.Abs(qang) > 0.01f)
         {
-            var rad = qang * Mathf.Deg2Rad; var ws = Mathf.Min(Mathf.Abs(rad) / Plugin.CarServoTau.Value, Plugin.CarServoMaxTurn.Value);
+            var rad = qang * Mathf.Deg2Rad;
+            var ws = (float)HostFollowLogic.ServoAngSpeed(Math.Abs(rad), Plugin.CarServoTau.Value, Plugin.CarServoMaxTurn.Value);
             wc = axis * (Mathf.Sign(rad) * ws);
         }
         rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, ang + wc, kv);

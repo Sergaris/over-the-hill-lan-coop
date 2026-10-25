@@ -194,6 +194,10 @@ static class Program
         Eq(OwnCarLogic.TakeHostPose(30, 1, 25, 4), false, "own: 30 m right after a gap -> keep ours (host converges)");
         Eq(OwnCarLogic.TakeHostPose(10, 100, 25, 4), false, "own: 10 m -> keep ours (0.1.7 took it after 3 s)");
         Eq(OwnCarLogic.TakeHostPose(5, 100, 25, 4), false, "own: 5 m -> keep ours");
+        Eq(OwnCarLogic.CountOwnCorrection(false, false, false), false, "own corr: pre-phase2 skipped");
+        Eq(OwnCarLogic.CountOwnCorrection(true, true, false), false, "own corr: Restore() invisible — skip");
+        Eq(OwnCarLogic.CountOwnCorrection(true, false, true), false, "own corr: spawn transition sample skipped");
+        Eq(OwnCarLogic.CountOwnCorrection(true, false, false), true, "own corr: accept-window / kept host pose counted");
         // input buffer: 8 s at 50 Hz = 400, never below the game's
         Eq(OwnCarLogic.InputCapacity(8, 50, 50), 400, "input buffer 8 s @50 Hz");
         Eq(OwnCarLogic.InputCapacity(0, 50, 50), 50, "input buffer 0 = game default");
@@ -631,6 +635,7 @@ static class Program
         WheelSpin();
         UiModal();
         WinchKind();
+        ParkLogicTests();
         CarWireTests();
         StatePlaybackTests();
         RelayLogicTests();
@@ -641,6 +646,10 @@ static class Program
         SessionNotifyEdges();
         ReleaseGate023();
         WireEdges023();
+        SyncProbe();
+        StreamSyncInvariant();
+        AcceptMetrics();
+        WheelVisual();
         Console.WriteLine($"{total - fails}/{total} checks passed");
         return fails == 0 ? 0 : 1;
     }
@@ -650,6 +659,7 @@ static class Program
         Eq(RelayLogic.Filter(2, true, true), RelayLogic.Decision.Accept, "relay: match accept");
         Eq(RelayLogic.Filter(2, true, false), RelayLogic.Decision.DropWrongSlot, "relay: wrong ep");
         Eq(RelayLogic.Filter(2, false, false), RelayLogic.Decision.DropUnknownPeer, "relay: unknown");
+        Eq(RelayLogic.Filter(2, false, true), RelayLogic.Decision.DropUnknownPeer, "relay: unknown even if fromMatches");
         Eq(RelayLogic.Filter(CarSyncLogic.HostSlot, true, true), RelayLogic.Decision.DropWrongSlot, "relay: host slot over UDP");
     }
 
@@ -710,8 +720,12 @@ static class Program
         var lastSend = 19 / 30.0;
         var mid = pb.SampleAt(lastSend + 0.05 + 0.05 + 0.15); // within extrap
         Eq(mid.Ok && mid.Extrapolated, true, "statepb: extrap after gap");
+        Eq(Math.Abs(mid.Vx - 5) < 1e-3f, true, $"statepb: extrap keeps sample vel ({mid.Vx})");
         var held = pb.SampleAt(lastSend + 0.05 + 0.05 + 0.5);
         Eq(held.Ok && held.Stale && !held.Extrapolated, true, "statepb: stale hold after MaxExtrap");
+        Eq(held.Vx == 0 && held.Vy == 0 && held.Vz == 0, true, $"statepb: stale vel 0 (got {held.Vx},{held.Vy},{held.Vz})");
+        Eq(held.Wx == 0 && held.Wy == 0 && held.Wz == 0, true, "statepb: stale angVel 0");
+        Eq(Math.Abs(held.Px - 5 * (float)lastSend) < 1e-3f, true, $"statepb: stale hold pose ({held.Px})");
 
         // fall then stop: y floor
         pb = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0.02, MaxDelayS = 0.05, DelayEwma = 1, MaxExtrapS = 0.25, MaxBelowNewestM = 0.5 });
@@ -806,6 +820,14 @@ static class Program
         Eq(Math.Abs(r.Px - 1) < 1e-5 && Math.Abs(r.Py - 2) < 1e-5 && Math.Abs(r.Pz - 3) < 1e-5, true, "carwire: pos");
         Eq(Math.Abs(r.SteerDeg - 45f) < 0.02f, true, $"carwire: steer ({r.SteerDeg})");
         Eq(r.Flags, (byte)(CarWire.FlagHeadlights | CarWire.FlagEngineOn), "carwire: flags");
+        // T3.6 light bits survive the wire (FlagHandbrake reserved, unused by observer)
+        var lightFlags = (byte)(CarWire.FlagBrake | CarWire.FlagReverse | CarWire.FlagAirborne | CarWire.FlagEngineOn);
+        s.Flags = lightFlags;
+        p.SetState(0, s);
+        n = CarWire.Encode(p, buf);
+        Eq(CarWire.TryDecode(buf.AsSpan(0, n), out d) && d.S0.Flags == lightFlags, true, "carwire: brake+reverse+airborne flags");
+        Eq((d.S0.Flags & CarWire.FlagReverse) != 0, true, "carwire: FlagReverse bit");
+        Eq((d.S0.Flags & CarWire.FlagBrake) != 0, true, "carwire: FlagBrake bit");
         Eq(r.WheelCount, (byte)4, "carwire: wheels");
         Eq(Math.Abs(r.W0.SpinRadS - 12.5f) < 0.06f, true, $"carwire: spin0 ({r.W0.SpinRadS})");
         Eq(Math.Abs(r.W3.SpinRadS - 1600f) < 0.1f, true, $"carwire: spin clip edge ({r.W3.SpinRadS})");
@@ -849,6 +871,26 @@ static class Program
         Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.World), "world", "winch: tag world");
         Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.Car, 2), "car:2", "winch: tag car slot");
         Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.None), "none", "winch: tag none");
+    }
+
+    // ---------- 0.2.4 host parks idle driverless cars ----------
+    static void ParkLogicTests()
+    {
+        const float wake = 60f;
+        Eq(ParkLogic.IsStill(0.01f, 0.01f), true, "park: still");
+        Eq(ParkLogic.IsStill(0.2f, 0.01f), false, "park: rolling is not still");
+        Eq(ParkLogic.IsStill(0.01f, 0.2f), false, "park: spinning is not still");
+        Eq(ParkLogic.WakeDistance(0f), ParkLogic.MinWakeM, "park: wake distance floor");
+        Eq(ParkLogic.WakeDistance(50f), 50f + ParkLogic.ReachMarginM, "park: wake distance = reach + margin");
+        Eq(ParkLogic.WakeDistance(float.NaN), ParkLogic.MinWakeM, "park: NaN reach -> floor");
+        Eq(ParkLogic.Decide(false, ParkLogic.ParkAfterS, 500f, wake), ParkLogic.Act.Park, "park: still long enough, far -> park");
+        Eq(ParkLogic.Decide(false, ParkLogic.ParkAfterS - 0.1f, 500f, wake), ParkLogic.Act.Keep, "park: not still long enough");
+        Eq(ParkLogic.Decide(false, 10f, wake + 5f, wake), ParkLogic.Act.Keep, "park: inside hysteresis band stays awake");
+        Eq(ParkLogic.Decide(false, 10f, float.PositiveInfinity, wake), ParkLogic.Act.Park, "park: no player cars -> park");
+        Eq(ParkLogic.Decide(true, 0f, wake - 1f, wake), ParkLogic.Act.Wake, "park: player within reach wakes");
+        Eq(ParkLogic.Decide(true, 0f, wake + 5f, wake), ParkLogic.Act.Keep, "park: parked in hysteresis band stays parked");
+        Eq(ParkLogic.Decide(true, 0f, float.NaN, wake), ParkLogic.Act.Wake, "park: NaN distance wakes");
+        Eq(ParkLogic.Decide(false, 10f, float.NaN, wake), ParkLogic.Act.Keep, "park: NaN distance never parks");
     }
 
     // ---------- 0.2.0 T1.3 single modal slot ----------
@@ -1139,6 +1181,14 @@ static class Program
         Eq(HostFollowLogic.ServoSpeed(0, 0.1, 10, 0, 5), 0, "servo: on target");
         Eq(HostFollowLogic.ServoSpeed(1, 0.1, 10, 0, 0), 10, "servo: 1m/0.1s = 10");
         Eq(HostFollowLogic.ServoSpeed(5, 0.1, 10, 0, 0), 10, "servo: cap 10");
+        Eq(HostFollowLogic.ServoSpeed(1, 0, 10, 0, 5), 0, "servo: tau 0 → 0");
+        Eq(HostFollowLogic.ServoSpeed(1, -0.1, 10, 0, 5), 0, "servo: tau neg → 0");
+        Eq(HostFollowLogic.ServoSpeed(1, 0.1, 10, 0.5, -20), 10, "servo: neg clientSpeed ignored in cap");
+        Eq(HostFollowLogic.ServoAngSpeed(0.2, 0.1, 3), 2.0, "servo-ang: 0.2rad/0.1s = 2");
+        Eq(HostFollowLogic.ServoAngSpeed(1.0, 0.1, 3), 3.0, "servo-ang: capped at 3");
+        Eq(HostFollowLogic.ServoAngSpeed(0, 0.1, 3), 0, "servo-ang: on target");
+        Eq(HostFollowLogic.ServoAngSpeed(0.5, 0, 3), 0, "servo-ang: tau 0");
+        Eq(HostFollowLogic.ServoAngSpeed(0.5, 0.1, 0), 0, "servo-ang: max 0");
         ic.ContactAuthority = InteractionLogic.Authority.Host;
         Eq(InteractionLogic.WantShared(true, false, WinchKindLogic.Kind.None, WinchKindLogic.Kind.None, ic), true, "interact: Host contact shares");
         Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.World, WinchKindLogic.Kind.None,
@@ -1161,6 +1211,7 @@ static class Program
         Eq(again.Snap, false, "stream: Snap consumed once by render path");
         var stale = pb.SampleAt(2.05 + 0.30);
         Eq(stale.Ok && stale.Stale, true, "stream: Stale after MaxExtrap");
+        Eq(stale.Vx == 0 && stale.Vy == 0 && stale.Vz == 0, true, "stream: Stale freezes linear vel");
         // 30% loss uniform stream: no huge jumps when sampling mid-gap
         pb = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0.05, MaxDelayS = 0.1, DelayEwma = 0.5, SendHz = 30, MaxExtrapS = 0.25 });
         double t = 0; float x = 0; var rng = new Random(42);
@@ -1272,6 +1323,12 @@ static class Program
         Eq(InteractionLogic.PredictiveMargin(0.5, 100, 1, 3), 3.0, "interact-edge: margin capped");
         Eq(InteractionLogic.WantShared(false, true, WinchKindLogic.Kind.None, WinchKindLogic.Kind.None, ic), true, "interact-edge: host contact alone");
         Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.None, WinchKindLogic.Kind.Car, ic), true, "interact-edge: host car winch");
+        var worldHost = new InteractionLogic.Cfg { WorldWinchAuthority = InteractionLogic.Authority.Host };
+        Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.None, WinchKindLogic.Kind.World, worldHost), true,
+            "interact-edge: host World winch alone shares");
+        Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.None, WinchKindLogic.Kind.World,
+            new InteractionLogic.Cfg { WorldWinchAuthority = InteractionLogic.Authority.Owner }), false,
+            "interact-edge: host World ignored when Owner");
     }
 
     static void SessionNotifyEdges()
@@ -1370,5 +1427,293 @@ static class Program
         Eq(InteractionLogic.ResumeDelay(ic, double.NaN, 0) >= 1.2, true, "023: NaN RTT → default 200ms net");
         Eq(ModLiveryGateLogic.Format(null), "", "023: mod format null");
         Eq(ModLiveryGateLogic.Format(new[] { new ModLiveryGateLogic.ModRef(0, 0), new ModLiveryGateLogic.ModRef(5, 1) }), "5:1", "023: mod format skips id0");
+    }
+
+    /// <summary>0.2.0 T4.4: SyncProbe line format / parse / distance.</summary>
+    static void SyncProbe()
+    {
+        var line = SyncProbeLogic.Format(2, 42, 10.5f, -1.25f, 3f);
+        Eq(line.StartsWith(SyncProbeLogic.Tag), true, "sync: tag prefix");
+        Eq(SyncProbeLogic.TryParse(line, out var sl, out var seq, out var x, out var y, out var z)
+            && sl == 2 && seq == 42 && Math.Abs(x - 10.5f) < 1e-3 && Math.Abs(y - (-1.25f)) < 1e-3 && Math.Abs(z - 3f) < 1e-3,
+            true, $"sync: roundtrip ({line})");
+        Eq(SyncProbeLogic.TryParse("prefix " + line + " suffix", out sl, out seq, out _, out _, out _) && sl == 2 && seq == 42, true, "sync: embedded in log line");
+        Eq(SyncProbeLogic.TryParse("no sync here", out _, out _, out _, out _, out _), false, "sync: reject noise");
+        Eq(Math.Abs(SyncProbeLogic.DiffMeters(0, 0, 0, 3, 4, 0) - 5.0) < 1e-9, true, "sync: 3-4-5 distance");
+        Eq(SyncProbeLogic.DiffMeters(1, 2, 3, 1, 2, 3), 0.0, "sync: zero distance");
+        var ring = new SyncProbeLogic.Ring(4);
+        ring.Note(1, 1, 0, 0, 0);
+        ring.Note(1, 2, 1, 0, 0);
+        ring.Note(2, 5, 0, 1, 0);
+        Eq(ring.Count, 3, "sync: ring count");
+        var snap = ring.Snapshot();
+        Eq(snap.Count, 3, "sync: snap size");
+        Eq(snap[0].Seq, 1u, "sync: oldest seq");
+        Eq(snap[2].Seq, 5u, "sync: newest seq");
+        ring.Note(1, 3, 2, 0, 0);
+        ring.Note(1, 4, 3, 0, 0); // capacity 4 — drops seq 1; order 2,5,3,4
+        snap = ring.Snapshot();
+        Eq(snap.Count, 4, "sync: full snap");
+        Eq(snap[0].Seq, 2u, "sync: wrap oldest");
+        Eq(snap[1].Seq, 5u, "sync: wrap mid");
+        Eq(snap[3].Seq, 4u, "sync: wrap newest");
+        var drained = ring.Drain();
+        Eq(drained.Count, 4, "sync: drain returns all");
+        Eq(ring.Count, 0, "sync: drain empties");
+        Eq(ring.Drain().Count, 0, "sync: second drain empty");
+        Eq(SyncProbeLogic.Probed(0), false, "sync: seq 0 never probed");
+        Eq(SyncProbeLogic.Probed(SyncProbeLogic.Stride), true, "sync: stride seq probed");
+        Eq(SyncProbeLogic.Probed(SyncProbeLogic.Stride + 1), false, "sync: other seq skipped");
+        var probed = 0; for (uint s = 1; s <= 150; s++) if (SyncProbeLogic.Probed(s)) probed++;
+        Eq(probed, (int)(150 / SyncProbeLogic.Stride), "sync: 5 s at 30 Hz -> ~2 lines/s");
+        Eq(SyncProbeLogic.DefaultCapacity * SyncProbeLogic.Stride >= 300 * 4, true, "sync: capacity covers 5s x 4 cars@30Hz");
+    }
+
+    /// <summary>
+    /// Synthetic T4.4 / §5.1–5.2: OTC3 encode → two observers' StatePlayback → poses agree;
+    /// SyncProbe rings pair by (slot,seq) within plan thresholds; delayOverride:0 vs render delay;
+    /// epoch snap; redundant 3-state packet feeds newest first.
+    /// </summary>
+    static void StreamSyncInvariant()
+    {
+        // --- OTC3 wire → identical bytes → two StatePlayback observers (host relay model) ---
+        var cfg = new StatePlayback.Cfg { MinDelayS = 0.05, MaxDelayS = 0.15, DelayEwma = 1, SendHz = 30, MaxExtrapS = 0.25 };
+        var obsA = new StatePlayback(cfg);
+        var obsB = new StatePlayback(cfg);
+        var buf = new byte[CarWire.MaxPacketBytes];
+        const int slot = 2;
+        const byte epoch = 3;
+        for (var i = 0; i < 60; i++)
+        {
+            var send = i / 30.0;
+            var px = (float)(10 * send); // 10 m/s along X
+            var s = new CarWire.CarStateSample
+            {
+                Seq = (uint)(i + 1), SendTime = send,
+                Px = px, Py = 1, Pz = 0, Qx = 0, Qy = 0, Qz = 0, Qw = 1,
+                Vx = 10, Vy = 0, Vz = 0, Flags = CarWire.FlagEngineOn, SteerDeg = 0, WheelCount = 4,
+            };
+            s.SetWheel(0, new CarWire.WheelSample { RollDeg = (i * 36f) % 360f, SpinRadS = 20f, SuspM = 0.02f });
+            var pkt = new CarWire.CarStatePacket { Slot = slot, Epoch = epoch, Count = 1 };
+            pkt.SetState(0, s);
+            var n = CarWire.Encode(pkt, buf);
+            Eq(n > 0, true, $"stream: encode i={i}");
+            CarWire.CarStatePacket dec = default;
+            Eq(CarWire.TryDecode(buf.AsSpan(0, n), out dec), true, $"stream: decode i={i}");
+            // same arrival skew on both PCs (ideal LAN); relay copies bytes unchanged
+            var arrival = send + 0.02;
+            obsA.Push(ToPb(dec.S0, epoch), arrival);
+            obsB.Push(ToPb(dec.S0, epoch), arrival);
+        }
+        var now = 59 / 30.0 + 0.02 + 0.05; // after last + delay
+        var ra = obsA.SampleAt(now);
+        var rb = obsB.SampleAt(now);
+        Eq(ra.Ok && rb.Ok, true, "stream: both observers ok");
+        var dObs = SyncProbeLogic.DiffMeters(ra.Px, ra.Py, ra.Pz, rb.Px, rb.Py, rb.Pz);
+        Eq(dObs < 1e-4, true, $"stream: observers identical ({dObs:0.######} m)");
+
+        // physics head (delay 0) vs render head: same buffer, bounded gap at 30 Hz + 50 ms delay
+        var phys = obsA.SampleAt(now, delayOverride: 0);
+        var render = obsA.SampleAt(now);
+        Eq(phys.Ok && render.Ok, true, "stream: phys+render ok");
+        var lead = SyncProbeLogic.DiffMeters(phys.Px, phys.Py, phys.Pz, render.Px, render.Py, render.Pz);
+        // ~delay*speed = 0.05*10 = 0.5 m; allow Hermite/jitter slack
+        Eq(lead <= 0.65, true, $"stream: phys-render lead {lead:0.000} m ≤ 0.65");
+        Eq(phys.Px >= render.Px - 1e-3f, true, "stream: phys not behind render on +Vx");
+
+        // --- SyncProbe cross-PC pairing (tools/sync_compare.py algorithm) ---
+        var ringHost = new SyncProbeLogic.Ring(64);
+        var ringClient = new SyncProbeLogic.Ring(64);
+        for (uint seq = 1; seq <= 40; seq++)
+        {
+            var x = seq * 0.1f;
+            ringHost.Note(slot, seq, x, 1, 0);
+            // client sees same raw OTC3 sample (quantization already applied at encode)
+            ringClient.Note(slot, seq, x, 1, 0);
+        }
+        // inject one divergent pair (simulates post-ram drift) still under §5.2 max 1 m
+        ringHost.Note(slot, 41, 4.1f, 1, 0);
+        ringClient.Note(slot, 41, 4.1f + 0.25f, 1, 0);
+        var diffs = new System.Collections.Generic.List<double>();
+        var mapC = new System.Collections.Generic.Dictionary<(int, uint), SyncProbeLogic.Sample>();
+        foreach (var s in ringClient.Snapshot()) mapC[(s.Slot, s.Seq)] = s;
+        foreach (var h in ringHost.Snapshot())
+        {
+            if (!mapC.TryGetValue((h.Slot, h.Seq), out var c)) continue;
+            diffs.Add(SyncProbeLogic.DiffMeters(h.X, h.Y, h.Z, c.X, c.Y, c.Z));
+        }
+        Eq(diffs.Count >= 40, true, $"stream: paired samples {diffs.Count}");
+        diffs.Sort();
+        var p99 = diffs[(int)((diffs.Count - 1) * 0.99)];
+        var max = diffs[diffs.Count - 1];
+        Eq(p99 <= 0.3, true, $"stream: sync p99 {p99:0.000} ≤ 0.3 m (T4.4)");
+        Eq(max <= 1.0, true, $"stream: sync max {max:0.000} ≤ 1 m (T4.4)");
+        Eq(max >= 0.24 && max <= 0.26, true, $"stream: injected 0.25 m drift seen ({max:0.000})");
+
+        // Format must stay parseable (parity with sync_compare SYNC_RE)
+        var line = SyncProbeLogic.Format(slot, 99, -12.3456f, 0.001f, 100f);
+        Eq(SyncProbeLogic.TryParse("[Info:OTH-LAN] " + line, out var ps, out var pq, out var px2, out _, out _)
+            && ps == slot && pq == 99 && Math.Abs(px2 - (-12.346f)) < 0.002f, // Format uses 0.###
+            true, $"stream: Format/TryParse log parity ({line})");
+
+        // --- epoch bump snaps both observers to new pose (teleport) ---
+        var tele = new CarWire.CarStateSample
+        {
+            Seq = 100, SendTime = 3.0, Px = 50, Py = 2, Pz = 0, Qw = 1, Vx = 0, WheelCount = 0,
+        };
+        var tp = new CarWire.CarStatePacket { Slot = slot, Epoch = (byte)(epoch + 1), Count = 1 };
+        tp.SetState(0, tele);
+        var tn = CarWire.Encode(tp, buf);
+        Eq(tn > 0, true, "stream: teleport encode");
+        CarWire.CarStatePacket td = default;
+        Eq(CarWire.TryDecode(buf.AsSpan(0, tn), out td), true, "stream: teleport decode");
+        obsA.Push(ToPb(td.S0, td.Epoch), 3.02);
+        obsB.Push(ToPb(td.S0, td.Epoch), 3.02);
+        var sa = obsA.SampleAt(3.02);
+        var sb = obsB.SampleAt(3.02);
+        Eq(sa.Ok && sa.Snap && Math.Abs(sa.Px - 50) < 1e-3, true, $"stream: epoch snap A ({sa.Px})");
+        Eq(sb.Ok && sb.Snap && Math.Abs(sb.Px - 50) < 1e-3, true, $"stream: epoch snap B ({sb.Px})");
+        Eq(SyncProbeLogic.DiffMeters(sa.Px, sa.Py, sa.Pz, sb.Px, sb.Py, sb.Pz) < 1e-4, true, "stream: snap agrees");
+
+        // --- redundant Count=3: newest first; decode preserves S0 ---
+        CarWire.CarStateSample MkS(uint seq, double t, float x) => new()
+        {
+            Seq = seq, SendTime = t, Px = x, Py = 0, Pz = 0, Qw = 1, Vx = 0, WheelCount = 0,
+        };
+        var red = new CarWire.CarStatePacket { Slot = 1, Epoch = 1, Count = 3 };
+        red.SetState(0, MkS(30, 1.00, 30));
+        red.SetState(1, MkS(29, 0.967, 29));
+        red.SetState(2, MkS(28, 0.933, 28));
+        var rn = CarWire.Encode(red, buf);
+        Eq(rn > 0 && CarWire.TryDecode(buf.AsSpan(0, rn), out var rd) && rd.Count == 3 && rd.S0.Seq == 30 && rd.S2.Seq == 28,
+            true, "stream: 3-state newest-first");
+
+        // --- Interaction: Owner contact never HostShared (D-1); car-winch still shares once ---
+        var ic = new InteractionLogic.Cfg
+        {
+            ContactAuthority = InteractionLogic.Authority.Owner,
+            WorldWinchAuthority = InteractionLogic.Authority.Owner,
+            ResumeSeconds = 0.3, MinDwellSeconds = 0.5,
+        };
+        Eq(InteractionLogic.WantShared(true, false, WinchKindLogic.Kind.None, WinchKindLogic.Kind.None, ic), false,
+            "stream: D-1 contact stays Owner");
+        Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.Car, WinchKindLogic.Kind.None, ic), true,
+            "stream: car-winch HostShared");
+        // T4.2 host arm: world winch + Owner → no FlagSuspendWinch / no follow pause
+        Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.World, WinchKindLogic.Kind.None, ic), false,
+            "stream: T4.2 world+Owner → host keeps following");
+        Eq(InteractionLogic.WantShared(false, false, WinchKindLogic.Kind.World, WinchKindLogic.Kind.None,
+            new InteractionLogic.Cfg { WorldWinchAuthority = InteractionLogic.Authority.Host }), true,
+            "stream: T4.2 world+Host → host suspends");
+        // Step only sees `want` bool — tow enter/leave once (dwell 0.5 + resume 0.3)
+        double ent = 0, wantAt = 0;
+        var mode = InteractionLogic.Mode.Owner;
+        mode = InteractionLogic.Step(mode, 1.0, ref ent, ref wantAt, true, ic);
+        Eq(mode, InteractionLogic.Mode.HostShared, "stream: enter shared once");
+        mode = InteractionLogic.Step(mode, 1.1, ref ent, ref wantAt, true, ic);
+        Eq(mode, InteractionLogic.Mode.HostShared, "stream: stay shared while want");
+        mode = InteractionLogic.Step(mode, 1.2, ref ent, ref wantAt, false, ic);
+        Eq(mode, InteractionLogic.Mode.HostShared, "stream: dwell holds after clear");
+        mode = InteractionLogic.Step(mode, 1.35, ref ent, ref wantAt, false, ic);
+        Eq(mode, InteractionLogic.Mode.HostShared, "stream: resume window holds");
+        mode = InteractionLogic.Step(mode, 1.6, ref ent, ref wantAt, false, ic);
+        Eq(mode, InteractionLogic.Mode.Owner, "stream: single leave to Owner");
+
+        // --- Y floor: airborne extrap must not dive below MaxBelowNewestM (D2) ---
+        var fall = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0, MaxDelayS = 0, DelayEwma = 1, MaxExtrapS = 0.5, MaxBelowNewestM = 0.5 });
+        fall.Push(new StatePlayback.Sample
+        {
+            Seq = 1, SendTime = 0, Epoch = 1, Px = 0, Py = 10, Pz = 0, Qw = 1,
+            Vx = 0, Vy = -20, Vz = 0, Flags = CarWire.FlagAirborne,
+        }, 0);
+        var plunged = fall.SampleAt(0.4, delayOverride: 0); // would be y=10-8=2 without floor; floor=10-0.5=9.5
+        Eq(plunged.Ok && plunged.Extrapolated && plunged.Py >= 9.5f - 1e-3f, true,
+            $"stream: airborne Y floor ({plunged.Py:0.00})");
+    }
+
+    static StatePlayback.Sample ToPb(in CarWire.CarStateSample s, byte epoch) => new()
+    {
+        Seq = s.Seq, SendTime = s.SendTime, Epoch = epoch,
+        Px = s.Px, Py = s.Py, Pz = s.Pz,
+        Qx = s.Qx, Qy = s.Qy, Qz = s.Qz, Qw = s.Qw,
+        Vx = s.Vx, Vy = s.Vy, Vz = s.Vz,
+        Wx = s.Wx, Wy = s.Wy, Wz = s.Wz,
+        Flags = s.Flags, SteerDeg = s.SteerDeg, WheelCount = s.WheelCount,
+        W0 = s.W0, W1 = s.W1, W2 = s.W2, W3 = s.W3, W4 = s.W4, W5 = s.W5,
+    };
+
+    /// <summary>0.2.3: §5.1–5.2 acceptance metric formulas.</summary>
+    static void AcceptMetrics()
+    {
+        Eq(double.IsNaN(AcceptMetricsLogic.WheelErrFrac(10, 1.0)), true, "accept: slow body no wheelErr");
+        // ω = v/r → 0 error (r=0.38 → ω = 10/0.38 ≈ 26.315)
+        var perfect = 10.0 / WheelSpinLogic.DefaultRadius;
+        Eq(AcceptMetricsLogic.WheelErrFrac(perfect, 10.0) < 1e-9, true, "accept: perfect spin");
+        Eq(AcceptMetricsLogic.WheelErrOverLimit(AcceptMetricsLogic.WheelErrFrac(perfect * 1.2, 10.0)), true, "accept: +20% over");
+        Eq(AcceptMetricsLogic.WheelErrOverLimit(AcceptMetricsLogic.WheelErrFrac(perfect * 1.05, 10.0)), false, "accept: +5% under limit");
+        Eq(AcceptMetricsLogic.WheelErrOverLimit(0.10), false, "accept: frac==limit not over (>)");
+        Eq(AcceptMetricsLogic.WheelErrOverLimit(0.10 + 1e-12), true, "accept: frac just over limit");
+        Eq(double.IsNaN(AcceptMetricsLogic.WheelErrFrac(double.NaN, 10.0)) == false
+            && AcceptMetricsLogic.WheelErrFrac(double.NaN, 10.0) >= 0.99, true, "accept: NaN spin → treat as 0 vs body");
+        Eq(AcceptMetricsLogic.WheelErrFrac(perfect, 10.0, 1e-6) < 1e-6, true, "accept: bad radius falls back to default");
+        // reverse: signed bodyV matches signed spin (unsigned |v| would look like ~200% error)
+        var revSpin = -10.0 / WheelSpinLogic.DefaultRadius;
+        Eq(AcceptMetricsLogic.WheelErrFrac(revSpin, -10.0) < 1e-9, true, "accept: reverse perfect");
+        Eq(AcceptMetricsLogic.BodyForwardMs(0, 0, 10, 0, 0, 0, 1), 10.0, "accept: bodyFwd identity → vz");
+        Eq(Math.Abs(AcceptMetricsLogic.BodyForwardMs(10, 0, 0, 0, 0.70710678, 0, 0.70710678) - 10.0) < 1e-4, true,
+            "accept: bodyFwd yaw90 → vx");
+        Eq(AcceptMetricsLogic.ExtrapErrM(0, 0, 0, 3, 4, 0), 5.0, "accept: extrapErr 3-4-5");
+        double since = -1;
+        Eq(double.IsNaN(AcceptMetricsLogic.ProxyPullStep(ref since, 0.05, 1.0)), true, "accept: pull idle");
+        Eq(double.IsNaN(AcceptMetricsLogic.ProxyPullStep(ref since, 0.2, 1.0)), true, "accept: pull open");
+        Eq(since >= 0, true, "accept: pull armed");
+        Eq(double.IsNaN(AcceptMetricsLogic.ProxyPullStep(ref since, 0.1, 1.1)), true, "accept: pull still open");
+        var done = AcceptMetricsLogic.ProxyPullStep(ref since, 0.04, 1.25);
+        Eq(Math.Abs(done - 0.25) < 1e-9, true, $"accept: pull done {done:0.000}s");
+        Eq(since < 0, true, "accept: pull cleared");
+        since = 2.0;
+        var ab = AcceptMetricsLogic.ProxyPullAbort(ref since, 2.4);
+        Eq(Math.Abs(ab - 0.4) < 1e-9 && since < 0, true, $"accept: abort age {ab:0.000}");
+        Eq(double.IsNaN(AcceptMetricsLogic.ProxyPullAbort(ref since, 3.0)), true, "accept: abort idle");
+        Eq(AcceptMetricsLogic.ProxyPullOpenAge(1.0, 1.5), 0.5, "accept: open age");
+        Eq(double.IsNaN(AcceptMetricsLogic.ProxyPullOpenAge(-1, 1.5)), true, "accept: open age idle");
+    }
+
+    /// <summary>0.2.3 T3.2: roll wrap / integrate / soft-pull / susp (§8.2).</summary>
+    static void WheelVisual()
+    {
+        Eq(WheelVisualLogic.WrapDeg360(370), 10f, "wheel: wrap 370");
+        Eq(WheelVisualLogic.WrapDeg360(-10), 350f, "wheel: wrap -10");
+        Eq(WheelVisualLogic.WrapDeg360(float.NaN), 0f, "wheel: wrap NaN");
+        Eq(Math.Abs(WheelVisualLogic.IntegrateRollDeg(0, (float)Math.PI, 0.1f) - 18f) < 1e-3f, true, "wheel: integrate π·0.1s");
+        Eq(WheelVisualLogic.IntegrateRollDeg(350, (float)Math.PI, 0.1f), 8f, "wheel: integrate wrap");
+        Eq(WheelVisualLogic.IntegrateRollDeg(10, - (float)Math.PI, 0.1f), 352f, "wheel: integrate reverse");
+        Eq(WheelVisualLogic.IntegrateRollDeg(10, 5, 0), 10f, "wheel: integrate dt0");
+        Eq(WheelVisualLogic.IntegrateRollDeg(10, 5, 1f), 10f, "wheel: integrate dt too large");
+        Eq(Math.Abs(WheelVisualLogic.SuspDeltaM(0.5f, 0.42f) - (-0.08f)) < 1e-5f, true, "wheel: susp compress");
+        Eq(WheelVisualLogic.CanCaptureRestPos(0.1f), true, "wheel: rest pos ok slow");
+        Eq(WheelVisualLogic.CanCaptureRestPos(0.5f), true, "wheel: rest pos at maxSpeed");
+        Eq(WheelVisualLogic.CanCaptureRestPos(2f), false, "wheel: rest pos blocked by speed");
+        Eq(WheelVisualLogic.CanCaptureRestPos(-0.2f), true, "wheel: rest pos ok reverse slow");
+        Eq(Math.Abs(WheelVisualLogic.DeltaDeg(10, 350) - (-20f)) < 1e-3f, true, "wheel: delta wrap");
+        // soft-pull: from 0 toward 180 with spin 0, dt 0.1 → max 9 deg
+        Eq(Math.Abs(WheelVisualLogic.SoftPullRoll(0, 180, 0, 0.1f) - 9f) < 1e-3f, true, "wheel: soft-pull cap");
+        Eq(WheelVisualLogic.SoftPullRoll(10, 12, 0, 0.1f), 12f, "wheel: soft-pull small");
+        // BlendWheels: integrate π·0.1s = 18°, then soft-pull toward 40° (cap +9) → 27°
+        var spun = WheelVisualLogic.SoftPullRoll(0, 40, (float)Math.PI, 0.1f);
+        Eq(Math.Abs(spun - 27f) < 1e-2f, true, $"wheel: soft-pull with spin ({spun})");
+        Eq(NetInfoLogic.MaskIp("peer 26.1.2.3 joined", "26.1.2.3", "26.10.20.30"), "peer 26.10.20.30 joined", "netinfo: mask real→demo");
+        Eq(NetInfoLogic.MaskIp("peer 26.1.2.3 joined", "", "26.10.20.30"), "peer 26.1.2.3 joined", "netinfo: no real → no mask");
+        Eq(NetInfoLogic.MaskIp("x", "26.1.2.3", null), "x", "netinfo: no demo → no mask");
+        Eq(NetInfoLogic.MaskIp(null, "26.1.2.3", "d"), null, "netinfo: null s");
+        // T3.6 FlagReverse thresholds (same for sender + Fusion lights)
+        Eq(VehicleLightLogic.WantReverse(-1.0f, 0f), true, "lights: reverse rolling back");
+        Eq(VehicleLightLogic.WantReverse(-0.8f, 0f), false, "lights: reverse strict < -0.8");
+        Eq(VehicleLightLogic.WantReverse(-2f, 0.1f), false, "lights: reverse blocked by throttle");
+        Eq(VehicleLightLogic.WantReverse(1f, 0f), false, "lights: forward no reverse");
+        Eq(VehicleLightLogic.WantReverse(-0.79f, 0f), false, "lights: just above reverse speed");
+        Eq(VehicleLightLogic.WantBrake(0.11f), true, "lights: brake above min");
+        Eq(VehicleLightLogic.WantBrake(0.1f), false, "lights: brake at min not over");
+        Eq(VehicleLightLogic.WantBrake(0.05f), false, "lights: brake was Fusion-only 0.05 — now unified 0.1");
     }
 }

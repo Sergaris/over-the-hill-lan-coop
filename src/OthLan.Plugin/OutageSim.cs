@@ -16,7 +16,9 @@ internal static unsafe class OutageSim
     public static volatile float Loss;
     public static long LostOut, LostIn;
     static readonly Random Rng = new();
-    static bool Roll() { var l = Loss; if (l <= 0) return false; lock (Rng) return Rng.NextDouble() < l; }
+    /// <summary>--othlan-lossdir: Fusion loss only on this process's sends ("out") or receives ("in"); null = both.</summary>
+    public static volatile string LossDir;
+    static bool Roll(string dir) { var l = Loss; if (l <= 0 || LossDir != null && LossDir != dir) return false; lock (Rng) return Rng.NextDouble() < l; }
     public static long DroppedOut, DroppedIn;
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int SendFn(IntPtr self, IntPtr sock, IntPtr addr, IntPtr buf, int len, byte reliable, IntPtr mi);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int RecvFn(IntPtr self, IntPtr sock, IntPtr addr, IntPtr buf, int len, IntPtr mi);
@@ -64,10 +66,14 @@ internal static unsafe class OutageSim
     }
     public static void Pump() { if (!Installed) return; try { FlushOut(); } catch { } }
 
+    public static long SentN, SentBytes, SentMax, SentOver1k;
+    public static string DescribeSends() => $"fusion datagrams sent n={SentN} bytes={SentBytes} mean={(SentN > 0 ? SentBytes / SentN : 0)} max={SentMax} >1000B={SentOver1k}";
+
     static int SendD(IntPtr self, IntPtr sock, IntPtr addr, IntPtr buf, int len, byte reliable, IntPtr mi)
     {
+        SentN++; SentBytes += len; if (len > SentMax) SentMax = len; if (len > 1000) SentOver1k++;
         if (Active) { DroppedOut++; return len; }
-        if (Roll()) { LostOut++; return len; }
+        if (Roll("out")) { LostOut++; return len; }
         if (NetemOn || _qOut.Count > 0)
         {
             _sMi = mi;
@@ -93,7 +99,7 @@ internal static unsafe class OutageSim
             {
                 var m = _rOrig(self, sock, addr, buf, len, mi);
                 if (m <= 0) { last = m; break; }
-                if (Roll()) { LostIn++; continue; }
+                if (Roll("in")) { LostIn++; continue; }
                 var p = new Pkt { Addr = new byte[AddrSize], Data = new byte[m] };
                 Marshal.Copy(addr, p.Addr, 0, AddrSize); Marshal.Copy(buf, p.Data, 0, m);
                 var due = Math.Max(_lastInDue, now + DelayMs + Jit());
@@ -113,7 +119,7 @@ internal static unsafe class OutageSim
         var n = _rOrig(self, sock, addr, buf, len, mi);
         if (!Active)
         {
-            for (int i = 0; i < 64 && n > 0 && Roll(); i++) { LostIn++; n = _rOrig(self, sock, addr, buf, len, mi); }
+            for (int i = 0; i < 64 && n > 0 && Roll("in"); i++) { LostIn++; n = _rOrig(self, sock, addr, buf, len, mi); }
             return n;
         }
         for (int i = 0; i < 512 && n > 0; i++) { DroppedIn++; n = _rOrig(self, sock, addr, buf, len, mi); }   // drain: the cable is out

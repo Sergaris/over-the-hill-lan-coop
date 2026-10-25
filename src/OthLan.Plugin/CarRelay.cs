@@ -17,6 +17,7 @@ internal static class CarRelay
     public static void Reset()
     {
         lock (_lock) { _play.Clear(); Accepted = Relayed = Dropped = Injected = 0; }
+        SyncProbe.Reset();
     }
 
     public static StatePlayback PlaybackOf(int slot)
@@ -28,9 +29,12 @@ internal static class CarRelay
         }
     }
 
+    static bool Enabled => Plugin.RelayCarState == null || Plugin.RelayCarState.Value;
+
     /// <summary>Host: OTC3 from a client (network thread; arrival = <see cref="NetClock.Now"/>).</summary>
     public static void OnPacket(byte[] d, int len, IPEndPoint from, double arrivalLocal)
     {
+        if (!Enabled) { Dropped++; return; }
         if (d == null || len < CarWire.HeaderSize) { Dropped++; return; }
         if (!CarWire.TryDecode(d.AsSpan(0, len), out var pkt)) { Dropped++; return; }
         var slot = pkt.Slot;
@@ -46,6 +50,7 @@ internal static class CarRelay
     /// <summary>Host: own car stream (main thread).</summary>
     public static void InjectHost(in CarWire.CarStatePacket pkt)
     {
+        if (!Enabled) return;
         Injected++;
         var slot = pkt.Slot;
         PushPlayback(slot, pkt, NetClock.Now);
@@ -57,6 +62,7 @@ internal static class CarRelay
     /// <summary>Client: OTC3 relayed from host (network thread; arrival = <see cref="NetClock.Now"/>).</summary>
     public static void OnClientPacket(byte[] d, int len, double arrivalLocal)
     {
+        if (!Enabled) return;
         if (d == null || len < CarWire.HeaderSize) return;
         if (!CarWire.TryDecode(d.AsSpan(0, len), out var pkt)) return;
         if (OwnCar.OwnSlot >= 0 && pkt.Slot == OwnCar.OwnSlot) return;
@@ -70,6 +76,8 @@ internal static class CarRelay
         {
             var s = pkt.StateAt(i);
             pb.Push(ToSample(s, pkt.Epoch), arrivalLocal);
+            // T4.4: only newest in the OTC3 packet (Count>1 is redundancy) — raw pose, not Hermite.
+            if (i == 0) SyncProbe.Note(slot, s.Seq, s.Px, s.Py, s.Pz);
         }
     }
 

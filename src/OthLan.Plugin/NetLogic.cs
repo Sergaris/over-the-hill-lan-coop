@@ -11,6 +11,15 @@ public static class OwnCarLogic
     public static bool TakeHostPose(double errMeters, double sinceLinkGapS, double acceptMeters, double postGapS)
         => errMeters > acceptMeters && sinceLinkGapS >= postGapS;
 
+    /// <summary>
+    /// Whether a resim gap belongs in rollback / NetStats own-correction means.
+    /// Skip: pre-phase-2, the spawn-transition sample itself (AcceptMeters teleport), and ticks where
+    /// <c>Restore()</c> put the client's pose back (invisible on screen). Keep accept-window samples —
+    /// the car really rides the host pose there.
+    /// </summary>
+    public static bool CountOwnCorrection(bool phase2Active, bool restoredOwn, bool spawnTransition)
+        => phase2Active && !restoredOwn && !spawnTransition;
+
     /// <summary>Fusion client input buffer size in ticks for <paramref name="seconds"/> (never smaller than the game's).</summary>
     public static int InputCapacity(double seconds, int tickRate, int current)
     {
@@ -31,6 +40,16 @@ public static class HostFollowLogic
     {
         if (err <= 0 || tau <= 0) return 0;
         return Math.Min(err / tau, maxCorr + speedFactor * Math.Max(0, clientSpeed));
+    }
+
+    /// <summary>
+    /// Angular twin of <see cref="ServoSpeed"/>: correction rate (rad/s) for |orientation error| with time
+    /// constant <paramref name="tau"/>, capped at <paramref name="maxRadS"/>. Direction is caller's axis×sign.
+    /// </summary>
+    public static double ServoAngSpeed(double errAbsRad, double tau, double maxRadS)
+    {
+        if (errAbsRad <= 0 || tau <= 0 || maxRadS <= 0) return 0;
+        return Math.Min(errAbsRad / tau, maxRadS);
     }
 
     /// <summary>A jump of the host copy that the game made (respawn, rescue, jack, reset upright) and not the network:
@@ -109,6 +128,18 @@ public sealed class GapStats
     }
     public void Reset() { Over250ms = Over500ms = Over1s = Over3s = 0; Max = 0; }
     public string Describe() => $">0.25s={Over250ms} >0.5s={Over500ms} >1s={Over1s} >3s={Over3s} max={Max:0.00}s";
+}
+
+/// <summary>Self-test / screenshot: scrub a real LAN address out of UI strings (owner of DemoIp replace).</summary>
+public static class NetInfoLogic
+{
+    /// <summary>Replace <paramref name="realIp"/> with <paramref name="demoIp"/> inside <paramref name="s"/>.
+    /// No-op when any argument is null/empty (does not cache a missing Radmin address).</summary>
+    public static string MaskIp(string s, string realIp, string demoIp)
+    {
+        if (string.IsNullOrEmpty(s) || string.IsNullOrEmpty(realIp) || string.IsNullOrEmpty(demoIp)) return s;
+        return s.Replace(realIp, demoIp);
+    }
 }
 
 /// <summary>The game's room flags in a host's session properties ("RoomProperties" = "i:N"; bit 0 = AllowMods).</summary>

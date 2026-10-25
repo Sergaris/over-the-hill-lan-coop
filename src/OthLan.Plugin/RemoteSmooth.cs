@@ -50,11 +50,7 @@ internal static class RemoteSmooth
     /// <summary>Main thread, LateUpdate — only InterpolationTarget path when stream is not fresh.</summary>
     public static void LateTick()
     {
-        if (LanState.Active == LanRole.Off || LanState.LanRunner == IntPtr.Zero) { if (_runner != IntPtr.Zero) { _runner = IntPtr.Zero; ResetAll(); } return; }
-        NetworkRunner r = null;
-        try { r = OverlandNetworkRunner.Instance?.NetworkRunner; } catch { }
-        if (r == null || r.Pointer != LanState.LanRunner || !r.IsRunning) return;
-        if (r.Pointer != _runner) { _runner = r.Pointer; ResetAll(); }
+        if (!TryRunner(out var r)) return;
         var t = Time.realtimeSinceStartup; var dt = _lastT < 0 ? 0 : t - _lastT; _lastT = t;
         _players = CarRegistry.Players;
         var client = r.IsClient && !r.IsServer;
@@ -63,77 +59,101 @@ internal static class RemoteSmooth
         _cfg.MaxCorrection = Plugin.RemoteMaxCorrection.Value; _cfg.SnapMeters = Plugin.RemoteSnapMeters.Value;
         foreach (var fp in _players)
         {
-            try
-            {
-                if (fp == null || fp.WasCollected || fp.Object == null || fp.Object.HasInputAuthority) continue;
-                try
-                {
-                    var slot = fp.Object.InputAuthority.AsIndex;
-                    if (RemoteCarView.HasFreshStream(slot, NetClock.Now)) continue;
-                }
-                catch { }
-                if (!_cars.TryGetValue(fp.Pointer, out var c)) _cars[fp.Pointer] = c = new Car();
-                if (!c.Checked)
-                {
-                    c.Checked = true;
-                    var nrb = fp.GetComponent<NetworkRigidbody3D>(); c.It = nrb != null ? nrb.InterpolationTarget : null;
-                    c.Usable = c.It != null && c.It != fp.transform && c.It.GetComponent<Rigidbody>() == null;
-                    if (!c.Usable)
-                    {
-                        NoTarget++;
-                        Plugin.L.LogInfo($"[RemoteSmooth] {fp.gameObject.name}: no separate InterpolationTarget, Fusion fallback without root-gap (RemoteCarView owns root)");
-                    }
-                    if (client && nrb != null) RemoteCarView.EnsureProxyMode(fp, nrb);
-                }
-                if (!c.Usable || c.It == null) continue;
-                var vis = c.It;
-                var fpos = vis.position; var fq = vis.rotation;
-                if (c.Wrote && fpos == c.LastWrittenP && fq == c.LastWrittenQ) { fpos = c.LastFusionP; fq = c.LastFusionQ; FusionSkipped++; }
-                var age = NetStats.ServerTickAge;
-                var starved = client && age >= 0 && age > starveS;
-                if (dt > 0 && dt <= 0.25f) { var f0 = c.Raw.Frames; var h = c.Raw.Add(fpos.x, fpos.y, fpos.z, dt); if (c.Raw.Frames > f0) RawAll.Record(h); } else c.Raw.Break();
-                if (!Enabled) { c.S.Reset(); c.Wrote = false; c.LastFusionP = fpos; c.LastFusionQ = fq; continue; }
-                var a0 = c.S.Absorbed; var s0 = c.S.Snaps; var e0 = c.S.ExtrapolatedFrames;
-                var (x, y, z) = c.S.Step(fpos.x, fpos.y, fpos.z, dt, _cfg, starved);
-                Absorbs += c.S.Absorbed - a0; Snaps += c.S.Snaps - s0; ExtrapFrames += c.S.ExtrapolatedFrames - e0;
-                Quaternion drawnQ;
-                if (!c.HasQ || dt <= 0 || dt > 0.5f || c.S.Snaps != s0) { c.Qo = Quaternion.identity; c.W = Vector3.zero; drawnQ = fq; c.HasQ = true; c.HoldRotFor = 0; }
-                else
-                {
-                    var dq = fq * Quaternion.Inverse(c.LastFusionQ); dq.ToAngleAxis(out var ang, out var axis);
-                    if (ang > 180) ang -= 360;
-                    var frozen = Quaternion.Angle(fq, c.LastFusionQ) < 1e-3f;
-                    if (c.S.Last == RemoteSmoother.State.Extrapolate)
-                    {
-                        c.HoldRotFor = 0;
-                        drawnQ = Quaternion.AngleAxis(c.W.magnitude * Mathf.Rad2Deg * dt, c.W.sqrMagnitude > 1e-8f ? c.W.normalized : Vector3.up) * c.LastDrawnQ; c.Qo = drawnQ * Quaternion.Inverse(fq);
-                    }
-                    else if (c.S.Last == RemoteSmoother.State.Hold)
-                    {
-                        c.HoldRotFor += dt;
-                        if (c.HoldRotFor > _cfg.HoldMaxSeconds) { c.Qo = Quaternion.identity; drawnQ = fq; c.HoldRotFor = 0; }
-                        else { drawnQ = c.LastDrawnQ; c.Qo = drawnQ * Quaternion.Inverse(fq); }
-                    }
-                    else
-                    {
-                        c.HoldRotFor = 0;
-                        var expectedQ = Quaternion.AngleAxis(c.W.magnitude * Mathf.Rad2Deg * dt, c.W.sqrMagnitude > 1e-8f ? c.W.normalized : Vector3.up) * c.LastDrawnQ;
-                        if (c.S.LastAbsorbed || Quaternion.Angle(c.Qo * fq, expectedQ) > Plugin.RemoteAbsorbDegrees.Value)
-                            c.Qo = expectedQ * Quaternion.Inverse(fq);
-                        else if (!frozen && !float.IsNaN(axis.x) && Mathf.Abs(ang) < 90) c.W = Vector3.Lerp(c.W, axis * (ang * Mathf.Deg2Rad / dt), 0.5f);
-                        var keep = (float)RemoteSmoother.RotKeep(Quaternion.Angle(c.Qo, Quaternion.identity), dt, _cfg.Tau, Plugin.RemoteMaxCorrectionDeg.Value);
-                        c.Qo = Quaternion.Slerp(Quaternion.identity, c.Qo, keep);
-                        drawnQ = c.Qo * fq;
-                    }
-                }
-                var drawn = new Vector3((float)x, (float)y, (float)z);
-                if (drawn.y < fpos.y - 0.3f) NetStats.RemoteBelow++;
-                c.LastFusionP = fpos; c.LastFusionQ = fq;
-                if ((drawn - fpos).sqrMagnitude > 1e-8f || Quaternion.Angle(drawnQ, fq) > 1e-3f) { vis.SetPositionAndRotation(drawn, drawnQ); c.Wrote = true; c.LastWrittenP = vis.position; c.LastWrittenQ = vis.rotation; }
-                else c.Wrote = false;
-                c.LastDrawnQ = drawnQ;
-            }
+            try { TickCar(fp, dt, client, starveS); }
             catch { }
         }
+    }
+
+    /// <summary>The LAN runner, if running; resets all state when the session ends or the runner changes.</summary>
+    static bool TryRunner(out NetworkRunner r)
+    {
+        r = null;
+        if (!LanState.InSession) { if (_runner != IntPtr.Zero) { _runner = IntPtr.Zero; ResetAll(); } return false; }
+        try { r = LanState.Runner(); } catch { }
+        if (r == null) return false;
+        if (r.Pointer != _runner) { _runner = r.Pointer; ResetAll(); }
+        return true;
+    }
+
+    static void TickCar(FusionPlayer fp, float dt, bool client, float starveS)
+    {
+        if (fp == null || fp.WasCollected || fp.Object == null || fp.Object.HasInputAuthority) return;
+        try
+        {
+            var slot = fp.Object.InputAuthority.AsIndex;
+            if (RemoteCarView.HasFreshStream(slot, NetClock.Now)) return;
+        }
+        catch { }
+        var c = UsableCar(fp, client);
+        if (c == null) return;
+        var vis = c.It;
+        var fpos = vis.position; var fq = vis.rotation;
+        if (c.Wrote && fpos == c.LastWrittenP && fq == c.LastWrittenQ) { fpos = c.LastFusionP; fq = c.LastFusionQ; FusionSkipped++; }
+        var age = NetStats.ServerTickAge;
+        var starved = client && age >= 0 && age > starveS;
+        if (dt > 0 && dt <= 0.25f) { var f0 = c.Raw.Frames; var h = c.Raw.Add(fpos.x, fpos.y, fpos.z, dt); if (c.Raw.Frames > f0) RawAll.Record(h); } else c.Raw.Break();
+        if (!Enabled) { c.S.Reset(); c.Wrote = false; c.LastFusionP = fpos; c.LastFusionQ = fq; return; }
+        var a0 = c.S.Absorbed; var s0 = c.S.Snaps; var e0 = c.S.ExtrapolatedFrames;
+        var (x, y, z) = c.S.Step(fpos.x, fpos.y, fpos.z, dt, _cfg, starved);
+        Absorbs += c.S.Absorbed - a0; Snaps += c.S.Snaps - s0; ExtrapFrames += c.S.ExtrapolatedFrames - e0;
+        var drawnQ = DrawnRotation(c, fq, dt, c.S.Snaps != s0);
+        var drawn = new Vector3((float)x, (float)y, (float)z);
+        if (drawn.y < fpos.y - 0.3f) NetStats.RemoteBelow++;
+        c.LastFusionP = fpos; c.LastFusionQ = fq;
+        if ((drawn - fpos).sqrMagnitude > 1e-8f || Quaternion.Angle(drawnQ, fq) > 1e-3f) { vis.SetPositionAndRotation(drawn, drawnQ); c.Wrote = true; c.LastWrittenP = vis.position; c.LastWrittenQ = vis.rotation; }
+        else c.Wrote = false;
+        c.LastDrawnQ = drawnQ;
+    }
+
+    /// <summary>Per-car state; null when the car has no separate InterpolationTarget (checked once per car).</summary>
+    static Car UsableCar(FusionPlayer fp, bool client)
+    {
+        if (!_cars.TryGetValue(fp.Pointer, out var c)) _cars[fp.Pointer] = c = new Car();
+        if (!c.Checked)
+        {
+            c.Checked = true;
+            var nrb = fp.GetComponent<NetworkRigidbody3D>(); c.It = nrb != null ? nrb.InterpolationTarget : null;
+            c.Usable = c.It != null && c.It != fp.transform && c.It.GetComponent<Rigidbody>() == null;
+            if (!c.Usable)
+            {
+                NoTarget++;
+                Plugin.L.LogInfo($"[RemoteSmooth] {fp.gameObject.name}: no separate InterpolationTarget, Fusion fallback without root-gap (RemoteCarView owns root)");
+            }
+            if (client && nrb != null) RemoteCarView.EnsureProxyMode(fp, nrb);
+        }
+        return c.Usable && c.It != null ? c : null;
+    }
+
+    /// <summary>Rotation to draw this frame: follows Fusion, keeps spinning while extrapolating, holds, fades corrections.</summary>
+    static Quaternion DrawnRotation(Car c, Quaternion fq, float dt, bool snapped)
+    {
+        if (!c.HasQ || dt <= 0 || dt > 0.5f || snapped) { c.Qo = Quaternion.identity; c.W = Vector3.zero; c.HasQ = true; c.HoldRotFor = 0; return fq; }
+        var dq = fq * Quaternion.Inverse(c.LastFusionQ); dq.ToAngleAxis(out var ang, out var axis);
+        if (ang > 180) ang -= 360;
+        var frozen = Quaternion.Angle(fq, c.LastFusionQ) < 1e-3f;
+        Quaternion drawnQ;
+        if (c.S.Last == RemoteSmoother.State.Extrapolate)
+        {
+            c.HoldRotFor = 0;
+            drawnQ = Quaternion.AngleAxis(c.W.magnitude * Mathf.Rad2Deg * dt, c.W.sqrMagnitude > 1e-8f ? c.W.normalized : Vector3.up) * c.LastDrawnQ; c.Qo = drawnQ * Quaternion.Inverse(fq);
+        }
+        else if (c.S.Last == RemoteSmoother.State.Hold)
+        {
+            c.HoldRotFor += dt;
+            if (c.HoldRotFor > _cfg.HoldMaxSeconds) { c.Qo = Quaternion.identity; drawnQ = fq; c.HoldRotFor = 0; }
+            else { drawnQ = c.LastDrawnQ; c.Qo = drawnQ * Quaternion.Inverse(fq); }
+        }
+        else
+        {
+            c.HoldRotFor = 0;
+            var expectedQ = Quaternion.AngleAxis(c.W.magnitude * Mathf.Rad2Deg * dt, c.W.sqrMagnitude > 1e-8f ? c.W.normalized : Vector3.up) * c.LastDrawnQ;
+            if (c.S.LastAbsorbed || Quaternion.Angle(c.Qo * fq, expectedQ) > Plugin.RemoteAbsorbDegrees.Value)
+                c.Qo = expectedQ * Quaternion.Inverse(fq);
+            else if (!frozen && !float.IsNaN(axis.x) && Mathf.Abs(ang) < 90) c.W = Vector3.Lerp(c.W, axis * (ang * Mathf.Deg2Rad / dt), 0.5f);
+            var keep = (float)RemoteSmoother.RotKeep(Quaternion.Angle(c.Qo, Quaternion.identity), dt, _cfg.Tau, Plugin.RemoteMaxCorrectionDeg.Value);
+            c.Qo = Quaternion.Slerp(Quaternion.identity, c.Qo, keep);
+            drawnQ = c.Qo * fq;
+        }
+        return drawnQ;
     }
 }

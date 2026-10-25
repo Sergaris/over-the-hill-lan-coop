@@ -26,6 +26,17 @@ internal static class LanState
     // (CloudServices); for this runner the hooks supply it locally instead (see FusionHooks, 0.1.3).
     public static IntPtr LanRunner;
     public static LanRole LanRunnerRole = LanRole.Off;
+
+    /// <summary>A LAN session is active and its runner is known (it may not be running yet).</summary>
+    public static bool InSession => Active != LanRole.Off && LanRunner != IntPtr.Zero;
+
+    /// <summary>The game's runner while it is our running LAN runner; null outside a LAN session.</summary>
+    public static Fusion.NetworkRunner Runner()
+    {
+        if (!InSession) return null;
+        var r = OverlandNetworkRunner.Instance?.NetworkRunner;
+        return r != null && r.Pointer == LanRunner && r.IsRunning ? r : null;
+    }
     public static IntPtr LanSim;                              // cached runner._simulation pointer
     public static int ClientSlot;                             // PlayerRef index this client claims (host is index 1)
     public static int AssignedSlot = -1;                      // client: slot the host reserved for us (-1 = none: IP fallback)

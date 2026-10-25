@@ -30,14 +30,6 @@ internal static class PingHud
     /// <summary>Echo loss in % (client: to the host; host: worst client), last 20 pings.</summary>
     public static double LossPct;
 
-    static NetworkRunner LanRunner()
-    {
-        if (LanState.Active == LanRole.Off || LanState.LanRunner == IntPtr.Zero) return null;
-        var r = OverlandNetworkRunner.Instance?.NetworkRunner;
-        if (r == null || r.Pointer != LanState.LanRunner || !r.IsRunning) return null;
-        return r;
-    }
-
     public static bool TimedOut;
     /// <summary>Seconds without any echo (client: from the host; host: the worst client), -1 while echoes arrive.</summary>
     public static double NoLinkS = -1;
@@ -49,7 +41,7 @@ internal static class PingHud
     public static void Tick()
     {
         var now = Time.realtimeSinceStartup;
-        var r = LanRunner();
+        var r = LanState.Runner();
         if (r == null)
         {
             if (_wasActive) { _wasActive = false; ClientLink.Stop(); HostPings.Clear(); }
@@ -109,7 +101,7 @@ internal static class PingHud
 
     public static void OnGUI(bool f7Open = false)
     {
-        if (!Plugin.PingShow.Value || LanRunner() == null) { LastAnchor = "none"; return; }
+        if (!Plugin.PingShow.Value || LanState.Runner() == null) { LastAnchor = "none"; return; }
         if (f7Open) { LastAnchor = "f7-open"; return; }   // the F7 window shows the same figure; no overlap with it
         var now = Time.realtimeSinceStartup;
         if (_hud == null && now >= _nextFind)

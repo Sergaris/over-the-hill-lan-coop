@@ -1,4 +1,10 @@
-# Netcode v4: "the lagging player plays solo" (design + status, 0.1.8 dev)
+# Netcode v4: "the lagging player plays solo" (design + status, 0.1.8 → 0.2.x)
+
+**Status 0.2.x:** OwnCar / OwnLocal / OwnRender remain; remotes and host proxies are driven primarily by the **OTC3**
+stream (`CarWire` → `CarStreamSender` / `CarRelay` → `StatePlayback` → `RemoteCarView` / `HostFollower`). See
+`docs/CAR-SYNC.md` §2 and `docs/DEV-0.2.0-PLAN.md`. Legacy `OTP2` still parallels until T3.8 (after LIVE §5.1).
+`ClientPhysicsMode=Game` is the default again (migration v9); `SimulateForward` (v6) made the own car bounce and
+ignore steering after prediction resets (0.2.3 steer A/B), so it is opt-in only.
 
 Requirement (project owner, 23 Oct 11:54): the client must barely feel lag, as if playing single player. A smart simulation
 layer carries the whole load: everyone else sees the high-ping player as if their connection were fine; the high-ping

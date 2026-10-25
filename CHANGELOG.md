@@ -1,7 +1,28 @@
-﻿# Changelog
+# Changelog
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.4
+
+Both players need 0.2.4. From 0.1.8.1+ the in-game updater offers this release.
+
+- Client physics back to the game's default: steering works at high ping (no bounce or ignored wheel after corrections).
+- Host freezes abandoned cars that stand still out of every player's winch reach (`ParkIdleCars`, on by default):
+  network snapshots about five times smaller, no client freezes while driving with 10 % packet loss.
+- A client can always release a winch attached to the host's car, also with lag and loss.
+- Host follows only the client's own stream for client cars (no multi-metre jumps); remote wheels spin the right way
+  in reverse, reverse lights follow, a car with stale data holds still.
+
+## 0.2.4 — изменения
+
+У обоих игроков должна быть 0.2.4. С 0.1.8.1+ обновление предложит меню.
+
+- Физика клиента снова как в игре: руление работает при большом пинге (машина не подпрыгивает и слушается руля).
+- Хост замораживает брошенные машины, стоящие вне досягаемости лебёдки игроков (`ParkIdleCars`, включено по умолчанию):
+  сетевые снимки примерно в пять раз меньше, без зависаний клиента при езде с 10 % потерь пакетов.
+- Клиент всегда может отцепить лебёдку от машины хоста, в том числе при лаге и потерях.
+- Хост ведёт машины клиентов только по их собственному потоку (без прыжков на метры); чужие колёса крутятся верно
+  при заднем ходе, фары заднего хода следуют за машиной, машина без свежих данных стоит на месте.
 ## 0.2.3
 
 Both players need 0.2.3. From 0.1.8.1+ the in-game updater offers this release.

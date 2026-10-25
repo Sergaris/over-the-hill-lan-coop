@@ -25,7 +25,9 @@ namespace OthLan;
 ///   --othlan-carsync off|measure|on       CarSync override (measure = send poses, host logs the gap, never moves cars)
 ///   --othlan-netem t:rttMs:loss%,...      client side: extra RTT / loss on OUR UDP side channel from t s on (Fusion untouched)
 ///   --othlan-toggle t:on|off,...          host: flip CarSync via CarSync.UserToggle (the F7 button's call)
-///   --othlan-winch tAttach,tDetach        client: attach the own winch to the ground ~12 m ahead, detach later
+///   --othlan-winch tAttach,tDetach[,car[,btn]]  client: attach the own winch to the ground ~12 m ahead (car: to the
+///                                         nearest other player's car), detach later (btn: by the ReleaseWinch input
+///                                         button for 120 input polls instead of the detach RPC); winch state is logged after both
 ///   --othlan-hostjump t                   host: move the client's car 6 m on the host once (like a game teleport)
 ///   --othlan-ram t0:t1                    while driving, from t0 to t1 s: steer at the nearest other car (collision test)
 ///   --othlan-lights SEC:on|off,...        toggle own headlights at scenario second (U3/R1); metrics CSV gains lightWant/lightSeen columns
@@ -51,6 +53,9 @@ namespace OthLan;
 ///   --othlan-fnetem t:delayMs:jitterMs:stallEveryMs:stallMs,...  Fusion datagrams of this process from t on: delay+jitter
 ///                                         per direction, incoming held for stallMs every stallEveryMs (0.1.8; 0:0:0:0:0 = off)
 ///   --othlan-own off|measure|suppress     own-car prediction reset: no hooks / vanilla but measured / phase 2 (default: config)
+///   --othlan-loss t:pct,... [--othlan-lossdir in|out]  partial Fusion loss from t on (lossdir: only receives / only sends)
+///   --othlan-census t,...                 log networked object sizes and per-tick state changes (StateCensus)
+///   --othlan-park-visit t                 host: visit the nearest parked car, check it wakes, moves and parks again
 ///   (always) {tag}-trace.csv at 20 Hz: outage state, own car, rollback, the host's view of client cars and their inputs
 /// While active it also: sets Application.runInBackground, suppresses the game's own save writes (OverlandSaver.SaveGame,
 /// SaveSettings, SaveJson, FogOfWarManager.SaveFogOfWarTexture) so two instances never touch the real profile, and does
@@ -70,7 +75,7 @@ internal static unsafe class Autopilot
     static float _ramFrom = -1, _ramTo = -1, _ramSteer, _ramDist = -1; static bool _ramming; public static int RamContacts; static float _nextRamScan; static FusionPlayer[] _ramCars = Array.Empty<FusionPlayer>();
     static readonly List<(float t, bool on)> Lights = new(); static int _nextLight; public static int LightToggles, LightMismatches;
     static readonly List<(float t, float v)> CpMins = new(); static int _nextCpMin;
-    static float _winchAt = -1, _winchOffAt = -1, _winchCheckAt = -1;
+    static float _winchAt = -1, _winchOffAt = -1, _winchCheckAt = -1; static bool _winchToCar, _winchBtn; static int _releaseWinchFrames;
     static readonly List<float> F7Shots = new();
     static int _nextToggle, _nextF7; static float _f7HideAt = -1, _f7ShotAt = -1; static string _f7Name;
     /// <summary>Host self-test: override HostInfo liverymods= (null = collect for real).</summary>
@@ -78,6 +83,8 @@ internal static unsafe class Autopilot
     /// <summary>Client self-test: when ModLiveryGate opens — "cancel" or "download".</summary>
     public static string ModGateAction;
     static float _modGateAt = -1; static bool _modGateShot;
+    static int _modGatePhase; // 0 wait/shot, 1 Move(Right)×N, 2 Submit (+fallback)
+    static int _modGateMovesLeft;
     static int _nextShot, _nextNetem;
     static StreamWriter _log;
     static float _t0 = -1, _nextRow, _lastStatusLog, _pausedT = -1, _carSeenAt = -1;
@@ -86,6 +93,13 @@ internal static unsafe class Autopilot
     public static int Unstucks;
     static readonly List<string> Checks = new();
     static int _passed, _failed;
+    /// <summary>Records a PASS/FAIL line for the summary and the log.</summary>
+    internal static void Check(string area, bool ok, string what)
+    {
+        (ok ? ref _passed : ref _failed)++;
+        Checks.Add($"{(ok ? "PASS" : "FAIL")} {area}: {what}");
+        Plugin.L.LogWarning($"[Autopilot] {area} {(ok ? "PASS" : "FAIL")}: {what}");
+    }
     public static string DemoName; static string _persona; static float _nextScrub;
     /// <summary>Demo mode: replace the Steam persona name (and the PC user name) in every TextMeshPro text.</summary>
     static void Scrub(float now)
@@ -165,7 +179,7 @@ internal static unsafe class Autopilot
             foreach (var part in tg.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); Toggles.Add((float.Parse(f[0], ci), f[1] == "on")); }
         if (Arg("--othlan-winch") is { } wa)
-        { var f = wa.Split(','); _winchAt = float.Parse(f[0], ci); _winchOffAt = float.Parse(f[1], ci); }
+        { var f = wa.Split(','); _winchAt = float.Parse(f[0], ci); _winchOffAt = float.Parse(f[1], ci); _winchToCar = f.Length > 2 && f[2] == "car"; _winchBtn = f.Length > 3 && f[3] == "btn"; }
         if (Arg("--othlan-cpmin") is { } cm)
             foreach (var part in cm.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); CpMins.Add((float.Parse(f[0], ci), float.Parse(f[1], ci))); }
@@ -203,6 +217,11 @@ internal static unsafe class Autopilot
             foreach (var part in ls.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); Losses.Add((float.Parse(f[0], ci), float.Parse(f[1], ci) / 100f)); }
         Losses.Sort((a, b) => a.t.CompareTo(b.t));
+        if (Arg("--othlan-lossdir") is "in" or "out") OutageSim.LossDir = Arg("--othlan-lossdir");
+        if (Arg("--othlan-census") is { } cs)
+            foreach (var part in cs.Split(',', StringSplitOptions.RemoveEmptyEntries)) Census.Add(float.Parse(part, ci));
+        Census.Sort();
+        if (Arg("--othlan-park-visit") is { } pv) ParkVisitTest.At = float.Parse(pv, ci);
         if (Arg("--othlan-fnetem") is { } fn)
             foreach (var part in fn.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); FNetem.Add((float.Parse(f[0], ci), int.Parse(f[1], ci), int.Parse(f[2], ci), int.Parse(f[3], ci), int.Parse(f[4], ci))); }
@@ -285,6 +304,11 @@ internal static unsafe class Autopilot
         // UpdateHandbrakeInput when throttle > 0 at that moment; our throttle is written after, so release it first.
         if (Driving && self != IntPtr.Zero && *(int*)((byte*)self + 0x80) == 2) { *(int*)((byte*)self + 0x80) = 0; HandbrakeReleases++; }
         _inOrig(self, runner, input, mi);
+        if (_releaseWinchFrames > 0 && input != IntPtr.Zero && *(uint**)input != null)
+        {   // NetworkInputData.Buttons (+0x18), bit VehicleButtons.ReleaseWinch: the player's "release winch" press
+            *(int*)((byte*)(*(uint**)input + 1) + 0x18) |= 1 << (int)NetworkInputData.VehicleButtons.ReleaseWinch;
+            _releaseWinchFrames--;
+        }
         if (!Driving || input == IntPtr.Zero) return;
         try
         {
@@ -353,7 +377,24 @@ internal static unsafe class Autopilot
         RealtimeActions(now);
         if (_finished) return;
         var rb = LanState.Active != LanRole.Off ? FindOwnCar(now) : null;
-        if (_t0 < 0)
+        if (_t0 < 0 && !StartScenarioClock(now, rb)) return;
+        var t = now - _t0;
+        _driveT = t;
+        Driving = t < DriveS;
+        DriveTargets(t, now, rb);
+        ScheduledNetAndCar(t);
+        ScheduledTests(t);
+        ParkVisitTest.Tick(t);
+        Screenshots(t);
+        NetSim(t, rb);
+        if (now >= _nextTrace) { _nextTrace = now + 0.05f; Trace(t, now, rb); }
+        if (now >= _nextRow) { _nextRow = now + 0.5f; Row(t, rb); try { _trace?.Flush(); } catch { } }
+        if (t > QuitS) Finish("scenario done");
+    }
+
+    /// <summary>Before the scenario: wait for the own car in the world (pokes the lobby); true once the clock starts.</summary>
+    static bool StartScenarioClock(float now, Rigidbody rb)
+    {
         {
             // client: wait for the spawn (lobby -> map -> spawn teleport); c4: with 4 games on one PC the lobby came seconds
             // after the car appeared, the scenario had already started and nobody pressed Join -> the parked car fell
@@ -366,12 +407,15 @@ internal static unsafe class Autopilot
                 if (LanState.Active != LanRole.Off && now >= _nextLobbyPoke) { _nextLobbyPoke = now + 3f; PokeLobby(); }
                 if (now - _lastStatusLog > 10) { _lastStatusLog = now; Plugin.L.LogInfo($"[Autopilot] waiting: active={LanState.Active} status={LanState.LastStatus}"); }
                 if (now > Delay + 240 + Rejoins * 240 && _menuQuit < 0) Finish("never got into the world");
-                return;
+                return false;
             }
         }
-        var t = now - _t0;
-        _driveT = t;
-        Driving = t < DriveS;
+        return true;
+    }
+
+    /// <summary>Unstuck reversing and the ram target (both read by OnInputDetour).</summary>
+    static void DriveTargets(float t, float now, Rigidbody rb)
+    {
         if (Driving && rb != null && t > 5 && t >= _reverseUntil && t % 20f < 16f)
         {
             if (rb.linearVelocity.magnitude * 3.6f < 2f) { if (_slowSince < 0) _slowSince = t; else if (t - _slowSince > 3f) { _reverseUntil = t + 2.5f; _slowSince = -1; Unstucks++; } }
@@ -397,6 +441,11 @@ internal static unsafe class Autopilot
             }
             else _ramSteer = 0;
         }
+    }
+
+    /// <summary>Scheduled side-channel netem, F7 toggle, headlights, checkpoint-min override.</summary>
+    static void ScheduledNetAndCar(float t)
+    {
         while (_nextNetem < Netem.Count && Netem[_nextNetem].t <= t)
         {
             var n = Netem[_nextNetem++];
@@ -431,6 +480,11 @@ internal static unsafe class Autopilot
             HostFollower.CheckpointMinOverride = CpMins[_nextCpMin++].v;
             Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s checkpoint-min override = {HostFollower.CheckpointMinOverride}");
         }
+    }
+
+    /// <summary>Scheduled scenario tests: rejoin, host jump, winch attach/check/detach, contact box override.</summary>
+    static void ScheduledTests(float t)
+    {
         if (_rejoinAt >= 0 && t >= _rejoinAt && LanState.Active == LanRole.Client)
         {
             _rejoinAt = -1; Rejoins++;
@@ -445,7 +499,7 @@ internal static unsafe class Autopilot
             foreach (var k in HostFollower.Metrics.Keys) { HostFollower.TestJumpSlot = k; break; }
             Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s host jump test on slot {HostFollower.TestJumpSlot}");
         }
-        if (_winchAt >= 0 && t >= _winchAt) { _winchAt = -1; WinchAttach(t); _winchCheckAt = t + 2; }
+        if (_winchAt >= 0 && t >= _winchAt) { _winchAt = -1; if (_winchToCar) WinchAttachCar(t); else WinchAttach(t); _winchCheckAt = t + 2; }
         if (_winchCheckAt >= 0 && t >= _winchCheckAt)
         {
             _winchCheckAt = -1;
@@ -455,14 +509,21 @@ internal static unsafe class Autopilot
         if (_winchOffAt >= 0 && t >= _winchOffAt)
         {
             _winchOffAt = -1;
-            try { HostFollower.OwnWinch(out _)?.RPC_DetachWinchAndDisableWinchPoints(); Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch detach requested"); }
+            if (_winchBtn) { _releaseWinchFrames = 120; Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch release button held"); }
+            else try { HostFollower.OwnWinch(out _)?.RPC_DetachWinchAndDisableWinchPoints(); Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch detach requested"); }
             catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] winch detach failed: {e.Message}"); }
+            _winchCheckAt = t + 3;
         }
         while (_nextBox < ContactBoxes.Count && ContactBoxes[_nextBox].t <= t)
         {
             CarSync.ContactBoxOverride = ContactBoxes[_nextBox++].box;
             Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s contact box override = {CarSync.ContactBoxOverride} m");
         }
+    }
+
+    /// <summary>Scheduled F7 and HUD screenshots (with the label checks).</summary>
+    static void Screenshots(float t)
+    {
         if (_nextF7 < F7Shots.Count && F7Shots[_nextF7] <= t && _f7ShotAt < 0)
         {
             Overlay.SetShownForTest(true);
@@ -484,6 +545,17 @@ internal static unsafe class Autopilot
             Plugin.L.LogInfo($"[Autopilot] screenshot {path} label='{PingHud.LastText}' {PingHud.LastLevel} anchor={PingHud.LastAnchor} rect={R(PingHud.LastLabel)} icon={R(PingHud.LastIcon)}");
             CheckLabel(t);
         }
+    }
+
+    /// <summary>Scheduled outages, loss and Fusion netem; pumps OutageSim; outage screenshots.</summary>
+    static float _nextSendStats = 30;
+    static readonly List<float> Census = new();
+    static int _nextCensus;
+    static void NetSim(float t, Rigidbody rb)
+    {
+        if (OutageSim.Installed && t >= _nextSendStats) { _nextSendStats = t + 30; Plugin.L.LogWarning($"[Autopilot] t={t:0}s {OutageSim.DescribeSends()}"); }
+        while (_nextCensus < Census.Count && Census[_nextCensus] <= t) { _nextCensus++; StateCensus.Begin($"t={t:0}s"); }
+        StateCensus.Tick();
         // An outage waits (max 20 s) until the own car moves > 8 km/h: outages "at speed" must not hit a stuck car.
         while (_nextOutage < Outages.Count && Outages[_nextOutage].t + _outageDelay <= t && _outageEnd < 0)
         {
@@ -518,9 +590,6 @@ internal static unsafe class Autopilot
             ScreenCapture.CaptureScreenshot(path);
             Plugin.L.LogInfo($"[Autopilot] outage screenshot {path}");
         }
-        if (now >= _nextTrace) { _nextTrace = now + 0.05f; Trace(t, now, rb); }
-        if (now >= _nextRow) { _nextRow = now + 0.5f; Row(t, rb); try { _trace?.Flush(); } catch { } }
-        if (t > QuitS) Finish("scenario done");
     }
 
     /// <summary>Things on the realtime clock (before/without the world): the version dialog, menu F7 shots, gate-only quit.</summary>
@@ -567,37 +636,134 @@ internal static unsafe class Autopilot
         Scrub(now);
     }
 
-    /// <summary>Pre-join missing-mods dialog: screenshot, then Cancel or Download (self-test).</summary>
+    /// <summary>
+    /// T1.3: missing-mods dialog via EventSystem Move/Submit (same path as a gamepad), not direct method calls.
+    /// Row is Download | JoinWithout | Cancel; focus starts on Download.
+    /// </summary>
     static void ModGateTick(float now)
     {
         if (string.IsNullOrEmpty(ModGateAction) || !ModLiveryGate.Active) return;
-        if (_modGateAt < 0) { _modGateAt = now + 1.5f; Plugin.L.LogWarning($"[Autopilot] mod gate visible → {ModGateAction} at rt {_modGateAt:0.0}s"); }
-        if (!_modGateShot && now >= _modGateAt)
+        if (_modGateAt < 0)
         {
-            var path = Path.Combine(OutDir, $"{Tag}-modgate.png");
-            ScreenCapture.CaptureScreenshot(path);
-            _modGateShot = true;
-            Checks.Add($"PASS realtime {now:0}s mod gate dialog (action={ModGateAction}) shot {Path.GetFileName(path)}");
-            Plugin.L.LogWarning($"[Autopilot] mod gate screenshot {path}");
-            _modGateAt = now + 1.0f;
+            _modGateAt = now + 1.5f; _modGatePhase = 0; _modGateShot = false;
+            Plugin.L.LogWarning($"[Autopilot] mod gate visible → {ModGateAction} at rt {_modGateAt:0.0}s");
+        }
+        if (_modGatePhase == 0 && now >= _modGateAt)
+        {
+            if (!_modGateShot)
+            {
+                var path = Path.Combine(OutDir, $"{Tag}-modgate.png");
+                ScreenCapture.CaptureScreenshot(path);
+                _modGateShot = true;
+                Checks.Add($"PASS realtime {now:0}s mod gate dialog (action={ModGateAction}) shot {Path.GetFileName(path)}");
+                Plugin.L.LogWarning($"[Autopilot] mod gate screenshot {path}");
+                _modGateAt = now + 0.4f;
+                return;
+            }
+            _modGateMovesLeft = ModGateRights(ModGateAction);
+            _modGatePhase = _modGateMovesLeft > 0 ? 1 : 2;
+            _modGateAt = now + 0.2f;
             return;
         }
-        if (_modGateShot && now >= _modGateAt)
+        if (_modGatePhase == 1 && now >= _modGateAt)
+        {
+            Move(UnityEngine.EventSystems.MoveDirection.Right);
+            _modGateMovesLeft--;
+            Plugin.L.LogWarning($"[Autopilot] mod gate Move(Right) sel='{Sel()?.name ?? "none"}' left={_modGateMovesLeft}");
+            if (_modGateMovesLeft <= 0) _modGatePhase = 2;
+            _modGateAt = now + 0.25f;
+            return;
+        }
+        if (_modGatePhase == 2 && now >= _modGateAt)
         {
             var act = ModGateAction; ModGateAction = null;
-            if (act.Equals("download", StringComparison.OrdinalIgnoreCase)) ModLiveryGate.StartDownload();
-            else if (act.Equals("joinwithout", StringComparison.OrdinalIgnoreCase) || act.Equals("skip", StringComparison.OrdinalIgnoreCase))
-                ModLiveryGate.JoinWithoutMods();
-            else ModLiveryGate.Cancel();
-            Checks.Add($"INFO realtime {now:0}s mod gate answered '{act}'");
+            var before = Sel()?.name ?? "none";
+            var stBefore = ModLiveryGate.State;
+            Submit();
+            ModGateFinish(now, act, before, stBefore);
+            _modGatePhase = 0;
         }
+    }
+
+    /// <summary>How many Right presses from Download to reach the requested action.</summary>
+    static int ModGateRights(string act)
+    {
+        if (string.IsNullOrEmpty(act)) return 2;
+        if (act.Equals("download", StringComparison.OrdinalIgnoreCase)) return 0;
+        if (act.Equals("joinwithout", StringComparison.OrdinalIgnoreCase) || act.Equals("skip", StringComparison.OrdinalIgnoreCase))
+            return 1;
+        return 2; // cancel
+    }
+
+    static bool ModGateSelIs(string want, string selName) =>
+        !string.IsNullOrEmpty(selName) && selName.IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0;
+
+    /// <summary>
+    /// Score Move/Submit: download succeeds when State→Downloading (gate stays open);
+    /// joinwithout/cancel succeed when gate closes AND the selected button matched.
+    /// </summary>
+    static void ModGateFinish(float now, string act, string before, ModLiveryGate.St stBefore)
+    {
+        var st = ModLiveryGate.State;
+        if (act.Equals("download", StringComparison.OrdinalIgnoreCase))
+        {
+            if (st == ModLiveryGate.St.Downloading && ModGateSelIs("Download", before))
+            {
+                Checks.Add($"PASS realtime {now:0}s mod gate via Move/Submit download (sel='{before}')");
+                return;
+            }
+            if (st == ModLiveryGate.St.Prompt)
+            {
+                Plugin.L.LogWarning($"[Autopilot] mod gate download Submit failed (sel='{before}' state={stBefore}→{st}) — fallback");
+                ModLiveryGate.StartDownload();
+                Checks.Add($"INFO realtime {now:0}s mod gate nav→fallback download (sel was '{before}')");
+                return;
+            }
+            Checks.Add($"INFO realtime {now:0}s mod gate download ambiguous sel='{before}' state={stBefore}→{st}");
+            return;
+        }
+
+        if (act.Equals("joinwithout", StringComparison.OrdinalIgnoreCase) || act.Equals("skip", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!ModLiveryGate.Active && ModGateSelIs("JoinWithout", before))
+            {
+                Checks.Add($"PASS realtime {now:0}s mod gate via Move/Submit joinwithout (sel='{before}')");
+                return;
+            }
+            if (ModLiveryGate.Active)
+            {
+                Plugin.L.LogWarning($"[Autopilot] mod gate joinwithout Submit failed (sel='{before}') — fallback");
+                ModLiveryGate.JoinWithoutMods();
+                Checks.Add($"INFO realtime {now:0}s mod gate nav→fallback joinwithout (sel was '{before}')");
+                return;
+            }
+            Checks.Add($"FAIL realtime {now:0}s mod gate closed but sel was '{before}' (wanted JoinWithout)");
+            _failed++;
+            return;
+        }
+
+        // cancel
+        if (!ModLiveryGate.Active && ModGateSelIs("Cancel", before))
+        {
+            Checks.Add($"PASS realtime {now:0}s mod gate via Move/Submit cancel (sel='{before}')");
+            return;
+        }
+        if (ModLiveryGate.Active)
+        {
+            Plugin.L.LogWarning($"[Autopilot] mod gate cancel Submit failed (sel='{before}') — fallback");
+            ModLiveryGate.Cancel();
+            Checks.Add($"INFO realtime {now:0}s mod gate nav→fallback cancel (sel was '{before}')");
+            return;
+        }
+        Checks.Add($"FAIL realtime {now:0}s mod gate closed but sel was '{before}' (wanted Cancel)");
+        _failed++;
     }
 
     // ---------- 0.1.8 updater ----------
     public static string UpdAction;
     static int _updStep; static float _updAt = -1;
     static void UpdShot(string name) { var p = Path.Combine(OutDir, $"{Tag}-upd-{name}.png"); ScreenCapture.CaptureScreenshot(p); Plugin.L.LogWarning($"[Autopilot] update screenshot {p}"); }
-    static void UpdCheck(bool ok, string what) { (ok ? ref _passed : ref _failed)++; Checks.Add($"{(ok ? "PASS" : "FAIL")} update: {what}"); Plugin.L.LogWarning($"[Autopilot] update {(ok ? "PASS" : "FAIL")}: {what}"); }
+    static void UpdCheck(bool ok, string what) => Check("update", ok, what);
     static void UpdSteps(float now)
     {
         if (now < Delay) return;
@@ -746,7 +912,7 @@ internal static unsafe class Autopilot
     static int _coopStep, _coopPick; static float _coopAt = -1, _coopDeadline; static string _coopLastState; static int _coopSubmits;
     static readonly HashSet<string> _coopShots = new();
     static void CoopShot(string name) { var p = Path.Combine(OutDir, $"{Tag}-coop-{name}.png"); ScreenCapture.CaptureScreenshot(p); Plugin.L.LogWarning($"[Autopilot] coop screenshot {p}"); }
-    static void CoopCheck(bool ok, string what) { (ok ? ref _passed : ref _failed)++; Checks.Add($"{(ok ? "PASS" : "FAIL")} coop: {what}"); Plugin.L.LogWarning($"[Autopilot] coop {(ok ? "PASS" : "FAIL")}: {what}"); }
+    static void CoopCheck(bool ok, string what) => Check("coop", ok, what);
     static string TopState() { try { return FunCore.Managers.HybridSingleton<FunCore.Managers.GameStateManager>.Instance?.PeekState()?.GetIl2CppType()?.Name ?? "null"; } catch { return "?"; } }
 
     static bool _modsBefore;
@@ -951,6 +1117,32 @@ internal static unsafe class Autopilot
         catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] winch attach failed: {e}"); }
     }
 
+    /// <summary>Same RPC the game uses for a rope to another player's car: own winch point -> that car's centre.</summary>
+    static void WinchAttachCar(float t)
+    {
+        try
+        {
+            var w = HostFollower.OwnWinch(out var car);
+            if (w == null || car == null) { Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch: no own winch component"); return; }
+            FusionPlayer best = null; var bd = float.MaxValue;
+            foreach (var fp in CarRegistry.Players)
+            {
+                if (fp == null || fp.WasCollected || fp.Object == null || fp == car) continue;
+                var d = Vector3.Distance(fp.transform.position, car.transform.position); if (d < bd) { bd = d; best = fp; }
+            }
+            if (best == null) { Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch: no other car"); return; }
+            var pts = w.winchPoints;
+            var wp = pts != null && pts.Length > 0 ? pts[0] : car.transform;
+            var rbT = car.rigidbody != null ? car.rigidbody.transform : car.transform;
+            var local = rbT.InverseTransformPoint(wp.position);
+            var other = best.rigidbody != null ? best.rigidbody.transform : best.transform;
+            var otherLocal = other.InverseTransformPoint(other.position + Vector3.up * 0.5f);
+            w.RPC_AttachWinchToPlayerCar(local, best.Object.InputAuthority, otherLocal);
+            Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch attach to car {best.gameObject.name} slot {best.Object.InputAuthority.PlayerId} ({bd:0.0} m) requested");
+        }
+        catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] winch attach to car failed: {e}"); }
+    }
+
     static string R(Rect r) => $"{r.x:0},{r.y:0},{r.width:0},{r.height:0}";
     static string F(double v) => double.IsNaN(v) ? "" : v.ToString("0.###", CultureInfo.InvariantCulture);
 
@@ -1082,6 +1274,7 @@ internal static unsafe class Autopilot
         sb.AppendLine($"gate: tier={BuildGate.Tier} outcome={BuildGate.Outcome} fusion={BuildGate.FusionVersion} buildKey={BuildGate.BuildKey} hooks={FusionHooks.Applied} reasons={string.Join(" | ", BuildGate.Reasons)}");
         sb.AppendLine($"slots: role={LanState.Active} clientId={LanState.ClientId} seen=[{string.Join(",", SlotsSeen)}] rejoins={Rejoins} hostTable=[{LanState.Slots.Describe()}]");
         sb.AppendLine($"carsync: local={CarSync.LocalSetting} hostFlag={CarSync.HostFlag} sent={HostFollower.PosesSent} recv={HostFollower.PosesReceived} rejected={HostFollower.PosesRejected} teleportFramesIgnored={HostFollower.TeleportsIgnored}");
+        if (OutageSim.Installed) sb.AppendLine(OutageSim.DescribeSends());
         sb.AppendLine($"carsync: snaps={HostFollower.Snaps} snapLoopsBroken={HostFollower.SnapLoopsBroken} softSnaps={HostFollower.SoftSnaps} checkpointsSkipped={HostFollower.CheckpointsSkipped} contactPauses={HostFollower.ContactPauses} winchPauses={HostFollower.WinchPauses} hostJumps={HostFollower.HostJumps} teleports={HostFollower.Teleports} rams={RamContacts} blends={HostFollower.Blends} servos={HostFollower.Servos} modeSwitches={HostFollower.ModeSwitches} {string.Join(" ", HostFollower.HostStats.Select(kv => $"slot{kv.Key}: {kv.Value}"))}");
         sb.AppendLine($"carsync v2: frozenClientPoses={HostFollower.FrozenClientPoses} jumpsTowardClient={HostFollower.JumpsTowardClient} lowConverges={HostFollower.LowConverges} acceptsSent={HostFollower.AcceptsSent} recoveries={HostFollower.Recoveries} (quiet={HostFollower.RecoverQuiet} converge={HostFollower.RecoverConverge} snap={HostFollower.RecoverSnap}) playbackOk={HostFollower.PlaybackOk} playbackExtraps={HostFollower.PlaybackExtraps} converge times=[{string.Join(",", HostFollower.ConvergeTimes.Select(x => x.ToString("0.00", CultureInfo.InvariantCulture)))}]");
         sb.AppendLine($"netstats: {NetStats.Describe()}");

@@ -172,7 +172,8 @@ internal static unsafe class OwnCar
     static InteractionLogic.Mode _interactMode;
     static double _enteredSharedAt, _lastWantAt;
     static float _nextSuspendScan; static FusionPlayer[] _suspendPeers = Array.Empty<FusionPlayer>();
-    static InteractionLogic.Cfg InteractCfg()
+    /// <summary>0.2.3 T4.2: one Plugin→InteractionLogic.Cfg map for client and host.</summary>
+    internal static InteractionLogic.Cfg InteractCfg()
     {
         var c = new InteractionLogic.Cfg
         {
@@ -202,8 +203,8 @@ internal static unsafe class OwnCar
     public static void Tick()
     {
         if (LanState.Active != LanRole.Client) { Forget(); State = "off"; return; }
-        var r = OverlandNetworkRunner.Instance?.NetworkRunner;
-        if (r == null || r.Pointer != LanState.LanRunner || !r.IsRunning) { Forget(); State = "off"; return; }
+        var r = LanState.Runner();
+        if (r == null) { Forget(); State = "off"; return; }
         // link-gap clock for the post-outage rule: side channel down, or our Fusion tick stalled (> 0.3 s)
         LastNoLinkAt();
         try { var tk = r.Tick.Raw; if (tk != _gapTick) { _gapTick = tk; _gapTickAt = NetClock.Now; } else if (NetClock.Now - _gapTickAt > 0.3) _noLinkAt = NetClock.Now; } catch { }
@@ -255,7 +256,7 @@ internal static unsafe class OwnCar
         if (_nrb != null && _origSmooth >= 0) { try { _nrb.CorrectionSmoothingTime = _origSmooth; _nrb.CorrectionSnapDistance = _origSnap; } catch { } }
         _own = null; _ownPtr = IntPtr.Zero; _rb = null; _nrb = null; _vb = null; _captured = false; _boostUntil = -1; _origSmooth = -1;
         _acceptUntil = -1; _fallbackUntil = -1; _bigSince = -1; _patchedSim = IntPtr.Zero;
-        InteractionSuspended = false; _interactMode = InteractionLogic.Mode.Owner; _enteredSharedAt = _lastWantAt = 0; _nextSuspendScan = 0;
+        InteractionSuspended = false; _interactMode = InteractionLogic.Mode.Owner; _enteredSharedAt = _lastWantAt = 0; _nextSuspendScan = 0; _winchTagSeen = "none";
     }
 
     static void BeforeResetDetour(IntPtr self, IntPtr mi)
@@ -328,12 +329,24 @@ internal static unsafe class OwnCar
                 var now = NetClock.Now;
                 var p = _rb.position; var q = _rb.rotation;
                 var err = Vector3.Distance(p, _cp); var errDeg = Quaternion.Angle(q, _cq);
-                LastErr = err; LastErrDeg = errDeg; SumErr += err; ErrSamples++; if (err > MaxErr) MaxErr = err;
-                if (err > 1) ErrOver1m++; if (err > 5) ErrOver5m++;
+                LastErr = err; LastErrDeg = errDeg;
+                var spawnTransition = false;
                 if (!_spawned && err > Plugin.OwnAcceptMeters.Value)
-                { _spawned = true; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Plugin.L.LogInfo($"[OwnCar] spawn move {err:0} m seen: phase 2 from now on"); try { CarStreamSender.BumpEpoch("spawn move"); } catch { } }
+                {
+                    spawnTransition = true;
+                    _spawned = true; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value;
+                    Plugin.L.LogInfo($"[OwnCar] spawn move {err:0} m seen: phase 2 from now on");
+                    try { CarStreamSender.BumpEpoch("spawn move"); } catch { }
+                }
+                var restoresBefore = Restores;
                 if (Phase2Active(now)) Decide(now, err, errDeg);
-                NetStats.OnOwnCorrection(err);
+                var restoredOwn = Restores > restoresBefore;
+                if (OwnCarLogic.CountOwnCorrection(Phase2Active(now), restoredOwn, spawnTransition))
+                {
+                    SumErr += err; ErrSamples++; if (err > MaxErr) MaxErr = err;
+                    if (err > 1) ErrOver1m++; if (err > 5) ErrOver5m++;
+                    NetStats.OnOwnCorrection(err);
+                }
             }
         }
     }
@@ -419,6 +432,7 @@ internal static unsafe class OwnCar
         return _noLinkAt;
     }
 
+    static string _winchTagSeen = "none";
     static void UpdateSuspend(double now)
     {
         if (_own == null || _rb == null)
@@ -457,7 +471,8 @@ internal static unsafe class OwnCar
             }
         }
         catch { }
-        // Host winch flag has no Car/World split yet — treat as Car (forces HostShared).
+        if (winchTag != _winchTagSeen) { Plugin.L.LogInfo($"[OwnCar] own winch: {_winchTagSeen} -> {winchTag} (host flag {CarSync.HostSuspendWinch})"); _winchTagSeen = winchTag; }
+        // Host sets FlagSuspendWinch only when WantShared (T4.2); treat as Car so WantShared stays true.
         var winchHost = CarSync.HostSuspendWinch ? WinchKindLogic.Kind.Car : WinchKindLogic.Kind.None;
         var cfg = InteractCfg();
         cfg.ResumeSeconds = InteractionLogic.ResumeDelay(cfg, PingHud.SmoothedMs, 0.1);

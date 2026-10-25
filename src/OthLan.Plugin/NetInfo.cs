@@ -22,14 +22,13 @@ internal static class NetInfo
     /// screenshots carry no real address; networking always uses <see cref="RadminIp"/>.</summary>
     public static string DisplayIp() => DemoIp ?? RadminIp();
     public static string DemoIp;
-    /// <summary>Demo mode: this PC's real Radmin address inside a shown text (e.g. "connected to ...") becomes a placeholder.</summary>
+    /// <summary>Demo mode: this PC's real Radmin address inside a shown text (e.g. "connected to ...") becomes DemoIp.</summary>
     public static string Mask(string s)
     {
+        // Skip RadminIp() when not demo — F7/CoopMenu call Mask every refresh.
         if (DemoIp == null || string.IsNullOrEmpty(s)) return s;
-        _real ??= RadminIp() ?? "";
-        return _real.Length > 0 ? s.Replace(_real, "26.10.20.30") : s;
+        return NetInfoLogic.MaskIp(s, RadminIp(), DemoIp);
     }
-    static string _real;
 
     /// <summary>Radmin VPN hands out 26.0.0.0/8 addresses on "Famatech Radmin VPN Ethernet Adapter".</summary>
     public static string RadminIp()

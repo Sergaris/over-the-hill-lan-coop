@@ -34,6 +34,7 @@ internal static class RemoteCarView
         public Quaternion PhysQ = Quaternion.identity;
         public bool HasPhys;
         public bool ServoPending; // PrePhysics set velocities; PostPhysicsStep stores pose after Simulate
+        public double PullSince = -1; // proxyPull open timer (AcceptMetricsLogic)
     }
 
     static readonly Dictionary<int, Slot> _slots = new();
@@ -45,6 +46,9 @@ internal static class RemoteCarView
 
     public static int StreamFrames, FusionFrames, Snaps, StaleFrames, ExtrapolatedFrames, SourceSwitches, RemoteBelow;
     public static int ProxiesTuned, Interpolated;
+    /// <summary>§5.2: max extrapErr (m) and max completed proxyPull (s) in the NetStats window.</summary>
+    public static double ExtrapErrMax, ProxyPullMax, ProxyPullOpenMaxAge;
+    public static int ExtrapErrSamples, ProxyPullSamples, ProxyPullOpen, ProxyPullAborted;
 
     static readonly List<IntPtr> _interpolated = new();
 
@@ -54,10 +58,40 @@ internal static class RemoteCarView
         _interpolated.Clear();
         StreamFrames = FusionFrames = Snaps = StaleFrames = ExtrapolatedFrames = SourceSwitches = RemoteBelow = 0;
         ProxiesTuned = Interpolated = 0;
+        ClearAcceptWindow();
     }
 
-    public static string Describe() =>
-        $"remoteView stream={StreamFrames} fusion={FusionFrames} stale={StaleFrames} extrap={ExtrapolatedFrames} snaps={Snaps} switches={SourceSwitches} remoteBelow={RemoteBelow} proxies={ProxiesTuned} interp={Interpolated}";
+    /// <summary>NetStats 30 s window: clear accept counters + open pull timers (do not span windows).</summary>
+    public static void ClearAcceptWindow()
+    {
+        ExtrapErrMax = ProxyPullMax = ProxyPullOpenMaxAge = 0;
+        ExtrapErrSamples = ProxyPullSamples = ProxyPullOpen = ProxyPullAborted = 0;
+        foreach (var sl in _slots.Values) sl.PullSince = -1;
+    }
+
+    public static string Describe()
+    {
+        ScanOpenPulls(NetClock.Now);
+        return $"remoteView stream={StreamFrames} fusion={FusionFrames} stale={StaleFrames} extrap={ExtrapolatedFrames} snaps={Snaps} switches={SourceSwitches} remoteBelow={RemoteBelow} proxies={ProxiesTuned} interp={Interpolated} extrapErrMax={ExtrapErrMax:0.00}m n={ExtrapErrSamples} proxyPullMax={ProxyPullMax:0.00}s done={ProxyPullSamples} open={ProxyPullOpen} openAge={ProxyPullOpenMaxAge:0.00}s abort={ProxyPullAborted}";
+    }
+
+    static void ScanOpenPulls(double now)
+    {
+        ProxyPullOpen = 0; ProxyPullOpenMaxAge = 0;
+        foreach (var sl in _slots.Values)
+        {
+            var age = AcceptMetricsLogic.ProxyPullOpenAge(sl.PullSince, now);
+            if (double.IsNaN(age)) continue;
+            ProxyPullOpen++;
+            if (age > ProxyPullOpenMaxAge) ProxyPullOpenMaxAge = age;
+        }
+    }
+
+    static void AbortPull(Slot sl, double now)
+    {
+        var age = AcceptMetricsLogic.ProxyPullAbort(ref sl.PullSince, now);
+        if (!double.IsNaN(age)) ProxyPullAborted++;
+    }
 
     /// <summary>True when this slot has a non-stale stream sample younger than FreshAgeS (RemoteSmooth must not fight it).</summary>
     public static bool HasFreshStream(int slot, double nowLocal)
@@ -104,6 +138,16 @@ internal static class RemoteCarView
         try
         {
             if (fp?.Runner == null || fp.Object == null) return;
+            // Host: HostFollower owns the proxy rigidbody — keep simulated + dynamic (boot023: Draw+kinematic fought follow).
+            if (LanState.Active == LanRole.Host)
+            {
+                var okH = fp.Runner.SetIsSimulated(fp.Object, true);
+                var rbH = fp.rigidbody ?? fp.vehicleBase?.cachedRigidbody;
+                if (rbH != null) rbH.isKinematic = false;
+                _interpolated.Remove(fp.Pointer);
+                Plugin.L.LogInfo($"[RemoteView] {fp.gameObject.name}: host follow (simulated) {(okH ? "ok" : "refused")}");
+                return;
+            }
             var ok = fp.Runner.SetIsSimulated(fp.Object, !on);
             var rb = fp.rigidbody ?? fp.vehicleBase?.cachedRigidbody;
             // T4.0: Servo keeps a dynamic body so contacts exchange impulse; Kinematic (default) matches RemoteInterpolate.
@@ -147,85 +191,118 @@ internal static class RemoteCarView
         var t = Time.realtimeSinceStartup;
         foreach (var e in CarRegistry.Cars)
         {
-            try
-            {
-                if (e.IsOwn || e.Fp == null || e.Slot < 0) continue;
-                var root = e.Fp.transform;
-                if (root == null) continue;
-                if (!_slots.TryGetValue(e.Slot, out var sl)) _slots[e.Slot] = sl = new Slot();
-                var dt = sl.LastT < 0 ? 0 : t - sl.LastT;
-                sl.LastT = t;
-
-                if (!sl.ProxyEnsured)
-                {
-                    var nrb = e.Fp.GetComponent<NetworkRigidbody3D>();
-                    if (nrb != null) EnsureProxyMode(e.Fp, nrb);
-                    sl.ProxyEnsured = true;
-                }
-
-                var pb = CarRelay.PlaybackOf(e.Slot);
-                var fresh = pb.Count > 0 && (now - pb.LastArrivalLocal) <= FreshAgeS;
-                var r = fresh ? pb.SampleAt(now) : default;
-                var stream = fresh && r.Ok && !r.Stale;
-                if (fresh && r.Ok && r.Stale) StaleFrames++;
-                if (stream && r.Extrapolated) ExtrapolatedFrames++;
-
-                var src = stream ? Src.Stream : Src.Fusion;
-                Vector3 targetP;
-                Quaternion targetQ;
-                if (stream)
-                {
-                    targetP = new Vector3(r.Px, r.Py, r.Pz);
-                    targetQ = new Quaternion(r.Qx, r.Qy, r.Qz, r.Qw);
-                    sl.LastSample = r;
-                    sl.HasSample = true;
-                    if (r.Snap) Snaps++;
-                    StreamFrames++;
-                }
-                else
-                {
-                    targetP = root.position;
-                    targetQ = root.rotation;
-                    sl.HasSample = false;
-                    sl.HasPhys = false; // next stream segment re-seeds from velocity
-                    sl.ServoPending = false;
-                    FusionFrames++;
-                }
-
-                if (src != sl.Last && sl.Last != Src.None && sl.HasDrawn && !(stream && r.Snap))
-                {
-                    sl.Ox = sl.LastDrawnP.x - targetP.x;
-                    sl.Oy = sl.LastDrawnP.y - targetP.y;
-                    sl.Oz = sl.LastDrawnP.z - targetP.z;
-                    sl.Oq = sl.LastDrawnQ * Quaternion.Inverse(targetQ);
-                    SourceSwitches++;
-                }
-                if (stream && r.Snap) { sl.Ox = sl.Oy = sl.Oz = 0; sl.Oq = Quaternion.identity; }
-                sl.Last = src;
-
-                if (dt > 0 && dt <= 0.25f)
-                    RemoteSmoother.DecayOffset(ref sl.Ox, ref sl.Oy, ref sl.Oz, dt, _blendCfg);
-                var keepQ = (float)RemoteSmoother.RotKeep(Quaternion.Angle(sl.Oq, Quaternion.identity), dt > 0 ? dt : 1 / 60.0, SourceBlendTau, 180);
-                sl.Oq = Quaternion.Slerp(Quaternion.identity, sl.Oq, keepQ);
-
-                var drawnP = new Vector3(targetP.x + (float)sl.Ox, targetP.y + (float)sl.Oy, targetP.z + (float)sl.Oz);
-                var drawnQ = sl.Oq * targetQ;
-                if (drawnP.y < targetP.y - 0.3f) RemoteBelow++;
-
-                // Visual root only — kinematic body is owned by PrePhysicsStep (delay 0). Writing the delayed
-                // pose into rb here made the next MovePosition invent a huge contact velocity.
-                if (stream || Math.Abs(sl.Ox) + Math.Abs(sl.Oy) + Math.Abs(sl.Oz) > 1e-4 || Quaternion.Angle(sl.Oq, Quaternion.identity) > 1e-2f)
-                    root.SetPositionAndRotation(drawnP, drawnQ);
-
-                sl.LastDrawnP = drawnP;
-                sl.LastDrawnQ = drawnQ;
-                sl.HasDrawn = true;
-            }
+            try { DrawOne(e, now, t); }
             catch (Exception ex)
             {
                 if (StreamFrames + FusionFrames < 4) Plugin.L.LogWarning($"[RemoteView] {ex.Message}");
             }
         }
+    }
+
+    static void DrawOne(CarEntry e, double now, float t)
+    {
+        if (e.IsOwn || e.Fp == null || e.Slot < 0) return;
+        var root = e.Fp.transform;
+        if (root == null) return;
+        if (!_slots.TryGetValue(e.Slot, out var sl)) _slots[e.Slot] = sl = new Slot();
+        var dt = sl.LastT < 0 ? 0 : t - sl.LastT;
+        sl.LastT = t;
+
+        if (!sl.ProxyEnsured)
+        {
+            var nrb = e.Fp.GetComponent<NetworkRigidbody3D>();
+            if (nrb != null) EnsureProxyMode(e.Fp, nrb);
+            sl.ProxyEnsured = true;
+        }
+
+        // Host: HostFollower owns root+rb. Writing OTC3 here teleported proxies to spawn (~25 m hitch in boot023).
+        // Still SampleAt(now) without delayOverride so epoch Snap is consumed (physics SampleAt must not).
+        if (LanState.Active == LanRole.Host)
+        {
+            var pbH = CarRelay.PlaybackOf(e.Slot);
+            if (pbH.Count > 0) pbH.SampleAt(now);
+            sl.LastDrawnP = root.position;
+            sl.LastDrawnQ = root.rotation;
+            sl.HasDrawn = true;
+            sl.HasPhys = true;
+            sl.PhysP = root.position;
+            sl.PhysQ = root.rotation;
+            return;
+        }
+
+        var pb = CarRelay.PlaybackOf(e.Slot);
+        var fresh = pb.Count > 0 && (now - pb.LastArrivalLocal) <= FreshAgeS;
+        var r = fresh ? pb.SampleAt(now) : default;
+        var stream = fresh && r.Ok && !r.Stale;
+        if (fresh && r.Ok && r.Stale) StaleFrames++;
+        NoteExtrapErr(pb, stream, r);
+
+        var src = stream ? Src.Stream : Src.Fusion;
+        ResolveTarget(root, sl, stream, r, out var targetP, out var targetQ);
+        BlendFromSource(sl, src, stream, r, targetP, targetQ, dt);
+
+        var drawnP = new Vector3(targetP.x + (float)sl.Ox, targetP.y + (float)sl.Oy, targetP.z + (float)sl.Oz);
+        var drawnQ = sl.Oq * targetQ;
+        if (drawnP.y < targetP.y - 0.3f) RemoteBelow++;
+
+        // Visual root only — kinematic body is owned by PrePhysicsStep (delay 0).
+        if (stream || Math.Abs(sl.Ox) + Math.Abs(sl.Oy) + Math.Abs(sl.Oz) > 1e-4 || Quaternion.Angle(sl.Oq, Quaternion.identity) > 1e-2f)
+            root.SetPositionAndRotation(drawnP, drawnQ);
+
+        sl.LastDrawnP = drawnP;
+        sl.LastDrawnQ = drawnQ;
+        sl.HasDrawn = true;
+    }
+
+    static void NoteExtrapErr(StatePlayback pb, bool stream, in StatePlayback.PlaybackResult r)
+    {
+        if (!(stream && r.Extrapolated)) return;
+        ExtrapolatedFrames++;
+        if (!pb.TryNewest(out var newest)) return;
+        var ee = AcceptMetricsLogic.ExtrapErrM(r.Px, r.Py, r.Pz, newest.Px, newest.Py, newest.Pz);
+        ExtrapErrSamples++;
+        if (ee > ExtrapErrMax) ExtrapErrMax = ee;
+    }
+
+    static void ResolveTarget(Transform root, Slot sl, bool stream, in StatePlayback.PlaybackResult r,
+        out Vector3 targetP, out Quaternion targetQ)
+    {
+        if (stream)
+        {
+            targetP = new Vector3(r.Px, r.Py, r.Pz);
+            targetQ = new Quaternion(r.Qx, r.Qy, r.Qz, r.Qw);
+            sl.LastSample = r;
+            sl.HasSample = true;
+            if (r.Snap) Snaps++;
+            StreamFrames++;
+            return;
+        }
+        targetP = root.position;
+        targetQ = root.rotation;
+        sl.HasSample = false;
+        sl.HasPhys = false;
+        sl.ServoPending = false;
+        FusionFrames++;
+    }
+
+    static void BlendFromSource(Slot sl, Src src, bool stream, in StatePlayback.PlaybackResult r,
+        Vector3 targetP, Quaternion targetQ, float dt)
+    {
+        if (src != sl.Last && sl.Last != Src.None && sl.HasDrawn && !(stream && r.Snap))
+        {
+            sl.Ox = sl.LastDrawnP.x - targetP.x;
+            sl.Oy = sl.LastDrawnP.y - targetP.y;
+            sl.Oz = sl.LastDrawnP.z - targetP.z;
+            sl.Oq = sl.LastDrawnQ * Quaternion.Inverse(targetQ);
+            SourceSwitches++;
+        }
+        if (stream && r.Snap) { sl.Ox = sl.Oy = sl.Oz = 0; sl.Oq = Quaternion.identity; }
+        sl.Last = src;
+
+        if (dt > 0 && dt <= 0.25f)
+            RemoteSmoother.DecayOffset(ref sl.Ox, ref sl.Oy, ref sl.Oz, dt, _blendCfg);
+        var keepQ = (float)RemoteSmoother.RotKeep(Quaternion.Angle(sl.Oq, Quaternion.identity), dt > 0 ? dt : 1 / 60.0, SourceBlendTau, 180);
+        sl.Oq = Quaternion.Slerp(Quaternion.identity, sl.Oq, keepQ);
     }
 
     /// <summary>T3.7 / T4.0: before Physics.Simulate — remote bodies at SampleAt(stepEnd, delayOverride:0).</summary>
@@ -242,43 +319,93 @@ internal static class RemoteCarView
             try
             {
                 if (e.IsOwn || e.Rb == null || e.Slot < 0) continue;
-                if (!HasFreshStream(e.Slot, stepEndLocal)) continue;
                 if (!_slots.TryGetValue(e.Slot, out var sl)) _slots[e.Slot] = sl = new Slot();
+                if (!HasFreshStream(e.Slot, stepEndLocal)) { AbortPull(sl, stepEndLocal); continue; }
                 var r = CarRelay.PlaybackOf(e.Slot).SampleAt(stepEndLocal, delayOverride: 0);
-                if (!r.Ok || r.Stale) continue;
-                var p = new Vector3(r.Px, r.Py, r.Pz);
-                var q = new Quaternion(r.Qx, r.Qy, r.Qz, r.Qw);
-                // OTH: rigidbody sits on FusionPlayer root — LateUpdate drew the delayed pose onto the same
-                // transform. Undo that before the physics write (same idea as OwnLocal for the own car).
-                UndoVisualToPhys(e.Rb, sl, p, r);
-                try
-                {
-                    var nrb = e.Nrb ?? e.Fp?.GetComponent<NetworkRigidbody3D>();
-                    if (nrb != null) nrb._rootIsDirtyFromInterpolation = true;
-                }
-                catch { }
-
-                if (!servo || e.Rb.isKinematic)
-                {
-                    if (!e.Rb.isKinematic) continue;
-                    e.Rb.MovePosition(p);
-                    e.Rb.MoveRotation(q);
-                    // Kinematic: MovePosition is the physics pose immediately.
-                    sl.PhysP = p; sl.PhysQ = q; sl.HasPhys = true;
-                    continue;
-                }
-                // Servo: stream velocity + pull; PhysP is captured in PostPhysicsStep after Simulate.
-                var err = p - e.Rb.position;
-                var errLen = err.magnitude;
-                var streamSp = new Vector3(r.Vx, r.Vy, r.Vz).magnitude;
-                var corr = (float)HostFollowLogic.ServoSpeed(errLen, tau, 10.0, 0, streamSp);
-                var pull = errLen > 1e-4f ? err.normalized * corr : Vector3.zero;
-                e.Rb.linearVelocity = new Vector3(r.Vx, r.Vy, r.Vz) + pull;
-                e.Rb.angularVelocity = new Vector3(r.Wx, r.Wy, r.Wz);
-                sl.ServoPending = true;
+                if (!r.Ok) { AbortPull(sl, stepEndLocal); continue; }
+                ApplyProxyBody(e, sl, in r, servo, tau, stepEndLocal);
             }
             catch { }
         }
+    }
+
+    /// <summary>T4.0: write stream pose into the remote rigidbody (Kinematic Move* / Servo vel / Stale hold).</summary>
+    static void ApplyProxyBody(CarEntry e, Slot sl, in StatePlayback.PlaybackResult r,
+        bool servo, double tau, double now)
+    {
+        var p = new Vector3(r.Px, r.Py, r.Pz);
+        var q = new Quaternion(r.Qx, r.Qy, r.Qz, r.Qw);
+        // OTH: rigidbody sits on FusionPlayer root — LateUpdate drew the delayed pose onto the same
+        // transform. Undo that before the physics write (same idea as OwnLocal for the own car).
+        UndoVisualToPhys(e.Rb, sl, p, r);
+        try
+        {
+            var nrb = e.Nrb ?? e.Fp?.GetComponent<NetworkRigidbody3D>();
+            if (nrb != null) nrb._rootIsDirtyFromInterpolation = true;
+        }
+        catch { }
+
+        if (r.Stale)
+        {
+            AbortPull(sl, now);
+            HoldProxyZeroVel(e.Rb, sl, p, q);
+            return;
+        }
+
+        if (!servo || e.Rb.isKinematic)
+        {
+            AbortPull(sl, now); // proxyPull is Servo-only
+            if (!e.Rb.isKinematic) return;
+            e.Rb.MovePosition(p);
+            e.Rb.MoveRotation(q);
+            sl.PhysP = p; sl.PhysQ = q; sl.HasPhys = true;
+            return;
+        }
+        // Servo: stream velocity + pull; PhysP is captured in PostPhysicsStep after Simulate.
+        var err = p - e.Rb.position;
+        var errLen = err.magnitude;
+        var done = AcceptMetricsLogic.ProxyPullStep(ref sl.PullSince, errLen, now);
+        if (!double.IsNaN(done))
+        {
+            ProxyPullSamples++;
+            if (done > ProxyPullMax) ProxyPullMax = done;
+        }
+        var streamSp = new Vector3(r.Vx, r.Vy, r.Vz).magnitude;
+        var corr = (float)HostFollowLogic.ServoSpeed(errLen, tau, 10.0, 0, streamSp);
+        var pull = errLen > 1e-4f ? err.normalized * corr : Vector3.zero;
+        e.Rb.linearVelocity = new Vector3(r.Vx, r.Vy, r.Vz) + pull;
+        // T4.0: angularVelocity = stream + (target−pose)/ServoSeconds (same owner as host follow).
+        var streamW = new Vector3(r.Wx, r.Wy, r.Wz);
+        var qe = q * Quaternion.Inverse(e.Rb.rotation);
+        qe.ToAngleAxis(out var qang, out var axis);
+        if (qang > 180f) qang -= 360f;
+        var wc = Vector3.zero;
+        if (!float.IsNaN(axis.x) && Mathf.Abs(qang) > 0.01f)
+        {
+            var rad = qang * Mathf.Deg2Rad;
+            var ws = (float)HostFollowLogic.ServoAngSpeed(Math.Abs(rad), tau, 3.0);
+            wc = axis * (Mathf.Sign(rad) * ws);
+        }
+        e.Rb.angularVelocity = streamW + wc;
+        sl.ServoPending = true;
+    }
+
+    /// <summary>T4.0 Stale: keep newest pose, freeze linear/angular velocity.</summary>
+    static void HoldProxyZeroVel(Rigidbody rb, Slot sl, Vector3 p, Quaternion q)
+    {
+        if (rb.isKinematic)
+        {
+            rb.MovePosition(p);
+            rb.MoveRotation(q);
+        }
+        else
+        {
+            rb.position = p;
+            rb.rotation = q;
+        }
+        try { rb.linearVelocity = Vector3.zero; rb.angularVelocity = Vector3.zero; } catch { }
+        sl.PhysP = p; sl.PhysQ = q; sl.HasPhys = true;
+        sl.ServoPending = false;
     }
 
     /// <summary>After Physics.Simulate: remember dynamic (Servo) body pose so the next step does not rewind it.</summary>

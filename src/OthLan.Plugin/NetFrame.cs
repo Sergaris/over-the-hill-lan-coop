@@ -19,6 +19,8 @@ internal static class NetFrame
         try { HostFollower.Tick(); } catch (Exception e) { LogOnce("carsync", e); }
         try { CarStreamSender.Tick(); } catch (Exception e) { LogOnce("stream", e); }
         try { OwnCar.Tick(); } catch (Exception e) { LogOnce("owncar", e); }
+        try { WinchRelease.Tick(); } catch (Exception e) { LogOnce("winchrelease", e); }
+        try { ParkedCars.Tick(); } catch (Exception e) { LogOnce("parked", e); }
         try { FreezeWatch.Tick(); } catch (Exception e) { LogOnce("freeze", e); }
         try { ClientPhysics.Tick(); } catch (Exception e) { LogOnce("clientphys", e); }
         try { Diagnostics.Tick(); } catch (Exception e) { LogOnce("diag", e); }

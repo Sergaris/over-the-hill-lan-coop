@@ -37,6 +37,9 @@ internal static class RemoteWheelVisuals
     static FusionPlayer[] _players = Array.Empty<FusionPlayer>();
     static IntPtr _runner;
     public static int Cars, LightSets, WheelFrames, StreamWheelFrames, LiveryApplies, Errors;
+    /// <summary>§5.1 wheelErr: samples with |v|&gt;2 m/s and relative spin error &gt; 10 %.</summary>
+    public static int WheelErrOver, WheelErrSamples;
+    public static double WheelErrMax;
 
     public static void Reset()
     {
@@ -44,6 +47,7 @@ internal static class RemoteWheelVisuals
             RestoreWtu(c);
         _cars.Clear();
         Cars = LightSets = WheelFrames = StreamWheelFrames = LiveryApplies = Errors = 0;
+        WheelErrOver = WheelErrSamples = 0; WheelErrMax = 0;
     }
 
     /// <summary>Apply current lights once (late join / right after EnsureProxyMode).</summary>
@@ -69,10 +73,10 @@ internal static class RemoteWheelVisuals
     {
         using var _cost = FrameCost.Measure(FrameCost.Wheels);
         if (!Plugin.RemoteInterpolate.Value) return;
-        if (LanState.Active != LanRole.Client || LanState.LanRunner == IntPtr.Zero) { if (_runner != IntPtr.Zero) { _runner = IntPtr.Zero; Reset(); } return; }
+        if (LanState.Active != LanRole.Client || !LanState.InSession) { if (_runner != IntPtr.Zero) { _runner = IntPtr.Zero; Reset(); } return; }
         NetworkRunner r = null;
-        try { r = OverlandNetworkRunner.Instance?.NetworkRunner; } catch { }
-        if (r == null || r.Pointer != LanState.LanRunner || !r.IsRunning || !r.IsClient || r.IsServer) return;
+        try { r = LanState.Runner(); } catch { }
+        if (r == null || !r.IsClient || r.IsServer) return;
         if (r.Pointer != _runner) { _runner = r.Pointer; Reset(); }
 
         var t = Time.realtimeSinceStartup;
@@ -123,6 +127,8 @@ internal static class RemoteWheelVisuals
             c.Status = fp.GetComponentInChildren<NetworkedVehicleStatus>() ?? fp.GetComponent<NetworkedVehicleStatus>();
         if (c.Custom == null || c.Custom.WasCollected)
             c.Custom = fp.GetComponentInChildren<VehicleCustomizationController>() ?? fp.GetComponent<VehicleCustomizationController>();
+        // Rest rot+pos on first sight (T1.1). True near-stop RestPos needs a live WTU; disabling it
+        // here freezes localY, so CanCaptureRestPos / SuspM recovery cannot recover sender restY — leave debt.
         if (!c.WtuDisabled && c.Wheels != null)
         {
             for (int i = 0; i < c.Wheels.Length; i++)
@@ -204,10 +210,10 @@ internal static class RemoteWheelVisuals
             c.Lit = wantHead;
         }
         var inp = fp.CurrentFrameInput;
-        var wantBrake = inp.Brake > 0.05f;
+        var wantBrake = VehicleLightLogic.WantBrake(inp.Brake);
         if (c.Lights.AreBrakingLightsOn != wantBrake) c.Lights.AreBrakingLightsOn = wantBrake;
         var speed = ForwardSpeedMs(fp, c, 0f);
-        var reverse = speed < -0.8f && inp.Throttle < 0.05f;
+        var reverse = VehicleLightLogic.WantReverse(speed, inp.Throttle);
         if (c.Lights.AreReverseLightsOn != reverse) c.Lights.AreReverseLightsOn = reverse;
     }
 
@@ -218,6 +224,16 @@ internal static class RemoteWheelVisuals
         if (dt <= 0 || dt > 0.25f) return;
 
         var n = Math.Min(c.Wheels.Length, sample.WheelCount > 0 ? sample.WheelCount : c.Wheels.Length);
+        // Sender writes the same body-forward spin on every wheel — sample wheelErr once per car.
+        var bodyV = AcceptMetricsLogic.BodyForwardMs(sample.Vx, sample.Vy, sample.Vz, sample.Qx, sample.Qy, sample.Qz, sample.Qw);
+        var spin0 = n > 0 ? WheelAt(sample, 0).SpinRadS : 0f;
+        var frac = AcceptMetricsLogic.WheelErrFrac(spin0, bodyV);
+        if (!double.IsNaN(frac))
+        {
+            WheelErrSamples++;
+            if (frac > WheelErrMax) WheelErrMax = frac;
+            if (AcceptMetricsLogic.WheelErrOverLimit(frac)) WheelErrOver++;
+        }
         for (int i = 0; i < n && i < c.SpinDeg.Length; i++)
         {
             var w = c.Wheels[i];
@@ -255,7 +271,7 @@ internal static class RemoteWheelVisuals
 
         var steerIn = fp.CurrentFrameInput.Steering;
         const float maxSteer = 35f;
-        var bodySpeed = ForwardSpeedMs(fp, c, dt);
+        var carSpeed = ForwardSpeedMs(fp, c, dt);
         TrackPos(fp, c);
 
         Il2CppSystem.Collections.Generic.List<float> angList = null;
@@ -295,16 +311,17 @@ internal static class RemoteWheelVisuals
                 if (angList != null && i < angList.Count) { netAng = angList[i]; haveNet = true; }
             }
             catch { haveNet = false; }
+            var wheelSpeed = carSpeed;
             if (!haveNet)
             {
                 try
                 {
                     var ws = c.Status != null ? c.Status.WheelsSpeed : null;
-                    if (ws != null && i < ws.Count) bodySpeed = ws[i];
+                    if (ws != null && i < ws.Count) wheelSpeed = ws[i];
                 }
                 catch { }
             }
-            var rate = WheelSpinLogic.RateRadS(bodySpeed, netAng, radius, netAlive && haveNet);
+            var rate = WheelSpinLogic.RateRadS(wheelSpeed, netAng, radius, netAlive && haveNet);
             c.SpinDeg[i] += (float)(rate * Mathf.Rad2Deg * dt);
             if (c.SpinDeg[i] > 1e6f || c.SpinDeg[i] < -1e6f) c.SpinDeg[i] %= 360f;
             var steerDeg = w.m_isFrontWheel ? steerIn * maxSteer : 0f;
@@ -395,5 +412,5 @@ internal static class RemoteWheelVisuals
     }
 
     public static string Describe() =>
-        $"remoteWheels cars={Cars} lightSets={LightSets} wheelFrames={WheelFrames} streamWheels={StreamWheelFrames} liveryApplies={LiveryApplies} errors={Errors}";
+        $"remoteWheels cars={Cars} lightSets={LightSets} wheelFrames={WheelFrames} streamWheels={StreamWheelFrames} liveryApplies={LiveryApplies} errors={Errors} wheelErrOver={WheelErrOver}/{WheelErrSamples} max={WheelErrMax:0.00}";
 }

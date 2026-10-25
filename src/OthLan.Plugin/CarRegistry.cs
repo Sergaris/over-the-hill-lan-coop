@@ -43,17 +43,12 @@ internal static class CarRegistry
     /// <summary>Main thread, every frame (before other netcode that needs the list).</summary>
     public static void Tick()
     {
-        if (LanState.Active == LanRole.Off || LanState.LanRunner == IntPtr.Zero)
-        {
-            if (_runner != IntPtr.Zero) Reset();
-            return;
-        }
         var now = Time.realtimeSinceStartup;
         var force = false;
         try
         {
-            var r = OverlandNetworkRunner.Instance?.NetworkRunner;
-            if (r == null || r.Pointer != LanState.LanRunner || !r.IsRunning)
+            var r = LanState.Runner();
+            if (r == null)
             {
                 if (_runner != IntPtr.Zero) Reset();
                 return;

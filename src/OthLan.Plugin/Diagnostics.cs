@@ -16,10 +16,11 @@ internal static class Diagnostics
 
     public static void Tick()
     {
-        if (LanState.Active == LanRole.Off || LanState.LanRunner == IntPtr.Zero) return;
+        if (!LanState.InSession) return;
         var now = Time.realtimeSinceStartup; if (now < _next) return; _next = now + 3f;
-        var onr = OverlandNetworkRunner.Instance; var r = onr?.NetworkRunner;
-        if (r == null || r.Pointer != LanState.LanRunner || !r.IsRunning) return;
+        var r = LanState.Runner();
+        if (r == null) return;
+        var onr = OverlandNetworkRunner.Instance;
         try
         {
             if (_loggedRunner != r.Pointer)

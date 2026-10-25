@@ -68,6 +68,7 @@ internal static class UpdatePrompt
     {
         Visible = false;
         PromptFrame = -1;
+        _btnSetFp = int.MinValue;
         if (_root != null && !_root.WasCollected) _root.SetActive(false);
         UiModal.Close(ModalOwner);
         RestoreMenuFocus();
@@ -155,8 +156,17 @@ internal static class UpdatePrompt
             if (rt != null) rt.anchoredPosition = new Vector2(xs[i], -210f);
         }
         LinkButtons();
-        FocusInitial();
+        // Progress ticks rebuild labels every frame while Downloading — only re-focus when the button set changes.
+        var fp = _btnCount;
+        for (var i = 0; i < _btnCount; i++) fp = fp * 31 + (_btnKeys[i]?.GetHashCode() ?? 0);
+        if (fp != _btnSetFp)
+        {
+            _btnSetFp = fp;
+            FocusInitial();
+        }
     }
+
+    static int _btnSetFp = int.MinValue;
 
     static void FocusInitial()
     {

@@ -25,7 +25,7 @@ internal static class SessionNotify
     {
         var client = LanState.Active == LanRole.Client;
         var host = LanState.Active == LanRole.Host;
-        var r = Runner();
+        var r = LanState.Runner();
         var hasRunner = r != null;
 
         if (client)
@@ -129,11 +129,4 @@ internal static class SessionNotify
     }
 
     static string DisplayName(int slot) => Loc.F("session.playerN", slot);
-
-    static NetworkRunner Runner()
-    {
-        if (LanState.Active == LanRole.Off || LanState.LanRunner == IntPtr.Zero) return null;
-        var r = OverlandNetworkRunner.Instance?.NetworkRunner;
-        return r != null && r.Pointer == LanState.LanRunner && r.IsRunning ? r : null;
-    }
 }

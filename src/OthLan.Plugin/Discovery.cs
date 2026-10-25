@@ -24,8 +24,7 @@ internal static class Discovery
     public static volatile string Status = "";
     public static int Rounds, Replies, Sent;
     public static readonly Dictionary<string, int> RepliesVia = new();
-    static readonly System.Diagnostics.Stopwatch Clock = System.Diagnostics.Stopwatch.StartNew();
-    static double Now => Clock.Elapsed.TotalSeconds;
+    static double Now => NetClock.Now;
 
     public static void Start()
     {
