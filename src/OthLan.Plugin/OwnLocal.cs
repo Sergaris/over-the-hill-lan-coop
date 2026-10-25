@@ -140,6 +140,9 @@ internal static unsafe class OwnLocal
         // 0.1.9 R2: never pile local Physics.Simulate on top of a Fusion tick in the same frame (double scene step),
         // and cap at 2 local steps/frame (was 4) to bound frame-time spikes on weaker PCs.
         if (_tickFrame == Time.frameCount) return;
+        // 0.2.5.2: if this frame is already over ~28 ms, do not add local Physics.Simulate (live: friend frameMs≈30
+        // with Debt capped and LocalStep piling on → death spiral vs pre-0.2).
+        if (!OwnCarLogic.AllowLocalPhysicsStep(dt, 0.028)) return;
         int n = 0;
         if (Debt >= 1) RefreshInput();
         while (Debt >= 1 && n < 2) { if (!LocalStep(step)) break; Debt -= 1; n++; }

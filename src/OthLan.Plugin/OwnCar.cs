@@ -101,6 +101,7 @@ internal static unsafe class OwnCar
     }
     static int _vbN, _nrbN; static VehiclePhysics.VehicleBase _vb;
     public static int LateFixes, ResimRestores, WordRestores, VppRestores, InputBufferPatched, AcceptsDistance, AcceptsOtac, DistanceIgnoredAfterGap;
+    public static int CheapSkips;   // AfterResim cleared capture without Restore (err within noise)
     const string K_Br = "FusionPlayer::BeforeClientPredictionReset()";
     const string K_Bt = "FusionPlayer::BeforeTick()";
 
@@ -369,6 +370,8 @@ internal static unsafe class OwnCar
         if (OwnCarLogic.TakeHostPose(err, now - LastNoLinkAt(), Plugin.OwnAcceptMeters.Value, Plugin.OwnPostOutageSeconds.Value))
         { _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; AcceptsDistance++; Plugin.L.LogInfo($"[OwnCar] host pose {err:0.0} m away: taking it (teleport/rescue)"); return; }
         if (err > Plugin.OwnAcceptMeters.Value) DistanceIgnoredAfterGap++;
+        // Late path especially: Fusion reset without resim every tick + full VPP restore = FPS death (live 0.2.5.1).
+        if (OwnCarLogic.SkipCheapRestore(err, errDeg, 0.05, 1.0)) { CheapSkips++; return; }
         Restore();
     }
 
@@ -495,7 +498,7 @@ internal static unsafe class OwnCar
     }
 
     public static string Describe() =>
-        $"state={State} resets={Resets} restores={Restores} (afterResim={ResimRestores} late={LateFixes} words={WordRestores} vpp={VppRestores} prev={PrevRestores} prevNA={PrevUnavailable}) accepts={Accepts} (otac={AcceptsOtac} dist={AcceptsDistance} distIgnoredAfterGap={DistanceIgnoredAfterGap}) fallbacks={Fallbacks} boosts={Boosts} inputCap={InputCapacity} " +
+        $"state={State} resets={Resets} restores={Restores} (afterResim={ResimRestores} late={LateFixes} cheap={CheapSkips} words={WordRestores} vpp={VppRestores} prev={PrevRestores} prevNA={PrevUnavailable}) accepts={Accepts} (otac={AcceptsOtac} dist={AcceptsDistance} distIgnoredAfterGap={DistanceIgnoredAfterGap}) fallbacks={Fallbacks} boosts={Boosts} inputCap={InputCapacity} " +
         $"suspends={Suspends}/{SuspendFrames} " +
         $"rollback mean={(ErrSamples > 0 ? SumErr / ErrSamples : 0):0.000} m max={MaxErr:0.00} m >1m={ErrOver1m} >5m={ErrOver5m}";
 }

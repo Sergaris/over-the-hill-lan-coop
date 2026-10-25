@@ -20,6 +20,17 @@ public static class OwnCarLogic
     public static bool CountOwnCorrection(bool phase2Active, bool restoredOwn, bool spawnTransition)
         => phase2Active && !restoredOwn && !spawnTransition;
 
+    /// <summary>
+    /// Phase-2 late/resim restore: skip the expensive VPP <c>RestoreSnapshot</c> when Fusion already left us
+    /// within noise (0.2.5.1 live: friend LateFixes≈every tick → thousands of word+VPP restores, frameMs≈30).
+    /// </summary>
+    public static bool SkipCheapRestore(double errMeters, double errDeg, double maxMeters, double maxDeg)
+        => errMeters <= maxMeters && errDeg <= maxDeg;
+
+    /// <summary>OwnLocal: do not pile Physics.Simulate when this frame is already over budget (death spiral).</summary>
+    public static bool AllowLocalPhysicsStep(double frameDt, double budgetS)
+        => frameDt > 0 && frameDt <= budgetS;
+
     /// <summary>Fusion client input buffer size in ticks for <paramref name="seconds"/> (never smaller than the game's).</summary>
     public static int InputCapacity(double seconds, int tickRate, int current)
     {

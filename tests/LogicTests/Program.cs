@@ -198,6 +198,11 @@ static class Program
         Eq(OwnCarLogic.CountOwnCorrection(true, true, false), false, "own corr: Restore() invisible — skip");
         Eq(OwnCarLogic.CountOwnCorrection(true, false, true), false, "own corr: spawn transition sample skipped");
         Eq(OwnCarLogic.CountOwnCorrection(true, false, false), true, "own corr: accept-window / kept host pose counted");
+        Eq(OwnCarLogic.SkipCheapRestore(0.01, 0.2, 0.05, 1.0), true, "own: 1 cm / 0.2 deg -> skip VPP restore");
+        Eq(OwnCarLogic.SkipCheapRestore(0.10, 0.2, 0.05, 1.0), false, "own: 10 cm -> full restore");
+        Eq(OwnCarLogic.SkipCheapRestore(0.01, 5.0, 0.05, 1.0), false, "own: 5 deg -> full restore");
+        Eq(OwnCarLogic.AllowLocalPhysicsStep(0.016, 0.028), true, "ownlocal: 16 ms frame allows LocalStep");
+        Eq(OwnCarLogic.AllowLocalPhysicsStep(0.035, 0.028), false, "ownlocal: 35 ms frame skips LocalStep");
         // input buffer: 8 s at 50 Hz = 400, never below the game's
         Eq(OwnCarLogic.InputCapacity(8, 50, 50), 400, "input buffer 8 s @50 Hz");
         Eq(OwnCarLogic.InputCapacity(0, 50, 50), 50, "input buffer 0 = game default");

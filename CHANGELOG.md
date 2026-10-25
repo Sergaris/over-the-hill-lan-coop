@@ -2,6 +2,19 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.5.2
+
+Both players need 0.2.5.2. From 0.1.8.1+ the in-game updater offers this release.
+
+- Winch: detach no longer leaves winch points disabled on client cars (live: only client→host still worked).
+- Client FPS: skip tiny own-car VPP restores; no OwnLocal physics steps on already-slow frames.
+
+## 0.2.5.2 — изменения
+
+У обоих игроков должна быть 0.2.5.2. С 0.1.8.1+ обновление предложит меню.
+
+- Лебёдка: отцепление больше не оставляет точки выключенными на машинах клиентов (вживую работало только клиент→хост).
+- FPS клиента: мелкие VPP restore пропускаются; локальная физика не добавляется в уже тяжёлый кадр.
 ## 0.2.5.1
 
 Both players need 0.2.5.1. From 0.1.8.1+ the in-game updater offers this release.

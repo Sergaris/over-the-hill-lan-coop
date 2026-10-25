@@ -523,7 +523,12 @@ internal static unsafe class Autopilot
         {
             _winchOffAt = -1;
             if (_winchBtn) { _releaseWinchFrames = 120; Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch release button held"); }
-            else try { HostFollower.OwnWinch(out _)?.RPC_DetachWinchAndDisableWinchPoints(); Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch detach requested"); }
+            else try
+            {
+                var dw = HostFollower.OwnWinch(out _);
+                if (dw != null) { dw.RPC_DetachWinchAndDisableWinchPoints(); if (dw.WinchPointsDisabled) dw.EnableWinchPoints(true); }
+                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch detach requested");
+            }
             catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] winch detach failed: {e.Message}"); }
             _winchCheckAt = t + 3;
         }
