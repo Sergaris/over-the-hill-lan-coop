@@ -76,7 +76,7 @@ internal static unsafe class Autopilot
     static readonly List<(float t, bool on)> Lights = new(); static int _nextLight; public static int LightToggles, LightMismatches;
     static readonly List<(float t, float v)> CpMins = new(); static int _nextCpMin;
     static float _winchAt = -1, _winchOffAt = -1, _winchCheckAt = -1; static bool _winchToCar, _winchUi, _winchBtn; static int _releaseWinchFrames;
-    static int _prevSteerOff = -1, _outRefreshes; static float _outSteerMin, _outSteerMax; static float _winchPointsAt = -1;
+    static int _prevSteerOff = -1, _outRefreshes; static float _outSteerMin, _outSteerMax; static float _winchPointsAt = -1, _winchUiCheckAt = -1;
     static readonly List<float> F7Shots = new();
     static int _nextToggle, _nextF7; static float _f7HideAt = -1, _f7ShotAt = -1; static string _f7Name;
     /// <summary>Host self-test: override HostInfo liverymods= (null = collect for real).</summary>
@@ -511,6 +511,7 @@ internal static unsafe class Autopilot
             Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s host jump test on slot {HostFollower.TestJumpSlot}");
         }
         if (_winchPointsAt >= 0 && t >= _winchPointsAt) { _winchPointsAt = -1; LogCarWinchPoints(t); }
+        if (_winchUiCheckAt >= 0 && t >= _winchUiCheckAt) { _winchUiCheckAt = -1; LogWinchUiButtons(t); }
         if (_winchAt >= 0 && t >= _winchAt) { _winchAt = -1; if (_winchToCar) WinchAttachCar(t); else WinchAttach(t); _winchCheckAt = t + 2; }
         if (_winchCheckAt >= 0 && t >= _winchCheckAt)
         {
@@ -1144,32 +1145,86 @@ internal static unsafe class Autopilot
             var me = OwnCar.Runner?.LocalPlayer.PlayerId ?? -1;
             var own = HostFollower.OwnWinch(out var car);
             var at = car != null ? car.transform.position : Vector3.zero;
-            foreach (var p in UnityEngine.Object.FindObjectsOfType<CarWinchPoint>())
+            foreach (var fp in CarRegistry.Players)
             {
-                var no = p.PlayerNetworkObject; var col = p.GetComponent<Collider>();
-                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch point {p.gameObject.name} on {(no != null ? no.gameObject.name : "-")}: owning={p.OwningPlayerId.PlayerId} " +
-                                    $"input={(no != null ? no.InputAuthority.PlayerId : -1)} state={(no != null ? no.StateAuthority.PlayerId : -1)} local={me} " +
-                                    $"active={p.gameObject.activeInHierarchy} collider={(col != null ? $"{col.enabled}/trigger={col.isTrigger}/layer={col.gameObject.layer}" : "-")} " +
-                                    $"dist={Vector3.Distance(at, p.transform.position):0.0} m");
+                if (fp == null || fp.WasCollected) continue;
+                var w = HostFollower.WinchOf(fp); var carPts = w != null ? w.winchPoints : null;
+                var st = fp.Object != null ? $"input={fp.Object.InputAuthority.PlayerId} stateAuth={fp.Object.HasStateAuthority} inputAuth={fp.Object.HasInputAuthority}" : "no-obj";
+                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s car {fp.gameObject.name} {st} winch={(w != null)} points={(carPts != null ? carPts.Length : -1)} disabled={(w != null && w.WinchPointsDisabled)} dist={Vector3.Distance(at, fp.transform.position):0.0} m");
+                if (carPts == null) continue;
+                foreach (var wp in carPts)
+                {
+                    if (wp == null) continue;
+                    var p = wp.GetComponent<CarWinchPoint>(); var col = wp.GetComponent<Collider>();
+                    Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s   point {wp.name}: active={wp.gameObject.activeSelf}/{wp.gameObject.activeInHierarchy} layer={wp.gameObject.layer} " +
+                                        $"cwp={(p != null)} owning={(p != null ? p.OwningPlayerId.PlayerId : -1)} " +
+                                        $"col={(col != null ? $"{col.enabled}/trig={col.isTrigger}" : "-")} " +
+                                        $"dist={Vector3.Distance(at, wp.position):0.0} m");
+                }
             }
+            foreach (var c in Physics.OverlapSphere(at, 20f, 2048, QueryTriggerInteraction.Collide))
+                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s overlap(20 m, layer 11) {c.gameObject.name}@{c.transform.root.name} at {Vector3.Distance(at, c.bounds.center):0.0} m");
             if (own == null) return;
             Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s own winch range {own.maxWinchRange:0.0} x{own.winchRangeModifier:0.00}");
             var pts = own.winchPoints;
             if (pts == null) return;
             foreach (var wp in pts)
             {   // the game's own target picker (StateWorldWinchPointSelection) from this car winch point
+                var ov = own.UpdateOverlappedObjects(wp.position); var arr = own.overlappedObjects; var ovn = new StringBuilder();
+                for (int i = 0; i < ov && arr != null && i < arr.Length; i++) ovn.Append(arr[i] != null ? $"{arr[i].gameObject.name}@{arr[i].transform.root.name} " : "? ");
+                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s game overlap from {wp.name}: {ov} {ovn}");
                 own.GatherPotentialAnchorPoints(wp, false, Vector3.zero);
                 var list = own.potentialAnchorPoints; var n = list != null ? list.Count : -1;
                 var names = new StringBuilder();
                 for (int i = 0; i < n; i++)
                 {
                     var ap = list[i]; var c = ap.Collider;
-                    names.Append(c != null ? $"{c.gameObject.name}@{c.transform.root.name}:{Mathf.Sqrt(ap.SqrDistance):0.0}m rb={ap.IsRigidbody} " : "? ");
+                    var inRange = false;
+                    try { inRange = own.IsAnchorInRange(ap, wp.position); } catch { }
+                    names.Append(c != null ? $"{c.gameObject.name}@{c.transform.root.name}:{Mathf.Sqrt(ap.SqrDistance):0.0}m rb={ap.IsRigidbody} inRange={inRange} " : "? ");
                 }
                 Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s anchors from {wp.name}: {n} {names}");
             }
+            // Manual radial path: RequestWinchPointSelection -> SelectCarWinchPoint (Gather with filter=false) -> world UI buttons
+            FusionPlayer other = null; var od = float.MaxValue;
+            foreach (var fp in CarRegistry.Players)
+            {
+                if (fp == null || fp.WasCollected || fp == car) continue;
+                var d = Vector3.Distance(fp.transform.position, at); if (d < od) { od = d; other = fp; }
+            }
+            if (other != null && pts.Length > 0 && pts[0] != null)
+            {
+                var fwd = (other.transform.position - at).normalized;
+                own.RequestWinchPointSelection(fwd);
+                own.SelectCarWinchPoint(pts[0]);
+                var list = own.potentialAnchorPoints; var n = list != null ? list.Count : -1;
+                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s manual UI SelectCarWinchPoint -> {n} anchors (other {od:0.0} m)");
+                _winchUiCheckAt = t + 0.5f;
+            }
         }
         catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] winch points: {e}"); }
+    }
+
+    /// <summary>After SelectCarWinchPoint: how many world-target buttons the game left active (UpdateAnchorRanges may hide some).</summary>
+    static void LogWinchUiButtons(float t)
+    {
+        try
+        {
+            var ui = UnityEngine.Object.FindObjectOfType<ContextUIWinchPointSelection>();
+            if (ui == null) { Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch UI: no ContextUIWinchPointSelection"); return; }
+            var buttons = ui.WinchPointsButtons; var total = buttons != null ? buttons.Count : 0; var on = 0; var names = new StringBuilder();
+            for (int i = 0; i < total; i++)
+            {
+                var b = buttons[i]; if (b == null || b.WasCollected) continue;
+                var go = b.gameObject; var active = go != null && go.activeInHierarchy;
+                if (active) on++;
+                var track = b.worldTrackingRectTransform; var tracked = track != null ? track.transformToTrack : null;
+                names.Append($"{(active ? "ON" : "off")}:{(tracked != null ? $"{tracked.name}@{tracked.root.name}" : "?")} ");
+            }
+            Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch UI buttons active={on}/{total} {names}");
+            Autopilot.Check("winch-ui", on > 0, $"manual winch target buttons {on}/{total}");
+        }
+        catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] winch UI buttons: {e}"); }
     }
 
     /// <summary>Same RPC the game uses for a rope to another player's car: own winch point -> that car's centre.</summary>
@@ -1187,10 +1242,11 @@ internal static unsafe class Autopilot
             }
             if (best == null) { Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch: no other car"); return; }
             if (_winchUi)
-            {   // the player's path: the aimed world point goes to AttachWinchRequested, the game picks the target itself
-                var aim = (best.rigidbody != null ? best.rigidbody.worldCenterOfMass : best.transform.position) + Vector3.up * 0.3f;
-                w.AttachWinchRequested(aim);
-                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch UI attach at {best.gameObject.name} slot {best.Object.InputAuthority.PlayerId} ({bd:0.0} m), aim {aim}");
+            {   // AttachWinchRequested takes camera forward (not a world point): AutoWinchToNearestAnchorPoint filters by that direction
+                var to = (best.rigidbody != null ? best.rigidbody.worldCenterOfMass : best.transform.position) - car.transform.position;
+                var fwd = to.sqrMagnitude > 0.01f ? to.normalized : car.transform.forward;
+                w.AttachWinchRequested(fwd);
+                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch UI attach at {best.gameObject.name} slot {best.Object.InputAuthority.PlayerId} ({bd:0.0} m), camFwd {fwd}");
                 return;
             }
             var pts = w.winchPoints;

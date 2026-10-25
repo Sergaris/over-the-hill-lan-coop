@@ -2,6 +2,17 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.5.1
+
+Both players need 0.2.5.1. From 0.1.8.1+ the in-game updater offers this release.
+
+- Same gameplay as 0.2.5. Extra automated checks for winch targeting; please retest host-to-client winch live.
+
+## 0.2.5.1 — изменения
+
+У обоих игроков должна быть 0.2.5.1. С 0.1.8.1+ обновление предложит меню.
+
+- Тот же геймплей, что в 0.2.5. Доп. автопроверки прицела лебёдки; перепроверьте вживую лебёдку хоста на машину клиента.
 ## 0.2.5
 
 Both players need 0.2.5. From 0.1.8.1+ the in-game updater offers this release.
