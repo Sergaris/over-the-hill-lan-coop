@@ -10,8 +10,10 @@ namespace OthLan;
 /// Host only: parks driverless cars (broken/abandoned world cars) that stand still out of every player's winch reach.
 /// A standing VPP car still rewrites ~180 state words per tick (solver noise), which Fusion must replicate every
 /// snapshot: 7 such cars were ~70 % of the host's state changes and pushed each snapshot into two fragments.
-/// Parked = kinematic rigidbody + disabled VPP controller, so its networked state stops changing. Decisions:
-/// <see cref="ParkLogic"/>. Everything is undone when the session ends or the option is turned off.
+/// Parked = VPP pause (the game's photo-mode freeze) + kinematic rigidbody, so its networked state stops changing.
+/// Never disable the VehicleBase: its OnDisable finalizes the solver and nothing but Spawned rebuilds it, so a re-enabled
+/// car throws in every FixedUpdateNetwork (0.2.4 live: host froze next to woken cars). Decisions: <see cref="ParkLogic"/>.
+/// Everything is undone when the session ends or the option is turned off.
 /// </summary>
 internal static class ParkedCars
 {
@@ -104,7 +106,7 @@ internal static class ParkedCars
         foreach (var p in _players) nearest = Math.Min(nearest, Vector3.Distance(p, pos));
         if (!c.Parked)
         {
-            if (c.Rb.isKinematic) { c.StillSince = -1; return; }   // the game's own kinematic state: not ours to touch
+            if (c.Rb.isKinematic || c.Vb.paused) { c.StillSince = -1; return; }   // the game's own freeze: not ours to touch
             if (!ParkLogic.IsStill(c.Rb.linearVelocity.magnitude, c.Rb.angularVelocity.magnitude)) c.StillSince = -1;
             else if (c.StillSince < 0) c.StillSince = now;
         }
@@ -119,8 +121,8 @@ internal static class ParkedCars
     static void Park(Car c, float nearest)
     {
         c.Parked = true; Parks++;   // first: a throw below still leaves the car to Wake, which undoes both writes
+        c.Vb.paused = true;
         c.Rb.isKinematic = true;
-        c.Vb.enabled = false;
         Plugin.L.LogInfo($"[Park] parked {Name(c)} (nearest player {nearest:0} m, wake at {_wakeM:0} m)");
     }
 
@@ -129,7 +131,7 @@ internal static class ParkedCars
         c.Parked = false; c.StillSince = -1; Wakes++;
         try
         {
-            if (c.Vb != null && !c.Vb.WasCollected) c.Vb.enabled = true;
+            if (c.Vb != null && !c.Vb.WasCollected) c.Vb.paused = false;
             if (c.Rb != null && !c.Rb.WasCollected) { c.Rb.isKinematic = false; c.Rb.WakeUp(); }
         }
         catch (Exception e) { Plugin.L.LogWarning($"[Park] wake {why}: {e.Message}"); }

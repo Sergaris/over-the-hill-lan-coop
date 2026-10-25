@@ -11,7 +11,7 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>OTH-LAN-Launch</AssemblyName>
-    <Version>0.2.4</Version>
+    <Version>0.2.5</Version>
     <RootNamespace>OthLan.Launch</RootNamespace>
     <Root>$(MSBuildThisFileDirectory)../../</Root>
     <Deterministic>true</Deterministic>

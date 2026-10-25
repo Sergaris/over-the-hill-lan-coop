@@ -34,9 +34,14 @@ internal static unsafe class OwnLocal
     // is consumed. Written into FusionPlayer.CurrentFrameInput (words 1..3) which VPP reads during the step.
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void OnInputFn(IntPtr self, IntPtr runner, IntPtr input, IntPtr mi);
     static OnInputFn _onInput; static IntPtr _onInputMi; static bool _inputTried;
+    const int ViSaveFrom = 0x68, ViSaveLen = 0x38;   // VehicleInput.buttons .. selectedGear (button/edge state)
     const string K_In = "VehicleInput::OnInput(NetworkRunner,NetworkInput)";
     static IntPtr _inBuf, _inStruct; static VehicleInput _vi; static IntPtr _viFor;
     public static int InputRefreshes, InputErrors;
+    public static float LastSteer;   // steering of the latest refresh (self-test: does the wheel move during an outage)
+    // VehicleInput keeps its own steering/throttle/brake smoothing in prevFrame*; those must advance with every refresh
+    // (0.2.4 live: restoring them with the button state froze the wheel angle during outages, throttle still worked).
+    static int _smoothFrom = -1, _smoothTo = -1;
     static void InitInput()
     {
         if (_inputTried) return; _inputTried = true;
@@ -48,6 +53,11 @@ internal static unsafe class OwnLocal
             if (fn == IntPtr.Zero) { Plugin.L.LogWarning("[OwnLocal] fresh input unavailable: local steps keep the last input"); return; }
             _onInput = Marshal.GetDelegateForFunctionPointer<OnInputFn>(fn);
             _inBuf = Marshal.AllocHGlobal(4 * 64); _inStruct = Marshal.AllocHGlobal(16);
+            var s = FusionLayout.TryField("Assembly-CSharp.dll", "", "VehicleInput", "prevFrameSteering");
+            var b = FusionLayout.TryField("Assembly-CSharp.dll", "", "VehicleInput", "prevFrameBrake");
+            if (s >= ViSaveFrom && b > s && b + 4 <= ViSaveFrom + ViSaveLen) { _smoothFrom = s; _smoothTo = b + 4; }
+            if (_smoothFrom >= 0) Plugin.L.LogInfo($"[OwnLocal] fresh input: steering smoothing 0x{s:X}..0x{b + 4:X} kept");
+            else Plugin.L.LogWarning($"[OwnLocal] fresh input: steering smoothing NOT found (0x{s:X}..0x{b + 4:X}): wheel may not turn in local steps");
         }
         catch (Exception e) { _onInput = null; Plugin.L.LogWarning($"[OwnLocal] input init: {e.Message}"); }
     }
@@ -61,13 +71,15 @@ internal static unsafe class OwnLocal
             if (_viFor != own.Pointer) { _vi = own.GetComponentInChildren<VehicleInput>() ?? UnityEngine.Object.FindObjectOfType<VehicleInput>(); _viFor = own.Pointer; }
             if (_vi == null) return;
             var vi = (byte*)_vi.Pointer;
-            var save = stackalloc byte[0x38]; for (int i = 0; i < 0x38; i++) save[i] = vi[0x68 + i];   // buttons .. selectedGear
+            var save = stackalloc byte[ViSaveLen]; for (int i = 0; i < ViSaveLen; i++) save[i] = vi[ViSaveFrom + i];   // buttons .. selectedGear
             var buf = (uint*)_inBuf; for (int i = 0; i < 64; i++) buf[i] = 0;
             *(IntPtr*)_inStruct = _inBuf; *(int*)((byte*)_inStruct + 8) = 32; *(int*)((byte*)_inStruct + 12) = 0;
             _onInput(_vi.Pointer, r.Pointer, _inStruct, _onInputMi);
-            for (int i = 0; i < 0x38; i++) vi[0x68 + i] = save[i];
+            for (int i = 0; i < ViSaveLen; i++)
+                if (ViSaveFrom + i < _smoothFrom || ViSaveFrom + i >= _smoothTo) vi[ViSaveFrom + i] = save[i];
             var data = (uint*)(buf + 1); var w = (uint*)own.Ptr;
             w[1] = data[1]; w[2] = data[2]; w[3] = data[3];   // steering, throttle, brake
+            LastSteer = *(float*)(data + 1);
             InputRefreshes++;
         }
         catch (Exception e) { InputErrors++; if (InputErrors < 4) Plugin.L.LogWarning($"[OwnLocal] input: {e.Message}"); }

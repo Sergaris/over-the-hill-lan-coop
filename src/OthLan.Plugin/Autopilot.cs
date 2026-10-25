@@ -75,7 +75,8 @@ internal static unsafe class Autopilot
     static float _ramFrom = -1, _ramTo = -1, _ramSteer, _ramDist = -1; static bool _ramming; public static int RamContacts; static float _nextRamScan; static FusionPlayer[] _ramCars = Array.Empty<FusionPlayer>();
     static readonly List<(float t, bool on)> Lights = new(); static int _nextLight; public static int LightToggles, LightMismatches;
     static readonly List<(float t, float v)> CpMins = new(); static int _nextCpMin;
-    static float _winchAt = -1, _winchOffAt = -1, _winchCheckAt = -1; static bool _winchToCar, _winchBtn; static int _releaseWinchFrames;
+    static float _winchAt = -1, _winchOffAt = -1, _winchCheckAt = -1; static bool _winchToCar, _winchUi, _winchBtn; static int _releaseWinchFrames;
+    static int _prevSteerOff = -1, _outRefreshes; static float _outSteerMin, _outSteerMax; static float _winchPointsAt = -1;
     static readonly List<float> F7Shots = new();
     static int _nextToggle, _nextF7; static float _f7HideAt = -1, _f7ShotAt = -1; static string _f7Name;
     /// <summary>Host self-test: override HostInfo liverymods= (null = collect for real).</summary>
@@ -179,10 +180,11 @@ internal static unsafe class Autopilot
             foreach (var part in tg.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); Toggles.Add((float.Parse(f[0], ci), f[1] == "on")); }
         if (Arg("--othlan-winch") is { } wa)
-        { var f = wa.Split(','); _winchAt = float.Parse(f[0], ci); _winchOffAt = float.Parse(f[1], ci); _winchToCar = f.Length > 2 && f[2] == "car"; _winchBtn = f.Length > 3 && f[3] == "btn"; }
+        { var f = wa.Split(','); _winchAt = float.Parse(f[0], ci); _winchOffAt = float.Parse(f[1], ci); _winchToCar = f.Length > 2 && f[2] is "car" or "carui"; _winchUi = f.Length > 2 && f[2] == "carui"; _winchBtn = f.Length > 3 && f[3] == "btn"; }
         if (Arg("--othlan-cpmin") is { } cm)
             foreach (var part in cm.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); CpMins.Add((float.Parse(f[0], ci), float.Parse(f[1], ci))); }
+        if (Arg("--othlan-winchpoints") is { } wpt) _winchPointsAt = float.Parse(wpt, ci);
         if (Arg("--othlan-hostjump") is { } hj) _hostJumpAt = float.Parse(hj, ci);
         if (Arg("--othlan-ram") is { } rm) { var rq = rm.Split(':'); _ramFrom = float.Parse(rq[0], ci); _ramTo = float.Parse(rq[1], ci); }
         if (Arg("--othlan-lights") is { } lt)   // seconds:on|off,... (literal "t" is not a time — that killed Load with FormatException)
@@ -227,6 +229,8 @@ internal static unsafe class Autopilot
             { var f = part.Split(':'); FNetem.Add((float.Parse(f[0], ci), int.Parse(f[1], ci), int.Parse(f[2], ci), int.Parse(f[3], ci), int.Parse(f[4], ci))); }
         FNetem.Sort((a, b) => a.t.CompareTo(b.t));
         if (Outages.Count > 0 || Losses.Count > 0 || FNetem.Count > 0) OutageSim.Install();
+        if (Array.IndexOf(args, "--othlan-steer-smooth") >= 0)   // weave steering ramps through VehicleInput.prevFrameSteering
+            _prevSteerOff = FusionLayout.TryField("Assembly-CSharp.dll", "", "VehicleInput", "prevFrameSteering");
         if (Arg("--othlan-lang") is { } lg)   // realtime t:code[:f7],... : switch the GAME's language (what Settings > Language does), screenshot 1.5 s later
             foreach (var part in lg.Split(',', StringSplitOptions.RemoveEmptyEntries))
             { var f = part.Split(':'); LangSteps.Add((float.Parse(f[0], ci), f[1], f.Length > 2 && f[2] == "f7")); }
@@ -303,6 +307,7 @@ internal static unsafe class Autopilot
         // VehicleInput.handbrakeState (+0x80): 2 = ExternallyEngaged (set at spawn). The game releases it in
         // UpdateHandbrakeInput when throttle > 0 at that moment; our throttle is written after, so release it first.
         if (Driving && self != IntPtr.Zero && *(int*)((byte*)self + 0x80) == 2) { *(int*)((byte*)self + 0x80) = 0; HandbrakeReleases++; }
+        var prevSteer = _prevSteerOff > 0 && self != IntPtr.Zero ? *(float*)((byte*)self + _prevSteerOff) : 0f;   // before the game's own smoothing
         _inOrig(self, runner, input, mi);
         if (_releaseWinchFrames > 0 && input != IntPtr.Zero && *(uint**)input != null)
         {   // NetworkInputData.Buttons (+0x18), bit VehicleButtons.ReleaseWinch: the player's "release winch" press
@@ -330,7 +335,13 @@ internal static unsafe class Autopilot
             }
             else
             {
-                *(float*)(data + 4) = 0.6f * Mathf.Sin(t * 0.5f);         // weave
+                var steer = 0.6f * Mathf.Sin(t * 0.5f);                    // weave
+                if (_prevSteerOff > 0 && self != IntPtr.Zero)
+                {   // a keyboard player's wheel: the game's per-call smoothing state is VehicleInput.prevFrameSteering
+                    steer = Mathf.MoveTowards(prevSteer, steer, 0.04f);
+                    *(float*)((byte*)self + _prevSteerOff) = steer;
+                }
+                *(float*)(data + 4) = steer;
                 *(float*)(data + 8) = t % 20f < 16f ? 0.8f : 0f;           // throttle, coast 4 s of every 20
                 *(float*)(data + 0xC) = 0f;
             }
@@ -499,6 +510,7 @@ internal static unsafe class Autopilot
             foreach (var k in HostFollower.Metrics.Keys) { HostFollower.TestJumpSlot = k; break; }
             Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s host jump test on slot {HostFollower.TestJumpSlot}");
         }
+        if (_winchPointsAt >= 0 && t >= _winchPointsAt) { _winchPointsAt = -1; LogCarWinchPoints(t); }
         if (_winchAt >= 0 && t >= _winchAt) { _winchAt = -1; if (_winchToCar) WinchAttachCar(t); else WinchAttach(t); _winchCheckAt = t + 2; }
         if (_winchCheckAt >= 0 && t >= _winchCheckAt)
         {
@@ -566,7 +578,10 @@ internal static unsafe class Autopilot
             OutShots.Add((t + o.dur * 0.5f, $"out-t{o.t:000}-mid")); OutShots.Add((t + o.dur + 0.5f, $"out-t{o.t:000}-after"));
             OutShots.Sort((a, b) => a.t.CompareTo(b.t));
             Plugin.L.LogWarning($"[Autopilot] t={t:0.00}s OUTAGE start ({o.dur:0.0} s, planned {o.t:0}, at {kmh:0} km/h) own={OthLan.OwnCar.Describe()}");
+            _outSteerMin = float.MaxValue; _outSteerMax = float.MinValue; _outRefreshes = OwnLocal.InputRefreshes;
         }
+        if (_outageEnd >= 0 && OwnLocal.InputRefreshes > _outRefreshes)
+        { _outSteerMin = Math.Min(_outSteerMin, OwnLocal.LastSteer); _outSteerMax = Math.Max(_outSteerMax, OwnLocal.LastSteer); }
         while (_nextLoss < Losses.Count && Losses[_nextLoss].t <= t)
         {
             OutageSim.Loss = Losses[_nextLoss++].loss;
@@ -582,7 +597,11 @@ internal static unsafe class Autopilot
         if (_outageEnd >= 0 && t >= _outageEnd)
         {
             OutageSim.Active = false; _outageEnd = -1;
-            Plugin.L.LogWarning($"[Autopilot] t={t:0.00}s OUTAGE end; dropped out={OutageSim.DroppedOut} in={OutageSim.DroppedIn}");
+            var refreshes = OwnLocal.InputRefreshes - _outRefreshes; var range = refreshes > 0 ? _outSteerMax - _outSteerMin : 0f;
+            Plugin.L.LogWarning($"[Autopilot] t={t:0.00}s OUTAGE end; dropped out={OutageSim.DroppedOut} in={OutageSim.DroppedIn}; " +
+                                $"local input refreshes {refreshes}, steering {_outSteerMin:0.00}..{_outSteerMax:0.00}");
+            // a scripted weave through the game's smoothing sweeps >= 0.4 in any 5 s; a frozen wheel stays within one 0.04 step
+            if (_prevSteerOff > 0 && Driving) Check("outage-steer", refreshes > 10 && range >= 0.2f, $"steering range {range:0.00} over {refreshes} local refreshes");
         }
         while (OutShots.Count > 0 && OutShots[0].t <= t)
         {
@@ -1117,6 +1136,42 @@ internal static unsafe class Autopilot
         catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] winch attach failed: {e}"); }
     }
 
+    /// <summary>What the game's winch target picker sees: every car winch point with its owner as the game computes it.</summary>
+    static void LogCarWinchPoints(float t)
+    {
+        try
+        {
+            var me = OwnCar.Runner?.LocalPlayer.PlayerId ?? -1;
+            var own = HostFollower.OwnWinch(out var car);
+            var at = car != null ? car.transform.position : Vector3.zero;
+            foreach (var p in UnityEngine.Object.FindObjectsOfType<CarWinchPoint>())
+            {
+                var no = p.PlayerNetworkObject; var col = p.GetComponent<Collider>();
+                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch point {p.gameObject.name} on {(no != null ? no.gameObject.name : "-")}: owning={p.OwningPlayerId.PlayerId} " +
+                                    $"input={(no != null ? no.InputAuthority.PlayerId : -1)} state={(no != null ? no.StateAuthority.PlayerId : -1)} local={me} " +
+                                    $"active={p.gameObject.activeInHierarchy} collider={(col != null ? $"{col.enabled}/trigger={col.isTrigger}/layer={col.gameObject.layer}" : "-")} " +
+                                    $"dist={Vector3.Distance(at, p.transform.position):0.0} m");
+            }
+            if (own == null) return;
+            Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s own winch range {own.maxWinchRange:0.0} x{own.winchRangeModifier:0.00}");
+            var pts = own.winchPoints;
+            if (pts == null) return;
+            foreach (var wp in pts)
+            {   // the game's own target picker (StateWorldWinchPointSelection) from this car winch point
+                own.GatherPotentialAnchorPoints(wp, false, Vector3.zero);
+                var list = own.potentialAnchorPoints; var n = list != null ? list.Count : -1;
+                var names = new StringBuilder();
+                for (int i = 0; i < n; i++)
+                {
+                    var ap = list[i]; var c = ap.Collider;
+                    names.Append(c != null ? $"{c.gameObject.name}@{c.transform.root.name}:{Mathf.Sqrt(ap.SqrDistance):0.0}m rb={ap.IsRigidbody} " : "? ");
+                }
+                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s anchors from {wp.name}: {n} {names}");
+            }
+        }
+        catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] winch points: {e}"); }
+    }
+
     /// <summary>Same RPC the game uses for a rope to another player's car: own winch point -> that car's centre.</summary>
     static void WinchAttachCar(float t)
     {
@@ -1131,6 +1186,13 @@ internal static unsafe class Autopilot
                 var d = Vector3.Distance(fp.transform.position, car.transform.position); if (d < bd) { bd = d; best = fp; }
             }
             if (best == null) { Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch: no other car"); return; }
+            if (_winchUi)
+            {   // the player's path: the aimed world point goes to AttachWinchRequested, the game picks the target itself
+                var aim = (best.rigidbody != null ? best.rigidbody.worldCenterOfMass : best.transform.position) + Vector3.up * 0.3f;
+                w.AttachWinchRequested(aim);
+                Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s winch UI attach at {best.gameObject.name} slot {best.Object.InputAuthority.PlayerId} ({bd:0.0} m), aim {aim}");
+                return;
+            }
             var pts = w.winchPoints;
             var wp = pts != null && pts.Length > 0 ? pts[0] : car.transform;
             var rbT = car.rigidbody != null ? car.rigidbody.transform : car.transform;

@@ -68,6 +68,18 @@ internal static unsafe class FusionLayout
 
     static int Field(IntPtr klass, string field, string key) { var o = Offset(klass, field, out _); All[key] = o; return o; }
 
+    /// <summary>Optional offset (not part of the gate): -1 when the class or field is missing in this game build.</summary>
+    public static int TryField(string asm, string ns, string cls, string field)
+    {
+        try
+        {
+            var c = IL2CPP.GetIl2CppClass(asm, ns, cls);
+            if (c == IntPtr.Zero) return -1;
+            return Offset(c, field, out _);
+        }
+        catch (MissingFieldException) { return -1; }
+    }
+
     static (int has, int val) NullableMembers(IntPtr owner, string field, string key)
     {
         Offset(owner, field, out var f);

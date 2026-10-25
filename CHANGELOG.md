@@ -2,6 +2,21 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.5
+
+Both players need 0.2.5. From 0.1.8.1+ the in-game updater offers this release.
+
+- The host no longer freezes when someone drives up to an abandoned car, and woken abandoned cars no longer shake
+  (a parked car is paused the way the game's photo mode pauses cars).
+- Steering during a connection loss: the client's car turns again while the link is down, not only throttle and brake.
+
+## 0.2.5 — изменения
+
+У обоих игроков должна быть 0.2.5. С 0.1.8.1+ обновление предложит меню.
+
+- Хост больше не зависает, когда кто-то подъезжает к брошенной машине, а разбуженные брошенные машины не дёргаются
+  (стоящая машина ставится на паузу так же, как это делает фоторежим игры).
+- Руль при потере связи: машина клиента снова поворачивает, пока связи нет, а не только едет вперёд и назад.
 ## 0.2.4
 
 Both players need 0.2.4. From 0.1.8.1+ the in-game updater offers this release.
