@@ -643,6 +643,7 @@ static class Program
         WheelSpin();
         UiModal();
         WinchKind();
+        WinchReleaseClear();
         ParkLogicTests();
         CarWireTests();
         StatePlaybackTests();
@@ -879,6 +880,15 @@ static class Program
         Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.World), "world", "winch: tag world");
         Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.Car, 2), "car:2", "winch: tag car slot");
         Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.None), "none", "winch: tag none");
+    }
+
+    // ---------- 0.2.5.4 clear networked WinchPointsDisabled after detach ----------
+    static void WinchReleaseClear()
+    {
+        Eq(WinchReleaseLogic.ShouldClearDisabled(true, false), true, "winch-release: disabled idle -> clear");
+        Eq(WinchReleaseLogic.ShouldClearDisabled(true, true), false, "winch-release: disabled with rope -> keep");
+        Eq(WinchReleaseLogic.ShouldClearDisabled(false, false), false, "winch-release: already enabled -> noop");
+        Eq(WinchReleaseLogic.ShouldClearDisabled(false, true), false, "winch-release: attached enabled -> noop");
     }
 
     // ---------- 0.2.4 host parks idle driverless cars ----------

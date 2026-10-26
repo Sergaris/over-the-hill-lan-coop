@@ -2,6 +2,17 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.5.4
+
+Both players need 0.2.5.4. From 0.1.8.1+ the in-game updater offers this release.
+
+- Winch between two clients works again after a release: the host clears networked WinchPointsDisabled so every peer restores winch-point layer 11 (0.2.5.2 only fixed the host's local layer).
+
+## 0.2.5.4 — изменения
+
+У обоих игроков должна быть 0.2.5.4. С 0.1.8.1+ обновление предложит меню.
+
+- Лебёдка между двумя клиентами снова работает после отцепления: хост сбрасывает сетевой WinchPointsDisabled, и на всех пирах точки возвращаются на слой 11 (0.2.5.2 чинила только локальный слой на хосте).
 ## 0.2.5.3
 
 Both players need 0.2.5.3. From 0.1.8.1+ the in-game updater offers this release.

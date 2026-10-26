@@ -11,8 +11,9 @@ namespace OthLan;
 ///
 /// That RPC also sets networked <c>WinchPointsDisabled</c>. Vanilla play re-enables points later; our mirror left them
 /// stuck, so after the first release nobody could attach <em>to</em> that car (0.2.5.1 live: only client→host kept
-/// working — the host never runs this client path). Fix: after the RPC, call <c>EnableWinchPoints</c> locally, and on
-/// the host periodically clear stuck disabled flags on idle player cars.
+/// working — the host never runs this client path). 0.2.5.2 re-enabled the local layer on the releasing client and on
+/// the host; peers still saw layer 7 because the networked flag stayed true. 0.2.5.4: host clears
+/// <c>WinchPointsDisabled</c> so OnChanged restores layer 11 on every peer (client↔client after detach).
 /// </summary>
 internal static class WinchRelease
 {
@@ -38,7 +39,7 @@ internal static class WinchRelease
             try
             {
                 w.RPC_DetachWinchAndDisableWinchPoints();
-                // RPC disables points for "put away" UX; re-enable so this car stays a valid tow target.
+                // RPC disables points for "put away" UX; re-enable locally until the host clears the networked flag.
                 if (w.WinchPointsDisabled) w.EnableWinchPoints(true);
                 Sent++;
                 Plugin.L.LogInfo($"[WinchRelease] release press mirrored by the detach RPC (#{Sent})");
@@ -49,7 +50,7 @@ internal static class WinchRelease
         _wasDown = down;
     }
 
-    /// <summary>Host (state authority): clear stuck WinchPointsDisabled on player cars with no rope.</summary>
+    /// <summary>Host (state authority): clear stuck WinchPointsDisabled so every peer restores layer 11.</summary>
     static void HostReenableTick()
     {
         var now = Time.realtimeSinceStartup;
@@ -63,11 +64,15 @@ internal static class WinchRelease
                 if (!e.Fp.Object.InputAuthority.IsRealPlayer) continue;
                 var w = HostFollower.WinchOf(e.Fp);
                 if (w == null || w.WasCollected) continue;
-                if (!w.WinchPointsDisabled || w.WinchIsAttached) continue;
+                if (!WinchReleaseLogic.ShouldClearDisabled(w.WinchPointsDisabled, w.WinchIsAttached)) continue;
+                // Networked clear → OnChanged EnableWinchPoints(true) on every peer (client↔client).
+                // Local EnableWinchPoints covers the host's own overlap until the next Render.
+                if (e.Fp.Object.HasStateAuthority)
+                    w.WinchPointsDisabled = false;
                 w.EnableWinchPoints(true);
                 HostReenabled++;
                 if (HostReenabled <= 12)
-                    Plugin.L.LogInfo($"[WinchRelease] host re-enabled winch points on {e.Fp.gameObject.name} (#{HostReenabled})");
+                    Plugin.L.LogInfo($"[WinchRelease] host cleared WinchPointsDisabled on {e.Fp.gameObject.name} (#{HostReenabled})");
             }
         }
         catch (Exception ex) { Plugin.L.LogWarning($"[WinchRelease] host re-enable: {ex.Message}"); }
