@@ -5,12 +5,12 @@ using System.Linq;
 namespace OthLan;
 
 /// <summary>
-/// Version gate (0.1.6): pure decision logic, unit-tested in tests/LogicTests.
+/// Version gate (0.1.6+): pure decision logic, unit-tested in tests/LogicTests.
 ///  Supported    – game files hash-match a build in supported-builds.json: run normally.
-///  Unverified   – files differ, but Fusion is the expected version, every hooked method's code signature (CodeSig)
-///                 matches and every struct offset resolved by name at runtime matches: ask once (per GameAssembly
-///                 hash) "continue at own risk / disable for now"; remember the answer.
-///  Incompatible – anything else: LAN stays off ("incompatible, wait for an update").
+///  Unverified   – files differ, but Fusion version and struct offsets match a known build: ask once (per
+///                 GameAssembly hash) "continue at own risk / disable for now". CodeSig diffs alone are soft
+///                 warnings (third-party / patched GameAssembly) and still yield Unverified.
+///  Incompatible – Fusion/layout/resolve failure: LAN stays off ("incompatible, wait for an update").
 /// </summary>
 public static class GateLogic
 {
@@ -27,21 +27,27 @@ public static class GateLogic
         public string Error;   // resolution failed (missing method/field, exception)
     }
 
-    /// <summary>Tier plus a list of human-readable reasons (empty for Supported/Unverified).</summary>
+    /// <summary>Tier plus human-readable reasons (empty for Supported; soft CodeSig warnings allowed for Unverified).</summary>
     public static Tier Classify(Probe p, out List<string> reasons)
     {
         reasons = new List<string>();
         if (p.HashMatch) return Tier.Supported;
-        if (!string.IsNullOrEmpty(p.Error)) reasons.Add(p.Error);
+        var hard = new List<string>();
+        var soft = new List<string>();
+        if (!string.IsNullOrEmpty(p.Error)) hard.Add(p.Error);
         if (string.IsNullOrEmpty(p.ExpectedFusion) || p.FusionVersion != p.ExpectedFusion)
-            reasons.Add($"Fusion {p.FusionVersion ?? "?"} (expected {p.ExpectedFusion ?? "?"})");
-        if (p.ExpectedSigs.Count == 0) reasons.Add("no code signatures in manifest");
-        foreach (var kv in p.ExpectedSigs)
-            if (!p.Sigs.TryGetValue(kv.Key, out var s) || s != kv.Value) reasons.Add($"code changed: {kv.Key} ({s ?? "missing"} != {kv.Value})");
-        if (p.ExpectedOffsets.Count == 0) reasons.Add("no offsets in manifest");
-        foreach (var kv in p.ExpectedOffsets)
-            if (!p.Offsets.TryGetValue(kv.Key, out var o) || o != kv.Value) reasons.Add($"layout changed: {kv.Key} ({(p.Offsets.ContainsKey(kv.Key) ? $"0x{o:X}" : "missing")} != 0x{kv.Value:X})");
-        return reasons.Count == 0 ? Tier.Unverified : Tier.Incompatible;
+            hard.Add($"Fusion {p.FusionVersion ?? "?"} (expected {p.ExpectedFusion ?? "?"})");
+        if (p.ExpectedSigs.Count == 0) hard.Add("no code signatures in manifest");
+        else foreach (var kv in p.ExpectedSigs)
+            if (!p.Sigs.TryGetValue(kv.Key, out var s) || s != kv.Value)
+                soft.Add($"code changed: {kv.Key} ({s ?? "missing"} != {kv.Value})");
+        if (p.ExpectedOffsets.Count == 0) hard.Add("no offsets in manifest");
+        else foreach (var kv in p.ExpectedOffsets)
+            if (!p.Offsets.TryGetValue(kv.Key, out var o) || o != kv.Value)
+                hard.Add($"layout changed: {kv.Key} ({(p.Offsets.ContainsKey(kv.Key) ? $"0x{o:X}" : "missing")} != 0x{kv.Value:X})");
+        if (hard.Count > 0) { reasons.AddRange(hard); reasons.AddRange(soft); return Tier.Incompatible; }
+        reasons.AddRange(soft);
+        return Tier.Unverified;
     }
 
     public static Outcome Decide(Tier t, string storedChoice) => t switch
@@ -78,11 +84,23 @@ public static class GateLogic
     public static string BuildKey(string supportedBuildId, string gameAssemblyHash) =>
         !string.IsNullOrEmpty(supportedBuildId) ? supportedBuildId : "ga:" + (gameAssemblyHash ?? "?").Substring(0, Math.Min(16, (gameAssemblyHash ?? "?").Length));
 
-    /// <summary>Host/client build check. Host values may be missing (older host) → mismatch only if both are known.</summary>
+    /// <summary>Exact GameAssembly match. Host values may be missing (older host) → mismatch only if both are known.</summary>
     public static bool SameBuild(string hostKey, string hostGaHash, string myKey, string myGaHash)
     {
         if (!string.IsNullOrEmpty(hostGaHash) && !string.IsNullOrEmpty(myGaHash))
             return hostGaHash.Equals(myGaHash, StringComparison.OrdinalIgnoreCase);
         return string.Equals(hostKey, myKey, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Session join check: same GameAssembly, or the same Fusion runtime version (Steam ↔ third-party / unverified
+    /// builds). Missing Fusion on either side falls back to <see cref="SameBuild"/> only.
+    /// </summary>
+    public static bool CompatibleSession(string hostKey, string hostGaHash, string myKey, string myGaHash,
+        string hostFusion, string myFusion)
+    {
+        if (SameBuild(hostKey, hostGaHash, myKey, myGaHash)) return true;
+        if (string.IsNullOrEmpty(hostFusion) || string.IsNullOrEmpty(myFusion)) return false;
+        return hostFusion.Equals(myFusion, StringComparison.OrdinalIgnoreCase);
     }
 }

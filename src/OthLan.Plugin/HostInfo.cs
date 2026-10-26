@@ -12,9 +12,9 @@ namespace OthLan;
 /// never sees. Without it the client loads its OWN area pick while the host is elsewhere: host-positioned cars float
 /// over the wrong terrain (0.1.3: client loaded R2A2_Canyon, host was in another area).
 /// The host answers a tiny UDP query on Port+1; the client asks before it starts and loads the host's area.
-/// Wire format (UTF-8 lines): request "OTHLAN?1"; reply "OTHLAN 1", "mod=..", "build=..", "players=..", "area=..",
-/// then "prop.KEY=s:VALUE" / "i:" / "b:" for every session property the game passed to StartGame; 0.1.7 adds
-/// "carsync=", "name=" (lobby name), "cur=" (players now) and "max=" (= players) at the end.
+/// Wire format (UTF-8 lines): request "OTHLAN?1"; reply "OTHLAN 1", "mod=..", "build=..", "gahash=..", "fusion=..",
+/// "players=..", "area=..", then "prop.KEY=s:VALUE" / "i:" / "b:" for every session property the game passed to
+/// StartGame; 0.1.7 adds "carsync=", "name=" (lobby name), "cur=" (players now) and "max=" (= players) at the end.
 /// 0.1.7: also answers the Local Co-op discovery request "OTHLAN?DISC1" (DiscoveryLogic) while hosting.
 /// </summary>
 internal static class HostInfo
@@ -48,6 +48,7 @@ internal static class HostInfo
         sb.Append("mod=").Append(Plugin.Version).Append('\n');
         sb.Append("build=").Append(BuildGate.BuildKey ?? "?").Append('\n');
         sb.Append("gahash=").Append(BuildGate.GaHash ?? "").Append('\n');
+        sb.Append("fusion=").Append(BuildGate.FusionVersion ?? "").Append('\n');
         sb.Append("players=").Append(players).Append('\n');
         sb.Append("area=").Append(area ?? "").Append('\n');
         foreach (var kv in props) sb.Append("prop.").Append(kv.Key).Append('=').Append(kv.Value.Replace('\n', ' ')).Append('\n');
@@ -136,7 +137,8 @@ internal static class HostInfo
                     var lob = new DiscoveryLogic.Lobby
                     {
                         Id = SessionId, Name = LobbyName, Cur = CurPlayers, Max = _maxPlayers, Mod = Plugin.Version, Build = BuildGate.BuildKey ?? "?",
-                        GaHash = BuildGate.GaHash ?? "", Area = _area, CarSync = CarSync.HostEnabled ? 1 : 0, Port = Plugin.Port.Value, Nonce = nonce,
+                        GaHash = BuildGate.GaHash ?? "", Fusion = BuildGate.FusionVersion ?? "", Area = _area,
+                        CarSync = CarSync.HostEnabled ? 1 : 0, Port = Plugin.Port.Value, Nonce = nonce,
                     };
                     var db = Encoding.UTF8.GetBytes(DiscoveryLogic.Reply(lob));
                     _udp.Send(db, db.Length, ep);
@@ -194,7 +196,7 @@ internal static class HostInfo
 
     public sealed class Info
     {
-        public string Mod, Build, GaHash, Area, Name = "", LiveryMods = ""; public int Players, Cur = -1, Max = -1; public int CarSync = -1;
+        public string Mod, Build, GaHash, Fusion, Area, Name = "", LiveryMods = ""; public int Players, Cur = -1, Max = -1; public int CarSync = -1;
         public Dictionary<string, string> Props = new();
     }
 
@@ -238,6 +240,7 @@ internal static class HostInfo
                 case "mod": info.Mod = v; break;
                 case "build": info.Build = v; break;
                 case "gahash": info.GaHash = v.Trim(); break;
+                case "fusion": info.Fusion = v.Trim(); break;
                 case "area": info.Area = v; break;
                 case "players": int.TryParse(v, out info.Players); break;
                 case "carsync": info.CarSync = v.Trim() == "1" ? 1 : 0; break;

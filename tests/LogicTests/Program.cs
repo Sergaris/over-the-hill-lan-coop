@@ -594,10 +594,13 @@ static class Program
             Eq(new DiscoveryLogic.Lobby { Cur = 3, Max = 4 }.Full, false, "3/4 not full");
             Eq(new DiscoveryLogic.Lobby { Cur = 2, Max = 2 }.Full, true, "2/2 full");
             // compatibility
-            var ok = new DiscoveryLogic.Lobby { Mod = "0.1.7", Build = "26062472", GaHash = "57da" };
-            Eq(DiscoveryLogic.Check(ok, "0.1.7", "26062472", "57da"), DiscoveryLogic.Compat.Ok, "compatible");
-            Eq(DiscoveryLogic.Check(ok, "0.1.6", "26062472", "57da"), DiscoveryLogic.Compat.OtherMod, "other mod version");
-            Eq(DiscoveryLogic.Check(ok, "0.1.7", "26062473", "ffff"), DiscoveryLogic.Compat.OtherGame, "other game build");
+            var ok = new DiscoveryLogic.Lobby { Mod = "0.1.7", Build = "26062472", GaHash = "57da", Fusion = "2.1.2.0" };
+            Eq(DiscoveryLogic.Check(ok, "0.1.7", "26062472", "57da", "2.1.2.0"), DiscoveryLogic.Compat.Ok, "compatible");
+            Eq(DiscoveryLogic.Check(ok, "0.1.6", "26062472", "57da", "2.1.2.0"), DiscoveryLogic.Compat.OtherMod, "other mod version");
+            Eq(DiscoveryLogic.Check(ok, "0.1.7", "26062473", "ffff", null), DiscoveryLogic.Compat.OtherGame, "other game build, no Fusion fallback");
+            var steam = new DiscoveryLogic.Lobby { Mod = "0.1.7", Build = "26062472", GaHash = "57daaaaa", Fusion = "2.1.2.0" };
+            Eq(DiscoveryLogic.Check(steam, "0.1.7", "ga:025e1040", "025e1040bbbb", "2.1.2.0"), DiscoveryLogic.Compat.Ok, "Steam↔third-party same Fusion");
+            Eq(DiscoveryLogic.Check(steam, "0.1.7", "ga:025e1040", "025e1040bbbb", "2.1.3.0"), DiscoveryLogic.Compat.OtherGame, "Steam↔third-party other Fusion");
             // address preference and dedup by host id
             Eq(DiscoveryLogic.AddressRank("26.1.2.3") > DiscoveryLogic.AddressRank("192.168.1.5"), true, "radmin preferred over LAN");
             Eq(DiscoveryLogic.AddressRank("192.168.1.5") > DiscoveryLogic.AddressRank("127.0.0.1"), true, "LAN preferred over loopback");

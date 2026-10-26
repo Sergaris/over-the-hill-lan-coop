@@ -395,7 +395,7 @@ internal static class CoopMenu
             if (i < list.Count)
             {
                 var l = list[i]; _shown.Add(l);
-                var compat = DiscoveryLogic.Check(l, Plugin.Version, BuildGate.BuildKey, BuildGate.GaHash);
+                var compat = DiscoveryLogic.Check(l, Plugin.Version, BuildGate.BuildKey, BuildGate.GaHash, BuildGate.FusionVersion);
                 var lv = double.IsNaN(l.PingMs) ? PingLogic.Level.Waiting : PingLogic.Classify(l.PingMs, Plugin.PingYellowAboveMs.Value, Plugin.PingRedAboveMs.Value);
                 var pc = lv == PingLogic.Level.Green ? "#5AD45A" : lv == PingLogic.Level.Yellow ? "#FFDB26" : lv == PingLogic.Level.Red ? "#FF5050" : "#AAAAAA";
                 var ping = double.IsNaN(l.PingMs) ? "--" : Loc.F("unit.ms", Math.Max(1, Math.Round(l.PingMs)));
@@ -493,7 +493,7 @@ internal static class CoopMenu
     {
         if (ix >= _shown.Count) { Discovery.RefreshNow(); return; }
         var l = _shown[ix];
-        var compat = DiscoveryLogic.Check(l, Plugin.Version, BuildGate.BuildKey, BuildGate.GaHash);
+        var compat = DiscoveryLogic.Check(l, Plugin.Version, BuildGate.BuildKey, BuildGate.GaHash, BuildGate.FusionVersion);
         if (compat == DiscoveryLogic.Compat.OtherMod) { _statusText = new Msg("coop.modMismatch", l.Mod, Plugin.Version); return; }
         if (compat == DiscoveryLogic.Compat.OtherGame) { _statusText = new Msg("coop.gameMismatch", l.Build); return; }
         if (l.Full) { _statusText = new Msg("coop.isFull", l.Cur, l.Max); return; }

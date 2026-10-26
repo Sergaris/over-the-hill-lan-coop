@@ -2,6 +2,19 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.5.3
+
+Both players need 0.2.5.3. From 0.1.8.1+ the in-game updater offers this release.
+
+- Third-party / non-Steam game copies: if Fusion version and data layout match a tested build, OTH-LAN asks once and can run (code differences alone no longer block).
+- Steam and third-party players can join each other when both use the same OTH-LAN and Fusion versions.
+
+## 0.2.5.3 — изменения
+
+У обоих игроков должна быть 0.2.5.3. С 0.1.8.1+ обновление предложит меню.
+
+- Сторонние / не-Steam копии: если версия Fusion и раскладка данных совпадают с проверенной сборкой, OTH-LAN один раз спросит и может работать (одно отличие кода больше не блокирует).
+- Игроки Steam и сторонней копии могут играть вместе при одинаковых OTH-LAN и Fusion.
 ## 0.2.5.2
 
 Both players need 0.2.5.2. From 0.1.8.1+ the in-game updater offers this release.

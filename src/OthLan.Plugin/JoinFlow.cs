@@ -146,7 +146,7 @@ internal static class JoinFlow
         Plugin.L.LogInfo($"[LAN] host info: mod={info.Mod} build={info.Build} players={info.Players} area={info.Area} props={string.Join(", ", info.Props)}");
         if (info.Mod != Plugin.Version)
         { LanState.Status("status.modMismatch", info.Mod, Plugin.Version); Overlay.Show(); return false; }
-        if (!GateLogic.SameBuild(info.Build, info.GaHash, BuildGate.BuildKey, BuildGate.GaHash))
+        if (!GateLogic.CompatibleSession(info.Build, info.GaHash, BuildGate.BuildKey, BuildGate.GaHash, info.Fusion, BuildGate.FusionVersion))
         { LanState.Status("status.gameMismatch", info.Build, BuildGate.BuildKey); Plugin.L.LogWarning("[LAN] " + LanState.LastStatus.En()); Overlay.Show(); return false; }
         if (string.IsNullOrEmpty(info.Area))
         { LanState.Status("status.noArea"); Overlay.Show(); return false; }

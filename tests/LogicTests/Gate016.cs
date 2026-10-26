@@ -22,13 +22,14 @@ static class Gate016
         var p = Good(); p.HashMatch = true; p.Sigs["a"] = "changed";
         Eq(GateLogic.Classify(p, out _), T.Supported, "hash match => supported (sigs not consulted)");
         Eq(GateLogic.Classify(Good(), out var r0), T.Unverified, "unknown files, all checks equal => unverified");
-        Eq(r0.Count, 0, "unverified has no reasons");
+        Eq(r0.Count, 0, "clean unverified has no reasons");
         p = Good(); p.FusionVersion = "2.1.3.0"; Eq(GateLogic.Classify(p, out var r1), T.Incompatible, "other Fusion version => incompatible");
         Eq(r1.Any(x => x.Contains("Fusion 2.1.3.0")), true, "reason names the Fusion version");
         p = Good(); p.FusionVersion = null; Eq(GateLogic.Classify(p, out _), T.Incompatible, "unreadable Fusion version => incompatible");
-        p = Good(); p.Sigs["b"] = "20:cc"; Eq(GateLogic.Classify(p, out var r2), T.Incompatible, "one changed method => incompatible");
-        Eq(r2.Single().StartsWith("code changed: b"), true, "reason names the method");
-        p = Good(); p.Sigs.Remove("a"); Eq(GateLogic.Classify(p, out _), T.Incompatible, "missing method => incompatible");
+        p = Good(); p.Sigs["b"] = "20:cc"; Eq(GateLogic.Classify(p, out var r2), T.Unverified, "codeSig diff alone => unverified (soft)");
+        Eq(r2.Single().StartsWith("code changed: b"), true, "soft reason names the method");
+        p = Good(); p.Sigs.Remove("a"); Eq(GateLogic.Classify(p, out var rMiss), T.Unverified, "missing probed sig => unverified (soft)");
+        Eq(rMiss.Single().Contains("missing"), true, "soft reason says missing");
         p = Good(); p.Offsets["x"] = 0x80; Eq(GateLogic.Classify(p, out var r3), T.Incompatible, "moved field => incompatible");
         Eq(r3.Single().Contains("0x80 != 0x78"), true, "reason shows both offsets");
         p = Good(); p.Offsets.Remove("y"); Eq(GateLogic.Classify(p, out _), T.Incompatible, "unresolved field => incompatible");
@@ -36,6 +37,10 @@ static class Gate016
         p = Good(); p.ExpectedSigs.Clear(); Eq(GateLogic.Classify(p, out _), T.Incompatible, "manifest without sigs never unverified");
         p = Good(); p.ExpectedOffsets.Clear(); Eq(GateLogic.Classify(p, out _), T.Incompatible, "manifest without offsets never unverified");
         p = Good(); p.Sigs["extra"] = "1:00"; Eq(GateLogic.Classify(p, out _), T.Unverified, "extra probed sig is ignored");
+        p = Good(); p.Sigs["b"] = "20:cc"; p.Offsets["x"] = 0x80;
+        Eq(GateLogic.Classify(p, out var rBoth), T.Incompatible, "layout change still hard even with soft sig");
+        Eq(rBoth.Any(x => x.StartsWith("layout changed:")), true, "hard reason kept");
+        Eq(rBoth.Any(x => x.StartsWith("code changed:")), true, "soft reason listed after hard");
 
         Eq(GateLogic.Decide(T.Supported, null), O.Run, "supported runs");
         Eq(GateLogic.Decide(T.Supported, "disable"), O.Run, "supported ignores a stale choice");
@@ -61,6 +66,10 @@ static class Gate016
         Eq(GateLogic.SameBuild("26062472", "abc", "26062472", "abd"), false, "different hash => blocked");
         Eq(GateLogic.SameBuild("26062472", null, "26062472", "abc"), true, "old host without hash: keys equal");
         Eq(GateLogic.SameBuild("26062472", null, "ga:1234", "abc"), false, "old host without hash: keys differ => blocked");
+        Eq(GateLogic.CompatibleSession("26062472", "abc", "ga:025e", "025e…", "2.1.2.0", "2.1.2.0"), true, "Steam↔third-party: same Fusion");
+        Eq(GateLogic.CompatibleSession("26062472", "abc", "ga:025e", "025e…", "2.1.2.0", "2.1.3.0"), false, "different Fusion blocked");
+        Eq(GateLogic.CompatibleSession("26062472", "abc", "ga:025e", "025e…", "2.1.2.0", null), false, "missing my Fusion falls back to SameBuild (fail)");
+        Eq(GateLogic.CompatibleSession("26062472", "abc", "ga:x", "ABC", null, "2.1.2.0"), true, "same hash still wins without Fusion");
 
         // ---- slot allocator (players 4, host index 1 => client slots 0, 2, 3) ----
         var a = new SlotAllocator(4, 1);

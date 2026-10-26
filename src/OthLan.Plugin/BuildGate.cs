@@ -70,14 +70,20 @@ internal static unsafe class BuildGate
         if (match != null) { Tier = GateLogic.Classify(probe, out Reasons); LogDiff(probe, match); }
         else
         {
-            // Unknown files: Unverified if ANY known build matches Fusion version + signatures + offsets.
+            // Unknown files: Unverified if ANY known build matches Fusion version + offsets (CodeSig diffs are soft).
             List<string> firstReasons = null;
             Tier = GateLogic.Tier.Incompatible;
             foreach (var kb in BuildLock.Known)
             {
                 probe.ExpectedFusion = kb.FusionVersion; probe.ExpectedSigs = kb.CodeSig; probe.ExpectedOffsets = kb.Offsets;
                 var t = GateLogic.Classify(probe, out var rs);
-                if (t == GateLogic.Tier.Unverified) { Tier = t; Reasons = rs; Plugin.L.LogWarning($"[Gate] unknown files, but Fusion code and layout match build {kb.BuildId}"); break; }
+                if (t == GateLogic.Tier.Unverified)
+                {
+                    Tier = t; Reasons = rs;
+                    var soft = rs.Count > 0 ? $" (soft: {string.Join("; ", rs)})" : "";
+                    Plugin.L.LogWarning($"[Gate] unknown files, Fusion+layout match build {kb.BuildId}{soft}");
+                    break;
+                }
                 firstReasons ??= rs;
             }
             if (Tier == GateLogic.Tier.Incompatible) Reasons = firstReasons ?? new List<string> { "no known build in manifest" };

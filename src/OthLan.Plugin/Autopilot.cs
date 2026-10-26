@@ -1036,7 +1036,7 @@ internal static unsafe class Autopilot
                     CoopMenu.TestPlayers(n); _coopAt = now + 1f; _coopStep = 3; CoopShot("players"); return;
                 }
                 // join / joinfull: wait for a lobby
-                var pick = list.FindIndex(l => DiscoveryLogic.Check(l, Plugin.Version, BuildGate.BuildKey, BuildGate.GaHash) == DiscoveryLogic.Compat.Ok);
+                var pick = list.FindIndex(l => DiscoveryLogic.Check(l, Plugin.Version, BuildGate.BuildKey, BuildGate.GaHash, BuildGate.FusionVersion) == DiscoveryLogic.Compat.Ok);
                 if (pick < 0) { if (now > _coopDeadline) { CoopCheck(false, "no lobby found in 70 s"); CoopShot("nolobby"); CoopAction = null; } else _coopAt = now + 2f; return; }
                 CoopShot("list");
                 var lb = list[pick];

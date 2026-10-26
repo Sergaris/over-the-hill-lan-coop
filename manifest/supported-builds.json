@@ -1,7 +1,7 @@
 {
     "schema":  1,
     "mod":  "OTH-LAN",
-    "modVersion":  "0.2.5.2",
+    "modVersion":  "0.2.5.3",
     "steamAppId":  2929250,
     "bepinex":  {
                     "version":  "6.0.0-be.788+5b766a3",
@@ -157,5 +157,5 @@
                                        }
                    }
                ],
-    "unverifiedPolicy":  "Files differ from every build above: LAN may still run (after a one-time warning) if Fusion is fusionVersion, every codeSig matches and every offset resolved by name matches."
+    "unverifiedPolicy":  "Files differ from every build above: LAN may still run (after a one-time warning) if Fusion is fusionVersion and every offset resolved by name matches. CodeSig diffs alone are soft warnings (third-party / patched GameAssembly). Host and client may join across different GameAssembly hashes when both advertise the same Fusion version."
 }

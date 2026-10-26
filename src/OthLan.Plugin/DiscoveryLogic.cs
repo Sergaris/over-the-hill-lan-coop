@@ -7,8 +7,9 @@ namespace OthLan;
 /// <summary>
 /// 0.1.7 LAN lobby discovery (ROADMAP 6.3), pure and unit-tested.
 /// Request (UDP to host:Port+1, broadcast or unicast): "OTHLAN?DISC1 nonce=&lt;n&gt; mod=&lt;ver&gt;".
-/// Reply (unicast to the source): "OTHLAN DISC1" then key=value lines: id, name, cur, max, mod, build, gahash, area,
-/// carsync, port, nonce. Strict, bounded parsing: unknown keys ignored, values length-capped, nothing executed.
+/// Reply (unicast to the source): "OTHLAN DISC1" then key=value lines: id, name, cur, max, mod, build, gahash,
+/// fusion, area, carsync, port, nonce. Strict, bounded parsing: unknown keys ignored, values length-capped,
+/// nothing executed.
 /// </summary>
 public static class DiscoveryLogic
 {
@@ -19,7 +20,7 @@ public static class DiscoveryLogic
 
     public sealed class Lobby
     {
-        public string Id = "", Name = "", Mod = "", Build = "", GaHash = "", Area = "";
+        public string Id = "", Name = "", Mod = "", Build = "", GaHash = "", Fusion = "", Area = "";
         public int Cur, Max, CarSync = -1, Port = 27015;
         public uint Nonce;
         // filled by the list
@@ -67,6 +68,7 @@ public static class DiscoveryLogic
         sb.Append("mod=").Append(Clean(l.Mod, 24)).Append('\n');
         sb.Append("build=").Append(Clean(l.Build, 40)).Append('\n');
         sb.Append("gahash=").Append(Clean(l.GaHash, 80)).Append('\n');
+        sb.Append("fusion=").Append(Clean(l.Fusion, 24)).Append('\n');
         sb.Append("area=").Append(Clean(l.Area, 64)).Append('\n');
         sb.Append("carsync=").Append(l.CarSync).Append('\n');
         sb.Append("port=").Append(l.Port).Append('\n');
@@ -93,6 +95,7 @@ public static class DiscoveryLogic
                 case "mod": r.Mod = Clean(v, 24); break;
                 case "build": r.Build = Clean(v, 40); break;
                 case "gahash": r.GaHash = Clean(v, 80); break;
+                case "fusion": r.Fusion = Clean(v, 24); break;
                 case "area": r.Area = Clean(v, 64); break;
                 case "carsync": int.TryParse(v, out r.CarSync); break;
                 case "port": if (!int.TryParse(v, out r.Port) || r.Port <= 0 || r.Port > 65534) r.Port = 27015; break;
@@ -106,10 +109,10 @@ public static class DiscoveryLogic
 
     public enum Compat { Ok, OtherMod, OtherGame }
 
-    public static Compat Check(Lobby l, string myMod, string myBuildKey, string myGaHash)
+    public static Compat Check(Lobby l, string myMod, string myBuildKey, string myGaHash, string myFusion = null)
     {
         if (l.Mod != myMod) return Compat.OtherMod;
-        if (!GateLogic.SameBuild(l.Build, l.GaHash, myBuildKey, myGaHash)) return Compat.OtherGame;
+        if (!GateLogic.CompatibleSession(l.Build, l.GaHash, myBuildKey, myGaHash, l.Fusion, myFusion)) return Compat.OtherGame;
         return Compat.Ok;
     }
 

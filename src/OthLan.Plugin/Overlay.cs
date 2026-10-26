@@ -290,7 +290,7 @@ public class Overlay : MonoBehaviour
     void GateDialog()
     {
         Cursor.visible = true; Cursor.lockState = CursorLockMode.None;
-        float w = 660, h = 250, x = (Screen.width - w) / 2, y = (Screen.height - h) / 2;
+        float w = 660, h = 290, x = (Screen.width - w) / 2, y = (Screen.height - h) / 2;
         // Bilingual on purpose when the language is not known yet; once the game's language is read, only that one.
         var both = !LangWatch.GameKnown;
         GUI.Box(new Rect(x, y, w, h), both ? Loc.En("dlg.title", Plugin.Version) + "  /  " + Loc.TIn("ru", "dlg.title").Replace("{0}", Plugin.Version) : Loc.F("dlg.title", Plugin.Version));

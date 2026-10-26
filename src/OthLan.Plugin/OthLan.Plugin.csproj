@@ -1,11 +1,11 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <!-- BepInEx 6 be.788 IL2CPP plugin. Compiles against interop assemblies generated from the pinned game build
        (tools/InteropGen -> ../../interop, never committed). -->
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
     <AssemblyName>OthLan</AssemblyName>
     <RootNamespace>OthLan</RootNamespace>
-    <Version>0.2.5.2</Version>
+    <Version>0.2.5.3</Version>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>disable</Nullable>
