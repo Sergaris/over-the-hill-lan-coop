@@ -19,7 +19,7 @@ namespace OthLan;
 internal static unsafe class OwnLocal
 {
     public static bool Enabled => Plugin.OwnLocalClock.Value;
-    public static double Debt; public static int LocalSteps, FusionSteps, SkippedTicks, StepErrors, Capped;
+    public static double Debt; public static int LocalSteps, FusionSteps, SkippedTicks, StepErrors, Capped, LocalStepDenied;
     public static long StepCount;                 // every own-car step (Fusion forward tick kept or local), for OwnRender
     public static double LastStepAt = -1;
     public static Vector3 PrevP; public static Quaternion PrevQ; public static bool HasPrev;   // own pose before the last step
@@ -142,7 +142,7 @@ internal static unsafe class OwnLocal
         if (_tickFrame == Time.frameCount) return;
         // 0.2.5.2: if this frame is already over ~28 ms, do not add local Physics.Simulate (live: friend frameMs≈30
         // with Debt capped and LocalStep piling on → death spiral vs pre-0.2).
-        if (!OwnCarLogic.AllowLocalPhysicsStep(dt, 0.028)) return;
+        if (!OwnCarLogic.AllowLocalPhysicsStep(dt, 0.028)) { LocalStepDenied++; return; }
         int n = 0;
         if (Debt >= 1) RefreshInput();
         while (Debt >= 1 && n < 2) { if (!LocalStep(step)) break; Debt -= 1; n++; }
@@ -208,5 +208,5 @@ internal static unsafe class OwnLocal
         catch (Exception e) { StepErrors++; if (StepErrors < 4) Plugin.L.LogWarning($"[OwnLocal] local step: {e}"); return false; }
     }
 
-    public static string Describe() => $"localClock={(Enabled ? "on" : "off")} localSteps={LocalSteps} fusionSteps={FusionSteps} skipped={SkippedTicks} errors={StepErrors} wordSyncs={WordSyncs} capped={Capped} input={InputRefreshes}/{InputErrors} debt={Debt:0.0}";
+    public static string Describe() => $"localClock={(Enabled ? "on" : "off")} localSteps={LocalSteps} fusionSteps={FusionSteps} skipped={SkippedTicks} stepDenied={LocalStepDenied} errors={StepErrors} wordSyncs={WordSyncs} capped={Capped} input={InputRefreshes}/{InputErrors} debt={Debt:0.0}";
 }

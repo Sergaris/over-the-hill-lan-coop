@@ -4,9 +4,12 @@ using Fusion.Addons.Physics;
 namespace OthLan;
 
 /// <summary>
+/// Single owner of client scene-physics step policy (Fusion RunnerSimulatePhysics3D.ClientPhysicsSimulation).
 /// 0.2.0 T2.1: opt-in ClientPhysicsMode=SimulateForward (resim ticks do not Physics.Simulate the scene).
-/// Any other value leaves the game default: with SimulateForward the prediction reset teleports the own car
-/// without stepping contacts/suspension, so it bounces and ignores steering (0.2.3 steer A/B).
+/// Default stays the game value (SimulateAlways): after a prediction-reset teleport the own car must still get a
+/// contact/suspension step — SimulateForward as default caused bounce / dead steering (v9 / 0.2.3 steer A/B).
+/// 0.2.6 hitch fix is not here: cheap-skip Previous restore lives in OwnCar (offline: dominant sim-jump after reset).
+/// Do not reintroduce SimulateForward as the release default.
 /// </summary>
 internal static class ClientPhysics
 {

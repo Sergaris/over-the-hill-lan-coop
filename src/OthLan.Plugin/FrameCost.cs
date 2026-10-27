@@ -22,11 +22,14 @@ internal static class FrameCost
         public readonly string Name;
         readonly double[] _buf = new double[FrameCostLogic.WindowCap];
         int _n, _i, _overHot;
+        /// <summary>Most recent sample (ms), for hitch lines; -1 if none yet.</summary>
+        public double LastMs { get; private set; } = -1;
 
         public Stage(string name) { Name = name; }
 
         public void AddMs(double ms)
         {
+            LastMs = ms;
             if (FrameCostLogic.TryPush(_buf, ref _n, ref _i, ms, FrameCostLogic.MaxPlausibleStageMs)
                 && ms > FrameCostLogic.StageHotMs)
                 _overHot++;
@@ -41,7 +44,7 @@ internal static class FrameCost
             _overHot = 0;
         }
 
-        public void ResetAll() => ResetWindow();
+        public void ResetAll() { ResetWindow(); LastMs = -1; }
     }
 
     public readonly struct Scope : IDisposable

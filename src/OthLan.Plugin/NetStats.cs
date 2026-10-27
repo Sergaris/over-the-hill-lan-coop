@@ -20,6 +20,8 @@ internal static class NetStats
     public static readonly Smoothness Own = new(), Remote = new(), OwnWindow = new(), OwnSim = new(), RemoteWindow = new();
     static int _remoteHitchLogs;
     static float _lastRenderTime = -1; static int _hitchLogs, _lastResets, _lastRestores; static Vector3 _lastOwnPos; static bool _hasOwnPos;
+    // 0.2.6: counter baselines for per-window deltas in the 30 s line
+    static int _winLocalSteps, _winRestores, _winCheap, _winCheapPrev, _winStepDenied, _winResets;
     public static readonly GapStats Gaps = new();
     public static int InputDropped, TimeResets, Corrections, CorrOver1m, CorrOver5m; public static double CorrMax, CorrSum;
     static readonly Dictionary<IntPtr, Smoothness> _remote = new();
@@ -52,12 +54,20 @@ internal static class NetStats
         Corrections++; CorrSum += err; if (err > CorrMax) CorrMax = err; if (err > 1) CorrOver1m++; if (err > 5) CorrOver5m++;
     }
 
+    /// <summary>0.2.6: after Restore / cheap Previous put-back — reset CV predictor so the snap is not a hitch cascade.</summary>
+    public static void OnOwnPoseCommitted()
+    {
+        Own.Break(); OwnWindow.Break(); OwnSim.Break();
+        _hasOwnPos = false; _lastRenderTime = -1;
+    }
+
     static void ResetAll()
     {
         Own.Reset(); OwnWindow.Reset(); RemoteWindow.Reset(); _remoteHitchLogs = 0; OwnSim.Reset(); _lastRenderTime = -1; _hitchLogs = 0; _hasOwnPos = false; Remote.Reset(); Gaps.Reset(); _remote.Clear(); _remoteVisPos.Clear();
         InputDropped = TimeResets = Corrections = CorrOver1m = CorrOver5m = 0; CorrMax = CorrSum = 0; RemoteBelow = 0;
         _lastServerTick = _lastTick = int.MinValue; _serverTickAt = -1; _lastSampleAt = -1;
         _ftN = _ftI = FramesOver25ms = FramesOver50ms = 0; _lastFtAt = -1;
+        _winLocalSteps = _winRestores = _winCheap = _winCheapPrev = _winStepDenied = _winResets = 0;
         FrameCost.ResetAll();
     }
 
@@ -187,7 +197,17 @@ internal static class NetStats
                             ? PoseSpeedLogic.FromDelta(_lastOwnPos.x, _lastOwnPos.y, _lastOwnPos.z, p.x, p.y, p.z, dt)
                             : 0;
                         string rbd = "-"; try { var rb = fp.GetComponent<Rigidbody>(); if (rb != null) rbd = $"{(rb.position - p).magnitude * 100:0}cm"; } catch { }
-                        Plugin.L.LogInfo($"[NetStats] hitch {LastOwnHitch * 100:0}cm (sim clock {simH * 100:0}cm) dt={dt * 1000:0}ms simDt={sdt * 1000:0}ms v={v:0.0}m/s render-rb={rbd} resets+{OwnCar.Resets - _lastResets} restores+{OwnCar.Restores - _lastRestores} sinceReset={(OwnCar.LastResetAt > 0 ? (NetClock.Now - OwnCar.LastResetAt) * 1000 : -1):0}ms");
+                        var sinceReset = OwnCar.LastResetAt > 0 ? NetClock.Now - OwnCar.LastResetAt : -1;
+                        var kind = HitchKindLogic.Classify(LastOwnHitch, simH);
+                        var ftMs = _lastFtAt > 0 && _ftN > 0 ? _ft[(_ftI - 1 + FrameCostLogic.WindowCap) % FrameCostLogic.WindowCap] : -1;
+                        var resimMs = FrameCost.Resim.LastMs;
+                        Plugin.L.LogInfo(
+                            $"[NetStats] hitch {LastOwnHitch * 100:0}cm (sim clock {simH * 100:0}cm) kind={HitchKindLogic.Tag(kind)}" +
+                            $" dt={dt * 1000:0}ms simDt={sdt * 1000:0}ms frameMs={ftMs:0.0} resimMs={resimMs:0.00} ticks={OwnCar.LastResimTicks}" +
+                            $" v={v:0.0}m/s render-rb={rbd} state={OwnCar.State}" +
+                            $" resets+{OwnCar.Resets - _lastResets} restores+{OwnCar.Restores - _lastRestores}" +
+                            $" sinceReset={(sinceReset >= 0 ? sinceReset * 1000 : -1):0}ms" +
+                            $" nearReset={HitchKindLogic.NearReset(sinceReset)}");
                     }
                     _lastResets = OwnCar.Resets; _lastRestores = OwnCar.Restores; _lastOwnPos = p; _hasOwnPos = true;
                 }
@@ -254,7 +274,17 @@ internal static class NetStats
     static void Log(string why)
     {
         if (!Plugin.NetStatsLog.Value) return;
-        Plugin.L.LogInfo($"[NetStats] ({why}) {Describe()} | {FrameDescribe()} | {FrameCost.Describe()} | {CarRelay.Describe()} | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()} | {RemoteSmooth.Describe()} | {RemoteWheelVisuals.Describe()} | {OwnCar.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()}");
+        var dLocal = OwnLocal.LocalSteps - _winLocalSteps;
+        var dRest = OwnCar.Restores - _winRestores;
+        var dCheap = OwnCar.CheapSkips - _winCheap;
+        var dCheapPrev = OwnCar.CheapPrevRestores - _winCheapPrev;
+        var dDenied = OwnLocal.LocalStepDenied - _winStepDenied;
+        var dResets = OwnCar.Resets - _winResets;
+        Plugin.L.LogInfo(
+            $"[NetStats] ({why}) {Describe()} | {FrameDescribe()} | {FrameCost.Describe()} | {CarRelay.Describe()}" +
+            $" | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()}" +
+            $" | winΔ localSteps={dLocal} restores={dRest} cheap={dCheap} cheapPrev={dCheapPrev} stepDenied={dDenied} resets={dResets}" +
+            $" | {RemoteSmooth.Describe()} | {RemoteWheelVisuals.Describe()} | {OwnCar.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()}");
         FramesOver25ms = FramesOver50ms = 0; RemoteBelow = 0;
         RemoteCarView.StreamFrames = RemoteCarView.FusionFrames = RemoteCarView.Snaps = RemoteCarView.StaleFrames = RemoteCarView.ExtrapolatedFrames = RemoteCarView.SourceSwitches = RemoteCarView.RemoteBelow = 0;
         RemoteCarView.ClearAcceptWindow();
@@ -262,5 +292,7 @@ internal static class NetStats
         RemoteWheelVisuals.WheelErrMax = 0;
         FrameCostLogic.Clear(_ft, ref _ftN, ref _ftI); // 30 s window for frameMs (same owner as cost)
         FrameCost.ResetWindow();
+        _winLocalSteps = OwnLocal.LocalSteps; _winRestores = OwnCar.Restores; _winCheap = OwnCar.CheapSkips;
+        _winCheapPrev = OwnCar.CheapPrevRestores; _winStepDenied = OwnLocal.LocalStepDenied; _winResets = OwnCar.Resets;
     }
 }

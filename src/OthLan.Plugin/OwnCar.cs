@@ -101,7 +101,11 @@ internal static unsafe class OwnCar
     }
     static int _vbN, _nrbN; static VehiclePhysics.VehicleBase _vb;
     public static int LateFixes, ResimRestores, WordRestores, VppRestores, InputBufferPatched, AcceptsDistance, AcceptsOtac, DistanceIgnoredAfterGap;
-    public static int CheapSkips;   // AfterResim cleared capture without Restore (err within noise)
+    public static int CheapSkips;   // AfterResim cleared capture without full Restore (err within noise)
+    /// <summary>0.2.6: ticks argument of the last RunClientSideResimulationLoop (-1 if none).</summary>
+    public static int LastResimTicks = -1;
+    /// <summary>0.2.6: Previous restored on a cheap skip (without VPP RestoreSnapshot).</summary>
+    public static int CheapPrevRestores;
     const string K_Br = "FusionPlayer::BeforeClientPredictionReset()";
     const string K_Bt = "FusionPlayer::BeforeTick()";
 
@@ -314,6 +318,7 @@ internal static unsafe class OwnCar
     static void ResimDetour(IntPtr self, int ticks, IntPtr mi)
     {
         var t0 = _runner != null && NetTrace.On ? _runner.Tick.Raw : 0;
+        LastResimTicks = ticks;
         using (FrameCost.Measure(FrameCost.Resim))
             _rsOrig(self, ticks, mi);
         if (NetTrace.On && _runner != null && _rb != null) NetTrace.Own("S", _runner.Tick.Raw, _capTick, ticks, SrvTick(), RenderT(), _rb.position, _rb.position, _rb.linearVelocity, t0, _captured ? 1 : 0);
@@ -371,7 +376,14 @@ internal static unsafe class OwnCar
         { _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; AcceptsDistance++; Plugin.L.LogInfo($"[OwnCar] host pose {err:0.0} m away: taking it (teleport/rescue)"); return; }
         if (err > Plugin.OwnAcceptMeters.Value) DistanceIgnoredAfterGap++;
         // Late path especially: Fusion reset without resim every tick + full VPP restore = FPS death (live 0.2.5.1).
-        if (OwnCarLogic.SkipCheapRestore(err, errDeg, 0.05, 1.0)) { CheapSkips++; return; }
+        // 0.2.6: still put Previous back — otherwise NRB draws host-old→resim (live-0251: sim-jump hitch after cheap skip).
+        if (OwnCarLogic.SkipCheapRestore(err, errDeg, 0.05, 1.0))
+        {
+            CheapSkips++;
+            RestorePreviousOnly();
+            NetStats.OnOwnPoseCommitted();
+            return;
+        }
         Restore();
     }
 
@@ -379,6 +391,21 @@ internal static unsafe class OwnCar
     static bool _lateNow;
     static int SrvTick() { try { return _runner != null ? _runner.Simulation.LatestServerTick.Raw : 0; } catch { return 0; } }
     static float RenderT() { try { return _runner != null ? _runner.LocalRenderTime : -1; } catch { return -1; } }
+
+    /// <summary>NRB/VPP Previous + correction offset only (cheap-skip path keeps resim current pose).</summary>
+    static void RestorePreviousOnly()
+    {
+        try
+        {
+            var pn = _nrbPrevN > 0 && _nrb != null && _nrb.WordCount == _nrbPrevN ? PrevPtr(_nrb) : null;
+            var pv = _vbPrevN == VbWords && _vb != null ? PrevPtr(_vb) : null;
+            if (pn != null) { for (int i = 0; i < _nrbPrevN; i++) pn[i] = _nrbPrev[i]; CheapPrevRestores++; PrevRestores++; }
+            else PrevUnavailable++;
+            if (pv != null) for (int i = 0; i < VbWords; i++) pv[i] = _vbPrev[i];
+        }
+        catch { PrevUnavailable++; }
+        if (_nrb != null) { try { _nrb.ResetCorrectionOffset(); } catch { } }
+    }
 
     static void Restore()
     {
@@ -402,6 +429,7 @@ internal static unsafe class OwnCar
         catch { PrevUnavailable++; }
         if (_nrb != null) { try { _nrb.ResetCorrectionOffset(); } catch { } }
         Restores++;
+        NetStats.OnOwnPoseCommitted();
     }
 
     // ---- input buffer (0.1.8): Fusion keeps unconfirmed inputs in a buffer of TickRate entries (1 s). A host-to-client
@@ -498,7 +526,7 @@ internal static unsafe class OwnCar
     }
 
     public static string Describe() =>
-        $"state={State} resets={Resets} restores={Restores} (afterResim={ResimRestores} late={LateFixes} cheap={CheapSkips} words={WordRestores} vpp={VppRestores} prev={PrevRestores} prevNA={PrevUnavailable}) accepts={Accepts} (otac={AcceptsOtac} dist={AcceptsDistance} distIgnoredAfterGap={DistanceIgnoredAfterGap}) fallbacks={Fallbacks} boosts={Boosts} inputCap={InputCapacity} " +
-        $"suspends={Suspends}/{SuspendFrames} " +
+        $"state={State} resets={Resets} restores={Restores} (afterResim={ResimRestores} late={LateFixes} cheap={CheapSkips} cheapPrev={CheapPrevRestores} words={WordRestores} vpp={VppRestores} prev={PrevRestores} prevNA={PrevUnavailable}) accepts={Accepts} (otac={AcceptsOtac} dist={AcceptsDistance} distIgnoredAfterGap={DistanceIgnoredAfterGap}) fallbacks={Fallbacks} boosts={Boosts} inputCap={InputCapacity} " +
+        $"suspends={Suspends}/{SuspendFrames} lastResimTicks={LastResimTicks} " +
         $"rollback mean={(ErrSamples > 0 ? SumErr / ErrSamples : 0):0.000} m max={MaxErr:0.00} m >1m={ErrOver1m} >5m={ErrOver5m}";
 }

@@ -2,6 +2,17 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.6
+
+Both players need 0.2.6. From 0.1.8.1+ the in-game updater offers this release.
+
+- Client own-car hitch after a prediction reset: a cheap skip still restores NetworkRigidbody/VPP Previous and resets the correction offset (no more host-old→resim jump when the gap was within noise).
+
+## 0.2.6 — изменения
+
+У обоих игроков должна быть 0.2.6. С 0.1.8.1+ обновление предложит меню.
+
+- Статтер своей машины у клиента после prediction reset: на cheap skip всё равно восстанавливаются Previous NRB/VPP и сбрасывается correction offset (без прыжка host-old→resim при ошибке в шуме).
 ## 0.2.5.4
 
 Both players need 0.2.5.4. From 0.1.8.1+ the in-game updater offers this release.

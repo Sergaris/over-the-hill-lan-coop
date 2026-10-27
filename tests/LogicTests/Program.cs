@@ -203,6 +203,18 @@ static class Program
         Eq(OwnCarLogic.SkipCheapRestore(0.01, 5.0, 0.05, 1.0), false, "own: 5 deg -> full restore");
         Eq(OwnCarLogic.AllowLocalPhysicsStep(0.016, 0.028), true, "ownlocal: 16 ms frame allows LocalStep");
         Eq(OwnCarLogic.AllowLocalPhysicsStep(0.035, 0.028), false, "ownlocal: 35 ms frame skips LocalStep");
+
+        Eq(HitchKindLogic.Classify(0, 0), HitchKindLogic.Kind.None, "hitch: zero hitch -> none");
+        Eq(HitchKindLogic.Classify(1.0, 0.6), HitchKindLogic.Kind.SimJump, "hitch: sim ≥½ hitch -> sim");
+        Eq(HitchKindLogic.Classify(1.0, 0.5), HitchKindLogic.Kind.SimJump, "hitch: sim ==½ hitch -> sim");
+        Eq(HitchKindLogic.Classify(1.0, 0.0), HitchKindLogic.Kind.FrameSkip, "hitch: sim 0 -> frame");
+        Eq(HitchKindLogic.Classify(1.0, 0.2), HitchKindLogic.Kind.FrameSkip, "hitch: sim ≤¼ hitch -> frame");
+        Eq(HitchKindLogic.Classify(1.0, 0.3), HitchKindLogic.Kind.Mixed, "hitch: between ¼ and ½ -> mix");
+        Eq(HitchKindLogic.Tag(HitchKindLogic.Kind.SimJump), "sim", "hitch tag: sim");
+        Eq(HitchKindLogic.Tag(HitchKindLogic.Kind.FrameSkip), "frame", "hitch tag: frame");
+        Eq(HitchKindLogic.NearReset(0.04), true, "hitch: 40 ms after reset is near");
+        Eq(HitchKindLogic.NearReset(0.20), false, "hitch: 200 ms after reset is far");
+        Eq(HitchKindLogic.NearReset(-1), false, "hitch: unknown sinceReset not near");
         // input buffer: 8 s at 50 Hz = 400, never below the game's
         Eq(OwnCarLogic.InputCapacity(8, 50, 50), 400, "input buffer 8 s @50 Hz");
         Eq(OwnCarLogic.InputCapacity(0, 50, 50), 50, "input buffer 0 = game default");

@@ -23,6 +23,7 @@
     <Compile Include="../../src/OthLan.Plugin/SessionLogsLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/DiagLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/FrameCostLogic.cs" />
+    <Compile Include="../../src/OthLan.Plugin/HitchKindLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/PoseSpeedLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/WheelSpinLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/UiModalLogic.cs" />
