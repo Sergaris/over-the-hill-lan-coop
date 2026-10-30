@@ -210,5 +210,10 @@
   "upd.title": "OTH-LAN {0} is available",
   "upd.titleOffline": "Could not check for OTH-LAN updates",
   "upd.toggleOff": "Check for updates: OFF",
-  "upd.toggleOn": "Check for updates: ON"
+  "upd.toggleOn": "Check for updates: ON",
+  "coop.buttonWarn": "Local Co-op (!)",
+  "coop.buttonOff": "Local Co-op (off)",
+  "dlg.offTitle": "OTH-LAN {0}: incompatible game version",
+  "dlg.offBody": "This game version is not compatible with OTH-LAN {0}. LAN co-op is off until a mod update. ({1})",
+  "dlg.offOk": "OK"
 }

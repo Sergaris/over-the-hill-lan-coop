@@ -5,6 +5,8 @@ Thresholds below are **[estimate]** unless stated otherwise.
 
 ## Status
 
+- **0.2.6.1** — Steam build 26326013 Supported; Canvas Unverified dialog with Continue/Disable; VehicleInput optional signature; known issue: remote headlights not yet on that build.
+
 - **0.1.7** — ping colours and "no link" label, connection-loss compensation, client-authoritative own car, freeze
   watchdog with auto-rejoin, **Local Co-op** button and LAN lobby list. Verified with scripted runs of 2–4 game
   instances on one PC (outages 1–12 s, 50 % loss, rejoin, full lobby, version gate).

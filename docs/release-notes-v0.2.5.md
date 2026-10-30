@@ -14,10 +14,10 @@ Under **Assets** below, click **`OTH-LAN-0.2.5.zip`** (not "Source code").
 
 | File | What it is | Size | SHA-256 |
 |---|---|---|---|
-| `OTH-LAN-0.2.5.zip` | Installer (recommended) | 130253688 B | `568c3618a974643ce59e1f21e34abf39a42b7ca7f976fe762f8bb96370f7fb3a` |
-| `OTH-LAN-0.2.5-manual.zip` | Manual install without the installer | 34590564 B | `7a4d96586965fd7c06bcfccc062ef1b96404c098d21a211058cf013b6f832020` |
+| `OTH-LAN-0.2.5.zip` | Installer (recommended) | *(fill at package)* | *(fill)* |
+| `OTH-LAN-0.2.5-manual.zip` | Manual install without the installer | *(fill at package)* | *(fill)* |
 
-Plugin `OthLan.dll` sha256 `0a6388e85807941ba47fccc9e91a2c31ea70c92ec095d4868c912c0b95445df4`. All checksums are also in `SHA256SUMS.txt`. Optional asset `6000.0.75.zip` is the offline Unity base libraries pack used by `OTH-LAN-Launch.exe` if BepInEx hangs on first download.
+Plugin `OthLan.dll` sha256 *(fill after public build)*. All checksums are also in `SHA256SUMS.txt`. Optional asset `6000.0.75.zip` is the offline Unity base libraries pack used by `OTH-LAN-Launch.exe` if BepInEx hangs on first download.
 
 ## Скачать
 
@@ -25,10 +25,10 @@ Plugin `OthLan.dll` sha256 `0a6388e85807941ba47fccc9e91a2c31ea70c92ec095d4868c91
 
 | Файл | Что это | Размер | SHA-256 |
 |---|---|---|---|
-| `OTH-LAN-0.2.5.zip` | Установщик (рекомендуется) | 130253688 Б | `568c3618a974643ce59e1f21e34abf39a42b7ca7f976fe762f8bb96370f7fb3a` |
-| `OTH-LAN-0.2.5-manual.zip` | Ручная установка без установщика | 34590564 Б | `7a4d96586965fd7c06bcfccc062ef1b96404c098d21a211058cf013b6f832020` |
+| `OTH-LAN-0.2.5.zip` | Установщик (рекомендуется) | *(заполнить при сборке)* | *(заполнить)* |
+| `OTH-LAN-0.2.5-manual.zip` | Ручная установка без установщика | *(заполнить при сборке)* | *(заполнить)* |
 
-Плагин `OthLan.dll` sha256 `0a6388e85807941ba47fccc9e91a2c31ea70c92ec095d4868c912c0b95445df4`. Все контрольные суммы есть также в `SHA256SUMS.txt`. Опциональный файл `6000.0.75.zip` — офлайн-пакет Unity base libraries для `OTH-LAN-Launch.exe`, если BepInEx зависает при первой загрузке.
+Плагин `OthLan.dll` sha256 *(заполнить после публичной сборки)*. Все контрольные суммы есть также в `SHA256SUMS.txt`. Опциональный файл `6000.0.75.zip` — офлайн-пакет Unity base libraries для `OTH-LAN-Launch.exe`, если BepInEx зависает при первой загрузке.
 
 ---
 

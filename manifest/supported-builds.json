@@ -1,161 +1,237 @@
 {
-    "schema":  1,
-    "mod":  "OTH-LAN",
-    "modVersion":  "0.2.6",
-    "steamAppId":  2929250,
-    "bepinex":  {
-                    "version":  "6.0.0-be.788+5b766a3",
-                    "zip":  "BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.788+5b766a3.zip",
-                    "url":  "https://builds.bepinex.dev/projects/bepinex_be/788/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.788%2B5b766a3.zip",
-                    "sha256":  "f4cc496bd098a0df4164b81e3737297707f13a47c2478dba2f60eefab784817a"
-                },
-    "builds":  [
-                   {
-                       "buildId":  "26062472",
-                       "label":  "1.0 release (2026-10-14..)",
-                       "unityVersion":  "6000.0.75f1",
-                       "fusionVersion":  "2.1.2.0",
-                       "files":  {
-                                     "GameAssembly.dll":  "57da2280d66760a93eab4c4f8efcfc79ae03742a3b3cedd0bf87044db931b9b4",
-                                     "over the hill_Data/il2cpp_data/Metadata/global-metadata.dat":  "3908c1a916f35d817e4bcf1ff797e6ab1524a6d0627decce16598e0e2dacc61f"
-                                 },
-                       "rva":  {
-                                   "Fusion.NetworkRunner::StartGame(StartGameArgs)":  "0x12DCDA0",
-                                   "Fusion.NetworkRunner::Initialize(NetworkRunnerInitializeArgs)":  "0x12BC310",
-                                   "Fusion.NetworkRunnerInitializeArgs::get_IsSinglePlayer()":  "0x1322F00",
-                                   "Fusion.Simulation::NetworkInit(INetSocket,NetAddress)":  "0x130D230",
-                                   "Fusion.NetworkRunner::Connect(NetAddress,byte[],byte[])":  "0x12BAD40",
-                                   "Fusion.Sockets.NetSocketNative::.ctor(NetSocketFlags)":  "0x138B630",
-                                   "Fusion.NetworkRunner::Simulation.ICallbacks.get_LocalPlayerRef()":  "0x12CF560",
-                                   "Fusion.NetworkRunner::Simulation.ICallbacks.OnInternalConnectionAttempt(int,int,out bool,out NetAddress)":  "0x12D53C0",
-                                   "Fusion.Simulation::INetPeerGroupCallbacks.OnConnectionRequest(NetAddress,byte[],byte[])":  "0x13100F0"
-                               },
-                       "offsets":  {
-                                       "StartGameArgs.GameMode":  "0x0",
-                                       "StartGameArgs.ConnectionToken":  "0xD8",
-                                       "StartGameArgs.PlayerUniqueId":  "0xE0",
-                                       "StartGameArgs.SessionProperties":  "0xE8",
-                                       "NetworkRunnerInitializeArgs.Address":  "0x38",
-                                       "NetworkRunnerInitializeArgs.PlayerCount":  "0x78",
-                                       "NetworkRunnerInitializeArgs.SimulationMode":  "0x80",
-                                       "NetworkRunnerInitializeArgs.Config":  "0x98",
-                                       "Nullable\u003cNetAddress\u003e.hasValue":  "0x0",
-                                       "Nullable\u003cNetAddress\u003e.value":  "0x8",
-                                       "Nullable\u003cInt32\u003e.hasValue":  "0x0",
-                                       "Nullable\u003cInt32\u003e.value":  "0x4",
-                                       "Nullable\u003cSimulationModes\u003e.hasValue":  "0x0",
-                                       "Nullable\u003cSimulationModes\u003e.value":  "0x4",
-                                       "sizeof(NetAddress)":  "0x18"
-                                   },
-                       "codeSig":  {
-                                       "Fusion.NetworkRunner::StartGame(StartGameArgs)":  "323:5ab8bcf6ea987724",
-                                       "Fusion.NetworkRunner::Initialize(NetworkRunnerInitializeArgs)":  "7619:7dd3c08996ba4821",
-                                       "Fusion.NetworkRunnerInitializeArgs::get_IsSinglePlayer()":  "89:2e9f5a26f83ca977",
-                                       "Fusion.Simulation::NetworkInit(INetSocket,NetAddress)":  "1822:ef424ee4db9e057d",
-                                       "Fusion.NetworkRunner::Connect(NetAddress,byte[],byte[])":  "307:6b637564e82e0cf5",
-                                       "Fusion.Sockets.NetSocketNative::.ctor(NetSocketFlags)":  "12:cdac5a4911c2bc81",
-                                       "Fusion.NetworkRunner::Simulation.ICallbacks.get_LocalPlayerRef()":  "286:a49db4a431ec9ceb",
-                                       "Fusion.NetworkRunner::Simulation.ICallbacks.OnInternalConnectionAttempt(int,int,out bool,out NetAddress)":  "143:5e04034f5985f567",
-                                       "Fusion.Simulation::INetPeerGroupCallbacks.OnConnectionRequest(NetAddress,byte[],byte[])":  "112:5aec858a8707caa6"
-                                   },
-                       "optionalRva":  {
-                                           "FusionPlayer::BeforeClientPredictionReset()":  "0xCF1940",
-                                           "FusionPlayer::BeforeTick()":  "0xCF1A40",
-                                           "Fusion.Sockets.NetSocketNative::Send":  "0x138BFC0",
-                                           "Fusion.Sockets.NetSocketNative::Receive":  "0x138BDC0",
-                                           "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)":  "0x132EE00",
-                                           "Fusion.Addons.Physics.NetworkRigidbody`2::Render()":  "0x24F2ED0",
-                                           "VehicleInput::OnInput(NetworkRunner,NetworkInput)":  "0xD12920",
-                                           "OverlandSaver::SaveGame()":  "0x929380",
-                                           "OverlandSaver::SaveSettings()":  "0x929750",
-                                           "OverlandSaver::SaveJson(string,string)":  "0x929ED0",
-                                           "FogOfWarManager::SaveFogOfWarTexture()":  "0x918AD0"
-                                       },
-                       "optionalSig":  {
-                                           "FusionPlayer::BeforeClientPredictionReset()":  "230:2e2742b37a543ae6",
-                                           "FusionPlayer::BeforeTick()":  "443:3a9e07a876db51d1",
-                                           "Fusion.Sockets.NetSocketNative::Send":  "380:0500eccc7ce24caa",
-                                           "Fusion.Sockets.NetSocketNative::Receive":  "511:c8e4f6defba9621a",
-                                           "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)":  "483:c83042bc5b6b18b7",
-                                           "OverlandSaver::SaveGame()":  "161:53e8be88d5093404",
-                                           "OverlandSaver::SaveSettings()":  "886:62545bbf265d5b70",
-                                           "OverlandSaver::SaveJson(string,string)":  "176:41a34aa4c2a1d55a",
-                                           "FogOfWarManager::SaveFogOfWarTexture()":  "246:f8e498fbf232b732"
-                                       }
-                   },
-                   {
-                       "buildId":  "26136884",
-                       "label":  "Steam patch 2026-10-23 (checked offline: Fusion code identical, see DEV-0.1.8.1 notes)",
-                       "unityVersion":  "6000.0.75f1",
-                       "fusionVersion":  "2.1.2.0",
-                       "files":  {
-                                     "GameAssembly.dll":  "fd96a4df3b45f3d90d5ff1a173d2396bbf3397dc61720910125c5ccf909b6423",
-                                     "over the hill_Data/il2cpp_data/Metadata/global-metadata.dat":  "4b24c129e4290110e2606b28e0e7f1889c6d9cb0963f56da4d4de16e30242ed6"
-                                 },
-                       "rva":  {
-                                   "Fusion.NetworkRunner::StartGame(StartGameArgs)":  "0x12E3980",
-                                   "Fusion.NetworkRunner::Initialize(NetworkRunnerInitializeArgs)":  "0x12C2EF0",
-                                   "Fusion.NetworkRunnerInitializeArgs::get_IsSinglePlayer()":  "0x1329AE0",
-                                   "Fusion.Simulation::NetworkInit(INetSocket,NetAddress)":  "0x1313E10",
-                                   "Fusion.NetworkRunner::Connect(NetAddress,byte[],byte[])":  "0x12C1920",
-                                   "Fusion.Sockets.NetSocketNative::.ctor(NetSocketFlags)":  "0x1392210",
-                                   "Fusion.NetworkRunner::Simulation.ICallbacks.get_LocalPlayerRef()":  "0x12D6140",
-                                   "Fusion.NetworkRunner::Simulation.ICallbacks.OnInternalConnectionAttempt(int,int,out bool,out NetAddress)":  "0x12DBFA0",
-                                   "Fusion.Simulation::INetPeerGroupCallbacks.OnConnectionRequest(NetAddress,byte[],byte[])":  "0x1316CD0"
-                               },
-                       "offsets":  {
-                                       "StartGameArgs.GameMode":  "0x0",
-                                       "StartGameArgs.ConnectionToken":  "0xD8",
-                                       "StartGameArgs.PlayerUniqueId":  "0xE0",
-                                       "StartGameArgs.SessionProperties":  "0xE8",
-                                       "NetworkRunnerInitializeArgs.Address":  "0x38",
-                                       "NetworkRunnerInitializeArgs.PlayerCount":  "0x78",
-                                       "NetworkRunnerInitializeArgs.SimulationMode":  "0x80",
-                                       "NetworkRunnerInitializeArgs.Config":  "0x98",
-                                       "Nullable\u003cNetAddress\u003e.hasValue":  "0x0",
-                                       "Nullable\u003cNetAddress\u003e.value":  "0x8",
-                                       "Nullable\u003cInt32\u003e.hasValue":  "0x0",
-                                       "Nullable\u003cInt32\u003e.value":  "0x4",
-                                       "Nullable\u003cSimulationModes\u003e.hasValue":  "0x0",
-                                       "Nullable\u003cSimulationModes\u003e.value":  "0x4",
-                                       "sizeof(NetAddress)":  "0x18"
-                                   },
-                       "codeSig":  {
-                                       "Fusion.NetworkRunner::StartGame(StartGameArgs)":  "323:5ab8bcf6ea987724",
-                                       "Fusion.NetworkRunner::Initialize(NetworkRunnerInitializeArgs)":  "7619:403a77f86c7280c8",
-                                       "Fusion.NetworkRunnerInitializeArgs::get_IsSinglePlayer()":  "89:2e9f5a26f83ca977",
-                                       "Fusion.Simulation::NetworkInit(INetSocket,NetAddress)":  "1822:ef424ee4db9e057d",
-                                       "Fusion.NetworkRunner::Connect(NetAddress,byte[],byte[])":  "307:6b637564e82e0cf5",
-                                       "Fusion.Sockets.NetSocketNative::.ctor(NetSocketFlags)":  "12:cdac5a4911c2bc81",
-                                       "Fusion.NetworkRunner::Simulation.ICallbacks.get_LocalPlayerRef()":  "286:a49db4a431ec9ceb",
-                                       "Fusion.NetworkRunner::Simulation.ICallbacks.OnInternalConnectionAttempt(int,int,out bool,out NetAddress)":  "143:5e04034f5985f567",
-                                       "Fusion.Simulation::INetPeerGroupCallbacks.OnConnectionRequest(NetAddress,byte[],byte[])":  "112:5aec858a8707caa6"
-                                   },
-                       "optionalRva":  {
-                                           "FusionPlayer::BeforeClientPredictionReset()":  "0xCF2960",
-                                           "FusionPlayer::BeforeTick()":  "0xCF2A60",
-                                           "Fusion.Sockets.NetSocketNative::Send":  "0x1392BA0",
-                                           "Fusion.Sockets.NetSocketNative::Receive":  "0x13929A0",
-                                           "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)":  "0x13359E0",
-                                           "Fusion.Addons.Physics.NetworkRigidbody`2::Render()":  "0x25001A0",
-                                           "VehicleInput::OnInput(NetworkRunner,NetworkInput)":  "0xD14F50",
-                                           "OverlandSaver::SaveGame()":  "0x926A00",
-                                           "OverlandSaver::SaveSettings()":  "0x926DD0",
-                                           "OverlandSaver::SaveJson(string,string)":  "0x927550",
-                                           "FogOfWarManager::SaveFogOfWarTexture()":  "0x915D20"
-                                       },
-                       "optionalSig":  {
-                                           "FusionPlayer::BeforeClientPredictionReset()":  "230:2e2742b37a543ae6",
-                                           "FusionPlayer::BeforeTick()":  "443:3a9e07a876db51d1",
-                                           "Fusion.Sockets.NetSocketNative::Send":  "380:0500eccc7ce24caa",
-                                           "Fusion.Sockets.NetSocketNative::Receive":  "511:c8e4f6defba9621a",
-                                           "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)":  "483:c83042bc5b6b18b7",
-                                           "OverlandSaver::SaveGame()":  "161:53e8be88d5093404",
-                                           "OverlandSaver::SaveSettings()":  "886:62545bbf265d5b70",
-                                           "OverlandSaver::SaveJson(string,string)":  "176:41a34aa4c2a1d55a",
-                                           "FogOfWarManager::SaveFogOfWarTexture()":  "246:f8e498fbf232b732"
-                                       }
-                   }
-               ],
-    "unverifiedPolicy":  "Files differ from every build above: LAN may still run (after a one-time warning) if Fusion is fusionVersion and every offset resolved by name matches. CodeSig diffs alone are soft warnings (third-party / patched GameAssembly). Host and client may join across different GameAssembly hashes when both advertise the same Fusion version."
+  "schema": 1,
+  "mod": "OTH-LAN",
+  "modVersion": "0.2.6.1",
+  "steamAppId": 2929250,
+  "bepinex": {
+    "version": "6.0.0-be.788+5b766a3",
+    "zip": "BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.788+5b766a3.zip",
+    "url": "https://builds.bepinex.dev/projects/bepinex_be/788/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.788%2B5b766a3.zip",
+    "sha256": "f4cc496bd098a0df4164b81e3737297707f13a47c2478dba2f60eefab784817a",
+    "unityLibsZip": "6000.0.75.zip",
+    "unityLibsUrl": "https://unity.bepinex.dev/libraries/6000.0.75.zip"
+  },
+  "builds": [
+    {
+      "buildId": "26062472",
+      "label": "1.0 release (2026-10-14..)",
+      "unityVersion": "6000.0.75f1",
+      "fusionVersion": "2.1.2.0",
+      "files": {
+        "GameAssembly.dll": "57da2280d66760a93eab4c4f8efcfc79ae03742a3b3cedd0bf87044db931b9b4",
+        "over the hill_Data/il2cpp_data/Metadata/global-metadata.dat": "3908c1a916f35d817e4bcf1ff797e6ab1524a6d0627decce16598e0e2dacc61f"
+      },
+      "rva": {
+        "Fusion.NetworkRunner::StartGame(StartGameArgs)": "0x12DCDA0",
+        "Fusion.NetworkRunner::Initialize(NetworkRunnerInitializeArgs)": "0x12BC310",
+        "Fusion.NetworkRunnerInitializeArgs::get_IsSinglePlayer()": "0x1322F00",
+        "Fusion.Simulation::NetworkInit(INetSocket,NetAddress)": "0x130D230",
+        "Fusion.NetworkRunner::Connect(NetAddress,byte[],byte[])": "0x12BAD40",
+        "Fusion.Sockets.NetSocketNative::.ctor(NetSocketFlags)": "0x138B630",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.get_LocalPlayerRef()": "0x12CF560",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.OnInternalConnectionAttempt(int,int,out bool,out NetAddress)": "0x12D53C0",
+        "Fusion.Simulation::INetPeerGroupCallbacks.OnConnectionRequest(NetAddress,byte[],byte[])": "0x13100F0"
+      },
+      "offsets": {
+        "StartGameArgs.GameMode": "0x0",
+        "StartGameArgs.ConnectionToken": "0xD8",
+        "StartGameArgs.PlayerUniqueId": "0xE0",
+        "StartGameArgs.SessionProperties": "0xE8",
+        "NetworkRunnerInitializeArgs.Address": "0x38",
+        "NetworkRunnerInitializeArgs.PlayerCount": "0x78",
+        "NetworkRunnerInitializeArgs.SimulationMode": "0x80",
+        "NetworkRunnerInitializeArgs.Config": "0x98",
+        "Nullable<NetAddress>.hasValue": "0x0",
+        "Nullable<NetAddress>.value": "0x8",
+        "Nullable<Int32>.hasValue": "0x0",
+        "Nullable<Int32>.value": "0x4",
+        "Nullable<SimulationModes>.hasValue": "0x0",
+        "Nullable<SimulationModes>.value": "0x4",
+        "sizeof(NetAddress)": "0x18"
+      },
+      "codeSig": {
+        "Fusion.NetworkRunner::StartGame(StartGameArgs)": "323:5ab8bcf6ea987724",
+        "Fusion.NetworkRunner::Initialize(NetworkRunnerInitializeArgs)": "7619:7dd3c08996ba4821",
+        "Fusion.NetworkRunnerInitializeArgs::get_IsSinglePlayer()": "89:2e9f5a26f83ca977",
+        "Fusion.Simulation::NetworkInit(INetSocket,NetAddress)": "1822:ef424ee4db9e057d",
+        "Fusion.NetworkRunner::Connect(NetAddress,byte[],byte[])": "307:6b637564e82e0cf5",
+        "Fusion.Sockets.NetSocketNative::.ctor(NetSocketFlags)": "12:cdac5a4911c2bc81",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.get_LocalPlayerRef()": "286:a49db4a431ec9ceb",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.OnInternalConnectionAttempt(int,int,out bool,out NetAddress)": "143:5e04034f5985f567",
+        "Fusion.Simulation::INetPeerGroupCallbacks.OnConnectionRequest(NetAddress,byte[],byte[])": "112:5aec858a8707caa6"
+      },
+      "optionalRva": {
+        "FusionPlayer::BeforeClientPredictionReset()": "0xCF1940",
+        "FusionPlayer::BeforeTick()": "0xCF1A40",
+        "Fusion.Sockets.NetSocketNative::Send": "0x138BFC0",
+        "Fusion.Sockets.NetSocketNative::Receive": "0x138BDC0",
+        "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)": "0x132EE00",
+        "Fusion.Addons.Physics.NetworkRigidbody`2::Render()": "0x24F2ED0",
+        "VehicleInput::OnInput(NetworkRunner,NetworkInput)": "0xD12920",
+        "OverlandSaver::SaveGame()": "0x929380",
+        "OverlandSaver::SaveSettings()": "0x929750",
+        "OverlandSaver::SaveJson(string,string)": "0x929ED0",
+        "FogOfWarManager::SaveFogOfWarTexture()": "0x918AD0"
+      },
+      "optionalSig": {
+        "FusionPlayer::BeforeClientPredictionReset()": "230:2e2742b37a543ae6",
+        "FusionPlayer::BeforeTick()": "443:3a9e07a876db51d1",
+        "Fusion.Sockets.NetSocketNative::Send": "380:0500eccc7ce24caa",
+        "Fusion.Sockets.NetSocketNative::Receive": "511:c8e4f6defba9621a",
+        "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)": "483:c83042bc5b6b18b7",
+        "OverlandSaver::SaveGame()": "161:53e8be88d5093404",
+        "OverlandSaver::SaveSettings()": "886:62545bbf265d5b70",
+        "OverlandSaver::SaveJson(string,string)": "176:41a34aa4c2a1d55a",
+        "FogOfWarManager::SaveFogOfWarTexture()": "246:f8e498fbf232b732"
+      }
+    },
+    {
+      "buildId": "26136884",
+      "label": "Steam patch 2026-10-23 (checked offline: Fusion code identical, see DEV-0.1.8.1 notes)",
+      "unityVersion": "6000.0.75f1",
+      "fusionVersion": "2.1.2.0",
+      "files": {
+        "GameAssembly.dll": "fd96a4df3b45f3d90d5ff1a173d2396bbf3397dc61720910125c5ccf909b6423",
+        "over the hill_Data/il2cpp_data/Metadata/global-metadata.dat": "4b24c129e4290110e2606b28e0e7f1889c6d9cb0963f56da4d4de16e30242ed6"
+      },
+      "rva": {
+        "Fusion.NetworkRunner::StartGame(StartGameArgs)": "0x12E3980",
+        "Fusion.NetworkRunner::Initialize(NetworkRunnerInitializeArgs)": "0x12C2EF0",
+        "Fusion.NetworkRunnerInitializeArgs::get_IsSinglePlayer()": "0x1329AE0",
+        "Fusion.Simulation::NetworkInit(INetSocket,NetAddress)": "0x1313E10",
+        "Fusion.NetworkRunner::Connect(NetAddress,byte[],byte[])": "0x12C1920",
+        "Fusion.Sockets.NetSocketNative::.ctor(NetSocketFlags)": "0x1392210",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.get_LocalPlayerRef()": "0x12D6140",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.OnInternalConnectionAttempt(int,int,out bool,out NetAddress)": "0x12DBFA0",
+        "Fusion.Simulation::INetPeerGroupCallbacks.OnConnectionRequest(NetAddress,byte[],byte[])": "0x1316CD0"
+      },
+      "offsets": {
+        "StartGameArgs.GameMode": "0x0",
+        "StartGameArgs.ConnectionToken": "0xD8",
+        "StartGameArgs.PlayerUniqueId": "0xE0",
+        "StartGameArgs.SessionProperties": "0xE8",
+        "NetworkRunnerInitializeArgs.Address": "0x38",
+        "NetworkRunnerInitializeArgs.PlayerCount": "0x78",
+        "NetworkRunnerInitializeArgs.SimulationMode": "0x80",
+        "NetworkRunnerInitializeArgs.Config": "0x98",
+        "Nullable<NetAddress>.hasValue": "0x0",
+        "Nullable<NetAddress>.value": "0x8",
+        "Nullable<Int32>.hasValue": "0x0",
+        "Nullable<Int32>.value": "0x4",
+        "Nullable<SimulationModes>.hasValue": "0x0",
+        "Nullable<SimulationModes>.value": "0x4",
+        "sizeof(NetAddress)": "0x18"
+      },
+      "codeSig": {
+        "Fusion.NetworkRunner::StartGame(StartGameArgs)": "323:5ab8bcf6ea987724",
+        "Fusion.NetworkRunner::Initialize(NetworkRunnerInitializeArgs)": "7619:403a77f86c7280c8",
+        "Fusion.NetworkRunnerInitializeArgs::get_IsSinglePlayer()": "89:2e9f5a26f83ca977",
+        "Fusion.Simulation::NetworkInit(INetSocket,NetAddress)": "1822:ef424ee4db9e057d",
+        "Fusion.NetworkRunner::Connect(NetAddress,byte[],byte[])": "307:6b637564e82e0cf5",
+        "Fusion.Sockets.NetSocketNative::.ctor(NetSocketFlags)": "12:cdac5a4911c2bc81",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.get_LocalPlayerRef()": "286:a49db4a431ec9ceb",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.OnInternalConnectionAttempt(int,int,out bool,out NetAddress)": "143:5e04034f5985f567",
+        "Fusion.Simulation::INetPeerGroupCallbacks.OnConnectionRequest(NetAddress,byte[],byte[])": "112:5aec858a8707caa6"
+      },
+      "optionalRva": {
+        "FusionPlayer::BeforeClientPredictionReset()": "0xCF2960",
+        "FusionPlayer::BeforeTick()": "0xCF2A60",
+        "Fusion.Sockets.NetSocketNative::Send": "0x1392BA0",
+        "Fusion.Sockets.NetSocketNative::Receive": "0x13929A0",
+        "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)": "0x13359E0",
+        "Fusion.Addons.Physics.NetworkRigidbody`2::Render()": "0x25001A0",
+        "VehicleInput::OnInput(NetworkRunner,NetworkInput)": "0xD14F50",
+        "OverlandSaver::SaveGame()": "0x926A00",
+        "OverlandSaver::SaveSettings()": "0x926DD0",
+        "OverlandSaver::SaveJson(string,string)": "0x927550",
+        "FogOfWarManager::SaveFogOfWarTexture()": "0x915D20"
+      },
+      "optionalSig": {
+        "FusionPlayer::BeforeClientPredictionReset()": "230:2e2742b37a543ae6",
+        "FusionPlayer::BeforeTick()": "443:3a9e07a876db51d1",
+        "Fusion.Sockets.NetSocketNative::Send": "380:0500eccc7ce24caa",
+        "Fusion.Sockets.NetSocketNative::Receive": "511:c8e4f6defba9621a",
+        "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)": "483:c83042bc5b6b18b7",
+        "OverlandSaver::SaveGame()": "161:53e8be88d5093404",
+        "OverlandSaver::SaveSettings()": "886:62545bbf265d5b70",
+        "OverlandSaver::SaveJson(string,string)": "176:41a34aa4c2a1d55a",
+        "FogOfWarManager::SaveFogOfWarTexture()": "246:f8e498fbf232b732"
+      }
+    },
+    {
+      "buildId": "26326013",
+      "label": "Steam patch 2026-10-30 (checked offline: 8/9 required codeSig SAME; Initialize length-identical DIFF like 26136884; offsets+Fusion unchanged)",
+      "unityVersion": "6000.0.75f1",
+      "fusionVersion": "2.1.2.0",
+      "files": {
+        "GameAssembly.dll": "45f0dc5ce9db4eec69e5698b3015975ebccf5714c6293711b19393de9b378ed4",
+        "over the hill_Data/il2cpp_data/Metadata/global-metadata.dat": "d5a9d37c6060779118efdb07fcafbfd04faa6a10717c88267990b841033b68bb"
+      },
+      "rva": {
+        "Fusion.NetworkRunner::StartGame(StartGameArgs)": "0x12ECCB0",
+        "Fusion.NetworkRunner::Initialize(NetworkRunnerInitializeArgs)": "0x12CC220",
+        "Fusion.NetworkRunnerInitializeArgs::get_IsSinglePlayer()": "0x1332E10",
+        "Fusion.Simulation::NetworkInit(INetSocket,NetAddress)": "0x131D140",
+        "Fusion.NetworkRunner::Connect(NetAddress,byte[],byte[])": "0x12CAC50",
+        "Fusion.Sockets.NetSocketNative::.ctor(NetSocketFlags)": "0x139B530",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.get_LocalPlayerRef()": "0x12DF470",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.OnInternalConnectionAttempt(int,int,out bool,out NetAddress)": "0x12E52D0",
+        "Fusion.Simulation::INetPeerGroupCallbacks.OnConnectionRequest(NetAddress,byte[],byte[])": "0x1320000"
+      },
+      "offsets": {
+        "StartGameArgs.GameMode": "0x0",
+        "StartGameArgs.ConnectionToken": "0xD8",
+        "StartGameArgs.PlayerUniqueId": "0xE0",
+        "StartGameArgs.SessionProperties": "0xE8",
+        "NetworkRunnerInitializeArgs.Address": "0x38",
+        "NetworkRunnerInitializeArgs.PlayerCount": "0x78",
+        "NetworkRunnerInitializeArgs.SimulationMode": "0x80",
+        "NetworkRunnerInitializeArgs.Config": "0x98",
+        "Nullable<NetAddress>.hasValue": "0x0",
+        "Nullable<NetAddress>.value": "0x8",
+        "Nullable<Int32>.hasValue": "0x0",
+        "Nullable<Int32>.value": "0x4",
+        "Nullable<SimulationModes>.hasValue": "0x0",
+        "Nullable<SimulationModes>.value": "0x4",
+        "sizeof(NetAddress)": "0x18"
+      },
+      "codeSig": {
+        "Fusion.NetworkRunner::StartGame(StartGameArgs)": "323:5ab8bcf6ea987724",
+        "Fusion.NetworkRunner::Initialize(NetworkRunnerInitializeArgs)": "7619:b0d28a39e2b3cb86",
+        "Fusion.NetworkRunnerInitializeArgs::get_IsSinglePlayer()": "89:2e9f5a26f83ca977",
+        "Fusion.Simulation::NetworkInit(INetSocket,NetAddress)": "1822:ef424ee4db9e057d",
+        "Fusion.NetworkRunner::Connect(NetAddress,byte[],byte[])": "307:6b637564e82e0cf5",
+        "Fusion.Sockets.NetSocketNative::.ctor(NetSocketFlags)": "12:cdac5a4911c2bc81",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.get_LocalPlayerRef()": "286:a49db4a431ec9ceb",
+        "Fusion.NetworkRunner::Simulation.ICallbacks.OnInternalConnectionAttempt(int,int,out bool,out NetAddress)": "143:5e04034f5985f567",
+        "Fusion.Simulation::INetPeerGroupCallbacks.OnConnectionRequest(NetAddress,byte[],byte[])": "112:5aec858a8707caa6"
+      },
+      "optionalRva": {
+        "FusionPlayer::BeforeClientPredictionReset()": "0xCFBCF0",
+        "FusionPlayer::BeforeTick()": "0xCFBDF0",
+        "Fusion.Sockets.NetSocketNative::Send": "0x139BEC0",
+        "Fusion.Sockets.NetSocketNative::Receive": "0x139BCC0",
+        "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)": "0x133ED00",
+        "Fusion.Addons.Physics.NetworkRigidbody`2::Render()": "0x250A390",
+        "VehicleInput::OnInput(NetworkRunner,NetworkInput)": "0xD1E680",
+        "OverlandSaver::SaveGame()": "0x92AE20",
+        "OverlandSaver::SaveSettings()": "0x92B1F0",
+        "OverlandSaver::SaveJson(string,string)": "0x92B970",
+        "FogOfWarManager::SaveFogOfWarTexture()": "0x91A510"
+      },
+      "optionalSig": {
+        "FusionPlayer::BeforeClientPredictionReset()": "230:2e2742b37a543ae6",
+        "FusionPlayer::BeforeTick()": "443:3a9e07a876db51d1",
+        "Fusion.Sockets.NetSocketNative::Send": "380:0500eccc7ce24caa",
+        "Fusion.Sockets.NetSocketNative::Receive": "511:c8e4f6defba9621a",
+        "Fusion.Simulation+Client::RunClientSideResimulationLoop(int)": "483:c83042bc5b6b18b7",
+        "OverlandSaver::SaveGame()": "161:53e8be88d5093404",
+        "OverlandSaver::SaveSettings()": "886:62545bbf265d5b70",
+        "OverlandSaver::SaveJson(string,string)": "176:41a34aa4c2a1d55a",
+        "FogOfWarManager::SaveFogOfWarTexture()": "246:f8e498fbf232b732",
+        "VehicleInput::OnInput(NetworkRunner,NetworkInput)": "1531:518594dc2a8d3dfe"
+      }
+    }
+  ],
+  "unverifiedPolicy": "Files differ from every build above: LAN may still run (after a one-time warning) if Fusion is fusionVersion and every offset resolved by name matches. CodeSig diffs alone are soft warnings (third-party / patched GameAssembly). Host and client may join across different GameAssembly hashes when both advertise the same Fusion version."
 }

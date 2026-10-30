@@ -54,10 +54,17 @@ internal static class CoopMenu
             var e = _pendingJoin; _pendingJoin = null;
             try { JoinFlow.Join(e); } catch (Exception ex) { Plugin.L.LogError($"[Coop] join: {ex}"); }
         }
-        if (_broken || LanState.Disabled && BuildGate.Outcome != GateLogic.Outcome.DisabledByUser) return;
+        // 0.2.6.1: keep Local Co-op visible on Ask/Off so an unknown build is never a silent block.
+        // LAN host/join stays gated by LanState.Disabled until Continue / Supported.
+        if (_broken) return;
         try
         {
             if (_locGen != Loc.Generation) Relocalize();
+            else if (_buttonLabel != null && !_buttonLabel.WasCollected)
+            {
+                var want = CoopButtonCaption();
+                if (want != _buttonText) { _buttonText = want; _buttonLabel.text = want; }
+            }
             if (_screen != null) { GuardOwned(); ScreenTick(); }
             if (_buttonLabel != null && !_buttonLabel.WasCollected && _buttonLabel.text != _buttonText)
             {   // the game's menu re-localises button labels when it is (re)enabled: keep ours (checked every frame)
@@ -144,7 +151,8 @@ internal static class CoopMenu
         _upper = label.Length > 0 && label == label.ToUpperInvariant();
         var b = CloneButton(_menu.buttonsContainer, "OTH-LAN LocalCoopButton");
         b.transform.SetSiblingIndex(mp.transform.GetSiblingIndex() + 1);
-        _buttonText = Cap(Loc.T("coop.button")); _locGen = Loc.Generation;
+        _locGen = Loc.Generation;
+        _buttonText = CoopButtonCaption();
         SetLabel(b, _buttonText);
         b.add_OnPointerClickOrSubmit(Click(OpenScreen));
         _button = b.gameObject;
@@ -278,6 +286,17 @@ internal static class CoopMenu
 
     public static void OpenScreen()
     {
+        if (BuildGate.NeedsChoice)
+        {
+            GatePrompt.OpenAsk();
+            return;
+        }
+        if (BuildGate.Outcome == GateLogic.Outcome.Off || BuildGate.Outcome == GateLogic.Outcome.DisabledByUser)
+        {
+            GatePrompt.OpenOff();
+            return;
+        }
+
         if (_screen != null || _menu == null) return;
         Opens++;
         _template = _menu.MultiplayerButton;
@@ -359,7 +378,7 @@ internal static class CoopMenu
         if (_buttonLabel != null && !_buttonLabel.WasCollected)
         {
             try { _upper = _templateText != null && !_templateText.WasCollected && _templateText.text is { Length: > 0 } t && t == t.ToUpperInvariant(); } catch { }
-            _buttonText = Cap(Loc.T("coop.button")); _buttonLabel.text = _buttonText;
+            _buttonText = CoopButtonCaption(); _buttonLabel.text = _buttonText;
         }
         if (_screen != null && _title != null) { StaticTexts(); Labels(); _nextRefresh = 0; }
         Plugin.L.LogInfo($"[Coop] texts switched to {Loc.Lang}");
@@ -371,6 +390,18 @@ internal static class CoopMenu
     static string Esc(string s) => "<noparse>" + (s ?? "").Replace("</noparse>", "") + "</noparse>";
 
     static void Select(GameObject go) => UiNav.Select(go);
+    static string CoopButtonCaption()
+    {
+        var key = BuildGate.Outcome switch
+        {
+            GateLogic.Outcome.Ask => "coop.buttonWarn",
+            GateLogic.Outcome.Off => "coop.buttonOff",
+            GateLogic.Outcome.DisabledByUser => "coop.buttonOff",
+            _ => "coop.button",
+        };
+        return Cap(Loc.T(key));
+    }
+
     /// <summary>0.2.0 T1.3: Local Co-op button for restoring focus after a modal closes.</summary>
     public static GameObject LocalCoopButton => _button != null && !_button.WasCollected ? _button : null;
 

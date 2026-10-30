@@ -17,7 +17,7 @@ Under **Assets** below, click **`OTH-LAN-0.2.1.zip`** (not "Source code").
 | `OTH-LAN-0.2.1.zip` | Installer (recommended) | *(fill at package)* | *(fill)* |
 | `OTH-LAN-0.2.1-manual.zip` | Manual install without the installer | *(fill)* | *(fill)* |
 
-Plugin `OthLan.dll` sha256 `a5fefcd70d8f808a9a1c4b4759e14b0c30830a8d6404d522da038f632c80c0b9`. All checksums are also in `SHA256SUMS.txt`. Optional asset `6000.0.75.zip` is the offline Unity base libraries pack used by `OTH-LAN-Launch.exe` if BepInEx hangs on first download.
+Plugin `OthLan.dll` sha256 *(fill after public build)*. All checksums are also in `SHA256SUMS.txt`. Optional asset `6000.0.75.zip` is the offline Unity base libraries pack used by `OTH-LAN-Launch.exe` if BepInEx hangs on first download.
 
 ## Скачать
 
@@ -28,7 +28,7 @@ Plugin `OthLan.dll` sha256 `a5fefcd70d8f808a9a1c4b4759e14b0c30830a8d6404d522da03
 | `OTH-LAN-0.2.1.zip` | Установщик (рекомендуется) | *(заполнить при сборке)* | *(заполнить)* |
 | `OTH-LAN-0.2.1-manual.zip` | Ручная установка без установщика | *(заполнить)* | *(заполнить)* |
 
-Плагин `OthLan.dll` sha256 `a5fefcd70d8f808a9a1c4b4759e14b0c30830a8d6404d522da038f632c80c0b9`. Все контрольные суммы есть также в `SHA256SUMS.txt`. Опциональный файл `6000.0.75.zip` — офлайн-пакет Unity base libraries для `OTH-LAN-Launch.exe`, если BepInEx зависает при первой загрузке.
+Плагин `OthLan.dll` sha256 *(заполнить после публичной сборки)*. Все контрольные суммы есть также в `SHA256SUMS.txt`. Опциональный файл `6000.0.75.zip` — офлайн-пакет Unity base libraries для `OTH-LAN-Launch.exe`, если BepInEx зависает при первой загрузке.
 
 ---
 
@@ -84,6 +84,5 @@ From 0.1.8.1 / 0.1.9 / 0.1.9.1 / 0.1.9.2 / 0.1.9.3 the main menu offers new vers
 - Проверено в основном синтетическими тестами и сборками; полный живой прогон нового потока на нескольких ПК — сразу после этого релиза.
 - Столкновения с чужими машинами по-прежнему приблизительные; лебёдка игрок↔игрок на старом host-authority пути до следующего прохода по взаимодействиям.
 - Пакеты OTP2 остаются, пока OTC3 не подтвердят в живых сессиях (потом их уберут).
-
 
 

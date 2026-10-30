@@ -1,4 +1,4 @@
-﻿## About
+## About
 
 **Unofficial** LAN / virtual-LAN co-op mod for Over The Hill. Not affiliated with, endorsed by, or supported by Funselektor Labs or Exit Games (Photon). Contains no game files: every player needs their own copy of the game from Steam.
 
@@ -14,10 +14,10 @@ Under **Assets** below, click **`OTH-LAN-0.1.9.1.zip`** (not "Source code").
 
 | File | What it is | Size | SHA-256 |
 |---|---|---|---|
-| `OTH-LAN-0.1.9.1.zip` | Installer (recommended) | 130207247 B | `c6e16fa8b3120b3ed03860e882f726753f37954b34dbd17f6faa9481e484b1de` |
-| `OTH-LAN-0.1.9.1-manual.zip` | Manual install without the installer | 34544465 B | `545241d855c7ac98674f920a21b7d5195de0b22e2eb0fc6aad92e7747559bbf4` |
+| `OTH-LAN-0.1.9.1.zip` | Installer (recommended) | *(fill at package)* | *(fill)* |
+| `OTH-LAN-0.1.9.1-manual.zip` | Manual install without the installer | *(fill)* | *(fill)* |
 
-Plugin `OthLan.dll` sha256 `1959f1462e1428f691182d33d667737bb5eaf68eafda93a08c5e2bf15c1c049d`. All checksums are also in `SHA256SUMS.txt`. Optional asset `6000.0.75.zip` is the offline Unity base libraries pack used by `OTH-LAN-Launch.exe` if BepInEx hangs on first download.
+Plugin `OthLan.dll` sha256 *(fill after public build)*. All checksums are also in `SHA256SUMS.txt`. Optional asset `6000.0.75.zip` is the offline Unity base libraries pack used by `OTH-LAN-Launch.exe` if BepInEx hangs on first download.
 
 ## Скачать
 
@@ -25,10 +25,10 @@ Plugin `OthLan.dll` sha256 `1959f1462e1428f691182d33d667737bb5eaf68eafda93a08c5e
 
 | Файл | Что это | Размер | SHA-256 |
 |---|---|---|---|
-| `OTH-LAN-0.1.9.1.zip` | Установщик (рекомендуется) | 130207247 Б | `c6e16fa8b3120b3ed03860e882f726753f37954b34dbd17f6faa9481e484b1de` |
-| `OTH-LAN-0.1.9.1-manual.zip` | Ручная установка без установщика | 34544465 Б | `545241d855c7ac98674f920a21b7d5195de0b22e2eb0fc6aad92e7747559bbf4` |
+| `OTH-LAN-0.1.9.1.zip` | Установщик (рекомендуется) | *(заполнить при сборке)* | *(заполнить)* |
+| `OTH-LAN-0.1.9.1-manual.zip` | Ручная установка без установщика | *(заполнить)* | *(заполнить)* |
 
-Плагин `OthLan.dll` sha256 `1959f1462e1428f691182d33d667737bb5eaf68eafda93a08c5e2bf15c1c049d`. Все контрольные суммы есть также в `SHA256SUMS.txt`. Опциональный файл `6000.0.75.zip` — офлайн-пакет Unity base libraries для `OTH-LAN-Launch.exe`, если BepInEx зависает при первой загрузке.
+Плагин `OthLan.dll` sha256 *(заполнить после публичной сборки)*. Все контрольные суммы есть также в `SHA256SUMS.txt`. Опциональный файл `6000.0.75.zip` — офлайн-пакет Unity base libraries для `OTH-LAN-Launch.exe`, если BepInEx зависает при первой загрузке.
 
 ---
 
@@ -89,4 +89,3 @@ From 0.1.8.1 / 0.1.9 the main menu offers new versions itself: **Install / Later
 - Столкновения с машинами других игроков приблизительные; буксировка между двумя игроками остаётся под управлением хоста.
 - Скачивание мод-раскраски требует входа в Modio в игре; у обоих игроков должны быть подписаны одни и те же Workshop/Modio моды, иначе текстурам не из чего примениться.
 - Что ещё нужно проверить и доделать, описано в [плане развития](https://github.com/Sergaris/over-the-hill-lan-coop/blob/main/docs/ROADMAP.md).
-

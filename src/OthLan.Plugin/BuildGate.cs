@@ -145,6 +145,7 @@ internal static unsafe class BuildGate
         Outcome = proceed ? GateLogic.Outcome.Run : GateLogic.Outcome.DisabledByUser;
         Plugin.L.LogWarning($"[Gate] user chose {(proceed ? "CONTINUE at own risk" : "DISABLE for now")} for {ChoiceKey} ({source}); saved");
         Enact();
+        try { GatePrompt.OnGateOutcomeChanged(); } catch { }
     }
 
     public static bool NeedsChoice => Outcome == GateLogic.Outcome.Ask;

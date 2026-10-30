@@ -49,6 +49,7 @@ public class Overlay : MonoBehaviour
         try { LangWatch.Tick(); } catch (Exception e) { LogOnce("lang", e); }
         try { JoinFlow.Tick(); } catch (Exception e) { LogOnce("joinflow", e); }
         try { ModLiveryGate.Tick(); } catch (Exception e) { LogOnce("modgate", e); }
+        try { GatePrompt.Tick(); } catch (Exception e) { LogOnce("gateprompt", e); }
         try { JoinToast.Tick(); } catch (Exception e) { LogOnce("jointoast", e); }
         try { HostLiveryModsTick(); } catch (Exception e) { LogOnce("hostliveries", e); }
         try { NetFrame.Update(); } catch (Exception e) { LogOnce("netframe", e); }
@@ -148,10 +149,11 @@ public class Overlay : MonoBehaviour
             try { LinkLabels.OnGUI(); }
             catch (Exception e) { _carLabelsBroken = true; Plugin.L.LogWarning($"[UI] over-the-car link labels disabled: {e.Message}"); }
         }
-        if (!_guiBroken && BuildGate.NeedsChoice)
+        // Canvas GatePrompt first; IMGUI only if the Canvas dialog has no answer buttons yet.
+        if (!_guiBroken && BuildGate.NeedsChoice && !(GatePrompt.Visible && GatePrompt.HasButtons))
         {
             try { GateDialog(); }
-            catch (Exception e) { _guiBroken = true; Plugin.L.LogWarning($"[UI] gate dialog unavailable ({e.Message}); answer in F7 is impossible, see cfg Safety.UnverifiedBuildChoices"); }
+            catch (Exception e) { _guiBroken = true; Plugin.L.LogWarning($"[UI] gate dialog unavailable ({e.Message}); answer in F7 / Safety.UnverifiedBuildChoices"); }
         }
         if (!_show || _guiBroken) return;
         try { DrawF7(); }

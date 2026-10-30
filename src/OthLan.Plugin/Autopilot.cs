@@ -628,7 +628,7 @@ internal static unsafe class Autopilot
         if (_gateAt >= 0 && now >= _gateAt && _gateShotDone < 0)
         {
             var path = Path.Combine(OutDir, $"{Tag}-gate.png");
-            var visible = BuildGate.NeedsChoice && Overlay.GateDialogFrame >= Time.frameCount - 5;
+            var visible = BuildGate.NeedsChoice && ((GatePrompt.Visible && GatePrompt.HasButtons) || Overlay.GateDialogFrame >= Time.frameCount - 5);
             (visible ? ref _passed : ref _failed)++;
             Checks.Add($"{(visible ? "PASS" : "FAIL")} realtime {now:0}s version dialog visible (tier={BuildGate.Tier} outcome={BuildGate.Outcome})");
             if (BuildGate.NeedsChoice) ScreenCapture.CaptureScreenshot(path);

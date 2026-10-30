@@ -1,4 +1,4 @@
-﻿## About
+## About
 
 **Unofficial** LAN / virtual-LAN co-op mod for Over The Hill. Not affiliated with, endorsed by, or supported by Funselektor Labs or Exit Games (Photon). Contains no game files: every player needs their own copy of the game from Steam.
 
@@ -14,10 +14,10 @@ Under **Assets** below, click **`OTH-LAN-0.2.3.zip`** (not "Source code").
 
 | File | What it is | Size | SHA-256 |
 |---|---|---|---|
-| `OTH-LAN-0.2.3.zip` | Installer (recommended) | 130246146 B | `96f956c12f7c3b58bfeb8aa12dc43f91a6dc656724a0d9817b955cfae09f7b9c` |
-| `OTH-LAN-0.2.3-manual.zip` | Manual install without the installer | 34582479 B | `6a781519354c17d5f27760e565ab5c15a0efb036a5e713ad78b397e9bfc4227f` |
+| `OTH-LAN-0.2.3.zip` | Installer (recommended) | *(fill at package)* | *(fill)* |
+| `OTH-LAN-0.2.3-manual.zip` | Manual install without the installer | *(fill)* | *(fill)* |
 
-Plugin `OthLan.dll` sha256 `32fec2d45439f326d56a7842d957c6dccaf2e0ca746179e2dc44ba31312324d5`. All checksums are also in `SHA256SUMS.txt`. Optional asset `6000.0.75.zip` is the offline Unity base libraries pack used by `OTH-LAN-Launch.exe` if BepInEx hangs on first download.
+Plugin `OthLan.dll` sha256 *(fill after public build)*. All checksums are also in `SHA256SUMS.txt`. Optional asset `6000.0.75.zip` is the offline Unity base libraries pack used by `OTH-LAN-Launch.exe` if BepInEx hangs on first download.
 
 ## Скачать
 
@@ -25,10 +25,10 @@ Plugin `OthLan.dll` sha256 `32fec2d45439f326d56a7842d957c6dccaf2e0ca746179e2dc44
 
 | Файл | Что это | Размер | SHA-256 |
 |---|---|---|---|
-| `OTH-LAN-0.2.3.zip` | Установщик (рекомендуется) | 130246146 Б | `96f956c12f7c3b58bfeb8aa12dc43f91a6dc656724a0d9817b955cfae09f7b9c` |
-| `OTH-LAN-0.2.3-manual.zip` | Ручная установка без установщика | 34582479 Б | `6a781519354c17d5f27760e565ab5c15a0efb036a5e713ad78b397e9bfc4227f` |
+| `OTH-LAN-0.2.3.zip` | Установщик (рекомендуется) | *(заполнить при сборке)* | *(заполнить)* |
+| `OTH-LAN-0.2.3-manual.zip` | Ручная установка без установщика | *(заполнить)* | *(заполнить)* |
 
-Плагин `OthLan.dll` sha256 `32fec2d45439f326d56a7842d957c6dccaf2e0ca746179e2dc44ba31312324d5`. Все контрольные суммы есть также в `SHA256SUMS.txt`. Опциональный файл `6000.0.75.zip` — офлайн-пакет Unity base libraries для `OTH-LAN-Launch.exe`, если BepInEx зависает при первой загрузке.
+Плагин `OthLan.dll` sha256 *(заполнить после публичной сборки)*. Все контрольные суммы есть также в `SHA256SUMS.txt`. Опциональный файл `6000.0.75.zip` — офлайн-пакет Unity base libraries для `OTH-LAN-Launch.exe`, если BepInEx зависает при первой загрузке.
 
 ---
 
@@ -89,4 +89,3 @@ From 0.1.8.1 / 0.1.9 / 0.1.9.1 / 0.1.9.2 / 0.1.9.3 / 0.2.0 / 0.2.1 / 0.2.2 the m
 
 - Живая проверка на двух ПК для этой сборки ещё впереди (владелец был не у компьютера). О проблемах — F7 → сохранить диагностику.
 - Параллельный путь OTP2 ещё не снят (T3.8 после live-подтверждения).
-

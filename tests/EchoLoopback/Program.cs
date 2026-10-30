@@ -10,7 +10,7 @@ namespace OthLan
     class Cfg<T> { public T Value; }
     static class Plugin
     {
-        public const string Version = "0.2.6";
+        public const string Version = "0.2.6.1";
         public static Cfg<int> Port = new() { Value = 27315 };
         public static Cfg<string> ClientId = new() { Value = "echotest" };
         public static Cfg<int> PlayerCount = new() { Value = 4 };

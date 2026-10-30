@@ -2,6 +2,24 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.6.1
+
+Both players need 0.2.6.1. From 0.1.8.1+ the in-game updater offers this release.
+
+- Steam game build **26326013** (30 Oct 2026 patch) is Supported: Local Co-op works without a one-time warning.
+- Autopilot / optional VehicleInput::OnInput signature updated for that build's input changes.
+- Untested game builds keep Local Co-op visible with a Canvas Continue/Disable warning; incompatible builds show a notice instead of a missing button.
+- Known issue: remote players' headlights do not work yet on build 26326013 (Lights API changed; fix coming).
+
+## 0.2.6.1 — изменения
+
+У обоих игроков должна быть 0.2.6.1. С 0.1.8.1+ обновление предложит меню.
+
+- Сборка Steam **26326013** (патч 30.10.2026) в Supported: «Локальная игра» без одноразового предупреждения.
+- Хук / optional-подпись VehicleInput::OnInput обновлены под изменения ввода в этой сборке.
+- Непроверенные сборки оставляют Local Co-op с Canvas-предупреждением Continue/Disable; несовместимые показывают уведомление вместо отсутствия кнопки.
+- Известная проблема: фары удалённых игроков пока не работают на 26326013 (смена Lights API; исправление отдельно).
+
 ## 0.2.6
 
 Both players need 0.2.6. From 0.1.8.1+ the in-game updater offers this release.
