@@ -201,6 +201,32 @@ static class Program
         Eq(OwnCarLogic.SkipCheapRestore(0.01, 0.2, 0.05, 1.0), true, "own: 1 cm / 0.2 deg -> skip VPP restore");
         Eq(OwnCarLogic.SkipCheapRestore(0.10, 0.2, 0.05, 1.0), false, "own: 10 cm -> full restore");
         Eq(OwnCarLogic.SkipCheapRestore(0.01, 5.0, 0.05, 1.0), false, "own: 5 deg -> full restore");
+        {
+            Eq(OwnCarLogic.AfterReset(true, true, true, 30, 10, 25, 4), OwnCarLogic.ResetAction.AcceptOtac, "reset: OTAC first");
+            Eq(OwnCarLogic.AfterReset(false, true, true, 30, 10, 25, 4), OwnCarLogic.ResetAction.KeepHost, "reset: accept window before invalid state");
+            Eq(OwnCarLogic.AfterReset(false, false, true, 30, 10, 25, 4), OwnCarLogic.ResetAction.Fallback, "reset: invalid state before distance");
+            Eq(OwnCarLogic.AfterReset(false, false, false, 30, 10, 25, 4), OwnCarLogic.ResetAction.TakeHostFar, "reset: 30 m, no gap -> take host");
+            Eq(OwnCarLogic.AfterReset(false, false, false, 30, 1, 25, 4), OwnCarLogic.ResetAction.RestoreOwn, "reset: 30 m right after a gap -> ours");
+            Eq(OwnCarLogic.AfterReset(false, false, false, 0.01, 10, 25, 4), OwnCarLogic.ResetAction.RestoreOwn, "reset: plan never cheap");
+            Eq(OwnCarLogic.AfterResim(OwnCarLogic.ResetAction.RestoreOwn, 0.01, 0.2), OwnCarLogic.ResetAction.CheapPrevious, "resim: 1 cm -> cheap");
+            Eq(OwnCarLogic.AfterResim(OwnCarLogic.ResetAction.RestoreOwn, 0.10, 0.2), OwnCarLogic.ResetAction.RestoreOwn, "resim: 10 cm -> restore");
+            Eq(OwnCarLogic.AfterResim(OwnCarLogic.ResetAction.KeepHost, 0.01, 0.2), OwnCarLogic.ResetAction.KeepHost, "resim: host decisions untouched");
+            Eq(OwnCarLogic.OwnStateInvalid(double.NaN, 0, 0, 10, 1), true, "own state: NaN invalid");
+            Eq(OwnCarLogic.OwnStateInvalid(0, 0, 0, 151, 1), true, "own state: 151 m/s invalid");
+            Eq(OwnCarLogic.OwnStateInvalid(0, 0, 0, 40, 61), true, "own state: 61 rad/s invalid");
+            Eq(OwnCarLogic.OwnStateInvalid(0, 0, 0, 40, 5), false, "own state: normal driving valid");
+            var ok = new OwnCarLogic.EmptyResimCheck { Enabled = true, HookReady = true, Phase2Active = true, Spawned = true, RemotesInterpolated = true, OwnStateCaptured = true, Ticks = 9, Plan = OwnCarLogic.ResetAction.RestoreOwn };
+            Eq(OwnCarLogic.CanRunEmptyResim(ok), true, "empty resim: all conditions met");
+            var c = ok; c.Enabled = false; Eq(OwnCarLogic.CanRunEmptyResim(c), false, "empty resim: cfg off");
+            c = ok; c.HookReady = false; Eq(OwnCarLogic.CanRunEmptyResim(c), false, "empty resim: no vehicle-step hook (0.2.3 failure mode)");
+            c = ok; c.Phase2Active = false; Eq(OwnCarLogic.CanRunEmptyResim(c), false, "empty resim: phase 2 off / suspended");
+            c = ok; c.Spawned = false; Eq(OwnCarLogic.CanRunEmptyResim(c), false, "empty resim: before spawn move");
+            c = ok; c.RemotesInterpolated = false; Eq(OwnCarLogic.CanRunEmptyResim(c), false, "empty resim: predicted remotes need real resim");
+            c = ok; c.OwnStateCaptured = false; Eq(OwnCarLogic.CanRunEmptyResim(c), false, "empty resim: nothing to restore");
+            c = ok; c.Ticks = 0; Eq(OwnCarLogic.CanRunEmptyResim(c), false, "empty resim: zero ticks");
+            foreach (var a in new[] { OwnCarLogic.ResetAction.AcceptOtac, OwnCarLogic.ResetAction.KeepHost, OwnCarLogic.ResetAction.Fallback, OwnCarLogic.ResetAction.TakeHostFar })
+            { c = ok; c.Plan = a; Eq(OwnCarLogic.CanRunEmptyResim(c), false, $"empty resim: host pose wanted ({a})"); }
+        }
         Eq(OwnCarLogic.AllowLocalPhysicsStep(0.016, 0.028), true, "ownlocal: 16 ms frame allows LocalStep");
         Eq(OwnCarLogic.AllowLocalPhysicsStep(0.035, 0.028), false, "ownlocal: 35 ms frame skips LocalStep");
 
@@ -671,8 +697,57 @@ static class Program
         StreamSyncInvariant();
         AcceptMetrics();
         WheelVisual();
+        PayloadObtain();
         Console.WriteLine($"{total - fails}/{total} checks passed");
         return fails == 0 ? 0 : 1;
+    }
+
+    /// <summary>0.2.6.3: installer payload hash fallback (embedded/local reject → download).</summary>
+    static void PayloadObtain()
+    {
+        const string want = "f4cc496bd098a0df4164b81e3737297707f13a47c2478dba2f60eefab784817a";
+        const string trunc = "9d560fd45be9b493aac970b3ec26fbb027edcefd6111c411e1d4fb78131121d0";
+        Eq(OthLan.Installer.PayloadLogic.HashEquals(want, want.ToUpperInvariant()), true, "payload: hash ignore case");
+        Eq(OthLan.Installer.PayloadLogic.HashEquals(want, trunc), false, "payload: trunc != authentic");
+        Eq(OthLan.Installer.PayloadLogic.HashEquals("", want), false, "payload: empty never matches");
+        Eq(OthLan.Installer.PayloadLogic.HashEquals(null, want), false, "payload: null never matches");
+
+        // Embedded is the 0.2.6.1/0.2.6.2 truncated zip; local absent; download authentic → pick download.
+        var cands = new (string, string)[]
+        {
+            ("embedded", trunc),
+            ("local", null),
+            ("download", want),
+        };
+        var pick = OthLan.Installer.PayloadLogic.PickFirstMatching(want, cands, out var rejected);
+        Eq(pick, "download", "payload: trunc embedded falls back to download");
+        Eq(rejected.Length == 1 && rejected[0] == "embedded", true, "payload: embedded listed as rejected");
+
+        // Good embedded wins without touching download.
+        pick = OthLan.Installer.PayloadLogic.PickFirstMatching(want, new (string, string)[]
+        {
+            ("embedded", want),
+            ("local", trunc),
+            ("download", want),
+        }, out rejected);
+        Eq(pick, "embedded", "payload: good embedded preferred");
+        Eq(rejected.Length, 0, "payload: no rejects when embedded ok");
+
+        // Bad embedded + bad local + bad download → null.
+        pick = OthLan.Installer.PayloadLogic.PickFirstMatching(want, new (string, string)[]
+        {
+            ("embedded", trunc),
+            ("local", trunc),
+            ("download", trunc),
+        }, out rejected);
+        Eq(pick == null, true, "payload: all bad → null");
+        Eq(rejected.Length, 3, "payload: all three rejected");
+
+        var msg = OthLan.Installer.PayloadLogic.MismatchMessage("bepinex.zip", "embedded", trunc, want);
+        Eq(msg.Contains("embedded") && msg.Contains(trunc) && msg.Contains(want), true, "payload: mismatch message");
+        Eq(OthLan.Installer.PayloadLogic.DefaultOrder.Length, 3, "payload: default order length");
+        Eq(OthLan.Installer.PayloadLogic.DefaultOrder[0], OthLan.Installer.PayloadLogic.SourceKind.Embedded, "payload: order embedded first");
+        Eq(OthLan.Installer.PayloadLogic.DefaultOrder[2], OthLan.Installer.PayloadLogic.SourceKind.Download, "payload: order download last");
     }
 
     static void RelayLogicTests()
@@ -1745,5 +1820,15 @@ static class Program
         Eq(VehicleLightLogic.WantBrake(0.11f), true, "lights: brake above min");
         Eq(VehicleLightLogic.WantBrake(0.1f), false, "lights: brake at min not over");
         Eq(VehicleLightLogic.WantBrake(0.05f), false, "lights: brake was Fusion-only 0.05 — now unified 0.1");
+        Eq(VehicleLightLogic.HeadlightModeFromFlags(0), VehicleLightLogic.HeadlightMode.Off, "lights: flags empty => Off");
+        Eq(VehicleLightLogic.HeadlightModeFromFlags(CarWire.FlagHeadlights), VehicleLightLogic.HeadlightMode.Low, "lights: FlagHeadlights alone => Low (old peer)");
+        Eq(VehicleLightLogic.HeadlightModeFromFlags((byte)(CarWire.FlagHeadlights | CarWire.FlagHeadlightsHigh)), VehicleLightLogic.HeadlightMode.High, "lights: both bits => High");
+        Eq(VehicleLightLogic.HeadlightModeFromFlags(CarWire.FlagHeadlightsHigh), VehicleLightLogic.HeadlightMode.Off, "lights: High bit alone ignored");
+        Eq(VehicleLightLogic.WithHeadlightMode(CarWire.FlagEngineOn, VehicleLightLogic.HeadlightMode.Off), CarWire.FlagEngineOn, "lights: encode Off clears head bits");
+        Eq(VehicleLightLogic.WithHeadlightMode(CarWire.FlagEngineOn, VehicleLightLogic.HeadlightMode.Low), (byte)(CarWire.FlagEngineOn | CarWire.FlagHeadlights), "lights: encode Low");
+        Eq(VehicleLightLogic.WithHeadlightMode(CarWire.FlagEngineOn, VehicleLightLogic.HeadlightMode.High), (byte)(CarWire.FlagEngineOn | CarWire.FlagHeadlights | CarWire.FlagHeadlightsHigh), "lights: encode High");
+        Eq(VehicleLightLogic.TryParseMode("on", out var mOn) && mOn == VehicleLightLogic.HeadlightMode.Low, true, "lights: parse on=Low");
+        Eq(VehicleLightLogic.TryParseMode("high", out var mHi) && mHi == VehicleLightLogic.HeadlightMode.High, true, "lights: parse high");
+        Eq(VehicleLightLogic.TryParseMode("nope", out _), false, "lights: parse junk");
     }
 }

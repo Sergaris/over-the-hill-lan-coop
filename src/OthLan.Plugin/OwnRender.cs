@@ -31,7 +31,7 @@ internal static unsafe class OwnRender
     public static int LocalLerps, Frames, FrozenFrames, ExtrapCapped, Carries, Snaps, BeforeRenderApplies, Restores;
     public static double MaxExtrap, MaxCarry;
     static int _lastTick = int.MinValue, _frame = -1;
-    static double _lastAdvanceAt = -1, _lastFrameAt = -1;
+    static double _lastAdvanceAt = -1;
     static Vector3 _v, _w, _shownP, _shownV, _carryP; static Quaternion _shownQ = Quaternion.identity, _carryQ = Quaternion.identity;
     static bool _hasShown, _wasFrozen, _applied; static Vector3 _appliedP; static Quaternion _appliedQ;
 
@@ -91,8 +91,8 @@ internal static unsafe class OwnRender
         var r = OwnCar.Runner; var rb = OwnCar.Rb; var own = OwnCar.Own;
         if (r == null || rb == null || own == null || LanState.Active != LanRole.Client) { _hasShown = false; return; }
         var root = own.transform;
-        var now = Time.realtimeSinceStartupAsDouble;
-        var dt = _lastFrameAt < 0 ? 0 : now - _lastFrameAt; _lastFrameAt = now;
+        var now = NetClock.Now;
+        var dt = OwnClock.FrameSeconds;
         Frames++;
         int tick; try { tick = OwnLocal.Enabled ? (int)OwnLocal.StepCount : r.Tick.Raw; } catch { return; }
         var tickDt = r.DeltaTime > 0 ? r.DeltaTime : 0.02f;

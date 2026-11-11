@@ -25,7 +25,7 @@ internal static unsafe class OwnLocal
     public static Vector3 PrevP; public static Quaternion PrevQ; public static bool HasPrev;   // own pose before the last step
     static void MarkPrev() { var rb = OwnCar.Rb; if (rb == null) return; PrevP = rb.position; PrevQ = rb.rotation; HasPrev = true; }
     public static bool ActiveNow => Active(NetClock.Now);
-    static int _tickFrame = -1; static double _lastFrameAt = -1;
+    static int _tickFrame = -1; static bool _fresh = true;
     static bool _skipPending; static readonly OwnCar.Snap _skip = new();
     static MethodInfo _copyToBuffer; static readonly object[] _false = { false };
 
@@ -96,7 +96,7 @@ internal static unsafe class OwnLocal
         Plugin.L.LogInfo($"[OwnLocal] own car on the local clock {(on ? "on" : "off")} ({why})");
     }
 
-    public static void Forget() { HasPrev = false; Debt = 0; _skipPending = false; LastStepAt = -1; _lastFrameAt = -1; }
+    public static void Forget() { HasPrev = false; Debt = 0; _skipPending = false; LastStepAt = -1; _fresh = true; }
 
     static bool Active(double now) => Enabled && OwnCar.Phase2Active(now) && !OwnCar.InteractionSuspended
         && OwnCar.Rb != null && OwnCar.Own != null && !OwnCar.Rb.isKinematic && !OwnCar.AcceptingHostPose(now);
@@ -127,7 +127,7 @@ internal static unsafe class OwnLocal
     public static void Frame()
     {
         var now = NetClock.Now;
-        var dt = _lastFrameAt < 0 ? 0 : now - _lastFrameAt; _lastFrameAt = now;
+        var dt = _fresh ? 0 : OwnClock.FrameSeconds; _fresh = false;
         var r = OwnCar.Runner;
         if (r == null || !Active(now) || dt <= 0 || dt > 0.5) { Debt = 0; return; }
         RestoreSkip();

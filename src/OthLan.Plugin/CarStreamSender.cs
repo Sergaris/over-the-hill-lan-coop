@@ -113,7 +113,8 @@ internal static class CarStreamSender
                 steer = inp.Steering * 45f;
                 throttle = inp.Throttle;
                 if (VehicleLightLogic.WantBrake(inp.Brake)) flags |= CarWire.FlagBrake;
-                if (fp.ButtonDown(NetworkInputData.VehicleButtons.Headlights)) flags |= CarWire.FlagHeadlights;
+                var headMode = VehicleLightsApi.SampleOwnerMode(fp);
+                flags = VehicleLightLogic.WithHeadlightMode(flags, headMode);
                 try
                 {
                     var nvs = fp.GetComponent<NetworkedVehicleStatus>();

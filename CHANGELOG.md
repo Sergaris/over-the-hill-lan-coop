@@ -2,6 +2,37 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.7
+
+Both players need 0.2.7. From 0.1.8.1+ the in-game updater offers this release.
+
+- Higher FPS for players who join at high ping: after every update from the host the client no longer recalculates its own car's physics (the result was thrown away anyway); this work is about 35–40% cheaper. `[Netcode] OwnResimSkip` (on by default).
+- The follow camera moves in step with your car: no more camera shake against the car when frame times are uneven. `[Netcode] CameraOnCarClock` (on by default).
+
+## 0.2.7 — изменения
+
+У обоих игроков должна быть 0.2.7. С 0.1.8.1+ обновление предложит меню.
+
+- Выше FPS у тех, кто подключается с высоким пингом: после каждого обновления от хоста клиент больше не пересчитывает заново физику своей машины (результат всё равно выбрасывался); эта работа стала примерно на 35–40% дешевле. `[Netcode] OwnResimSkip` (по умолчанию вкл.).
+- Камера двигается вместе с машиной: больше нет дрожания камеры относительно машины при неровных кадрах. `[Netcode] CameraOnCarClock` (по умолчанию вкл.).
+
+## 0.2.6.3
+
+- Installer: 0.2.6.1 and 0.2.6.2 `OTH-LAN-Setup.exe` embedded a truncated BepInEx zip (install failed on sha256). The build now verifies every embedded payload, and the installer falls back to a verified download. Plugin unchanged from 0.2.6.2.
+
+## 0.2.6.3 — изменения
+
+- Установщик: в `OTH-LAN-Setup.exe` версий 0.2.6.1 и 0.2.6.2 был встроен обрезанный zip BepInEx (установка падала на sha256). Сборка теперь проверяет каждый встроенный файл, а установщик при плохой копии скачивает проверенную. Плагин как в 0.2.6.2.
+
+## 0.2.6.2
+
+- Remote headlights on Steam build 26326013: Off / Low / High are synced again.
+- Unverified game build: one Continue / Disable dialog instead of two.
+
+## 0.2.6.2 — изменения
+
+- Фары удалённых игроков на сборке Steam 26326013: снова синхронизируются Выкл / Ближний / Дальний.
+- Непроверенная сборка игры: один диалог «Продолжить / Отключить» вместо двух.
 ## 0.2.6.1
 
 Both players need 0.2.6.1. From 0.1.8.1+ the in-game updater offers this release.

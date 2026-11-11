@@ -27,6 +27,63 @@ public static class OwnCarLogic
     public static bool SkipCheapRestore(double errMeters, double errDeg, double maxMeters, double maxDeg)
         => errMeters <= maxMeters && errDeg <= maxDeg;
 
+    /// <summary>What phase 2 does with the own car after a prediction reset. Listed by priority.</summary>
+    public enum ResetAction
+    {
+        /// <summary>The host moved the car (OTAC: respawn, rescue, jack): open the accept window, keep the host pose.</summary>
+        AcceptOtac,
+        /// <summary>Accept window open: keep the host pose.</summary>
+        KeepHost,
+        /// <summary>Our own physics state blew up: host-authoritative (phase 1) for a while.</summary>
+        Fallback,
+        /// <summary>Host pose very far away (a teleport whose OTAC was lost): open the accept window.</summary>
+        TakeHostFar,
+        /// <summary>The resimulation landed within noise: keep it, put back only the render Previous (no VPP restore).</summary>
+        CheapPrevious,
+        /// <summary>Put our own pre-reset state back.</summary>
+        RestoreOwn,
+    }
+
+    public const double CheapMeters = 0.05, CheapDegrees = 1.0;
+    public const double InvalidSpeed = 150, InvalidAngularSpeed = 60;
+
+    /// <summary>Our captured pre-reset state is not something to keep (NaN position, physics blow-up).</summary>
+    public static bool OwnStateInvalid(double x, double y, double z, double speed, double angularSpeed)
+        => !double.IsFinite(x) || !double.IsFinite(y) || !double.IsFinite(z) || speed > InvalidSpeed || angularSpeed > InvalidAngularSpeed;
+
+    /// <summary>Decision known before the resimulation runs (never <see cref="ResetAction.CheapPrevious"/>).
+    /// <paramref name="errMeters"/>: host pose vs ours at the same tick.</summary>
+    public static ResetAction AfterReset(bool otacPending, bool acceptWindow, bool ownInvalid, double errMeters,
+                                         double sinceLinkGapS, double acceptMeters, double postGapS)
+    {
+        if (otacPending) return ResetAction.AcceptOtac;
+        if (acceptWindow) return ResetAction.KeepHost;
+        if (ownInvalid) return ResetAction.Fallback;
+        if (TakeHostPose(errMeters, sinceLinkGapS, acceptMeters, postGapS)) return ResetAction.TakeHostFar;
+        return ResetAction.RestoreOwn;
+    }
+
+    /// <summary>Refine <paramref name="plan"/> with a real resimulation result (err = resim pose vs ours).</summary>
+    public static ResetAction AfterResim(ResetAction plan, double errMeters, double errDeg)
+        => plan == ResetAction.RestoreOwn && SkipCheapRestore(errMeters, errDeg, CheapMeters, CheapDegrees) ? ResetAction.CheapPrevious : plan;
+
+    /// <summary>Inputs of <see cref="CanRunEmptyResim"/>.</summary>
+    public struct EmptyResimCheck
+    {
+        public bool Enabled, HookReady, Phase2Active, Spawned, RemotesInterpolated, OwnStateCaptured;
+        public int Ticks;
+        public ResetAction Plan;
+    }
+
+    /// <summary>
+    /// 0.2.7 OwnResim: the resimulation may run without scene physics and without our car's vehicle step only when phase 2
+    /// will put our own state back whatever it yields (<see cref="ResetAction.RestoreOwn"/>, known before the loop).
+    /// Remote cars must be interpolated (not simulated): a predicted remote needs real resim physics.
+    /// </summary>
+    public static bool CanRunEmptyResim(in EmptyResimCheck c)
+        => c.Enabled && c.HookReady && c.Phase2Active && c.Spawned && c.RemotesInterpolated && c.OwnStateCaptured
+           && c.Ticks > 0 && c.Plan == ResetAction.RestoreOwn;
+
     /// <summary>OwnLocal: do not pile Physics.Simulate when this frame is already over budget (death spiral).</summary>
     public static bool AllowLocalPhysicsStep(double frameDt, double budgetS)
         => frameDt > 0 && frameDt <= budgetS;

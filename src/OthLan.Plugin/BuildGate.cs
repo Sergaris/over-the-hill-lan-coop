@@ -8,7 +8,7 @@ namespace OthLan;
 /// <summary>
 /// 0.1.6 version gate (replaces the hard build lock and the unsafe StrictBuildLock=false bypass). Runs once in
 /// Plugin.Load; tiers and outcomes in <see cref="GateLogic"/>. The detours are applied only when the outcome is Run,
-/// or later when the user picks "Continue at own risk" in the one-time dialog (Overlay draws it).
+/// or later when the user picks "Continue at own risk" in the one-time dialog (GatePrompt Canvas; Overlay IMGUI is fallback only).
 /// </summary>
 internal static unsafe class BuildGate
 {
@@ -135,6 +135,7 @@ internal static unsafe class BuildGate
     {
         try { OwnCar.Install(); } catch (Exception e) { Plugin.L.LogError($"[OwnCar] install: {e}"); }
         try { OwnRender.Install(); } catch (Exception e) { Plugin.L.LogError($"[OwnRender] install: {e}"); }
+        try { OwnResim.Install(); } catch (Exception e) { Plugin.L.LogError($"[OwnResim] install: {e}"); }
     }
 
     /// <summary>The dialog's buttons (and F7's "enable anyway"). Persists the answer for this GameAssembly hash.</summary>

@@ -186,35 +186,66 @@ internal static class RemoteWheelVisuals
     static void ApplyLightsStream(Car c, byte flags)
     {
         if (c.Lights == null || c.Lights.WasCollected) return;
-        var wantHead = (flags & CarWire.FlagHeadlights) != 0;
-        if (c.Lights.AreHeadlightsOn != wantHead)
-        {
-            c.Lights.AreHeadlightsOn = wantHead;
-            LightSets++;
-            c.Lit = wantHead;
-        }
-        var wantBrake = (flags & CarWire.FlagBrake) != 0;
-        if (c.Lights.AreBrakingLightsOn != wantBrake) c.Lights.AreBrakingLightsOn = wantBrake;
-        var wantRev = (flags & CarWire.FlagReverse) != 0;
-        if (c.Lights.AreReverseLightsOn != wantRev) c.Lights.AreReverseLightsOn = wantRev;
+        var wantMode = VehicleLightLogic.HeadlightModeFromFlags(flags);
+        ApplyWantMode(c, wantMode);
+        TryBrakeReverse(c.Lights, (flags & CarWire.FlagBrake) != 0, (flags & CarWire.FlagReverse) != 0);
     }
 
     static void ApplyLightsFusion(FusionPlayer fp, Car c)
     {
         if (c.Lights == null || c.Lights.WasCollected) return;
-        var wantHead = fp.ButtonDown(NetworkInputData.VehicleButtons.Headlights);
-        if (c.Lights.AreHeadlightsOn != wantHead)
-        {
-            c.Lights.AreHeadlightsOn = wantHead;
-            LightSets++;
-            c.Lit = wantHead;
-        }
+        // Prefer networked HeadlightsMode / VehicleInput; ButtonDown alone cannot encode High.
+        var wantMode = VehicleLightsApi.ResolveModeFromPlayer(fp);
+        ApplyWantMode(c, wantMode);
         var inp = fp.CurrentFrameInput;
         var wantBrake = VehicleLightLogic.WantBrake(inp.Brake);
-        if (c.Lights.AreBrakingLightsOn != wantBrake) c.Lights.AreBrakingLightsOn = wantBrake;
         var speed = ForwardSpeedMs(fp, c, 0f);
         var reverse = VehicleLightLogic.WantReverse(speed, inp.Throttle);
-        if (c.Lights.AreReverseLightsOn != reverse) c.Lights.AreReverseLightsOn = reverse;
+        TryBrakeReverse(c.Lights, wantBrake, reverse);
+    }
+
+    static void ApplyWantMode(Car c, VehicleLightLogic.HeadlightMode wantMode)
+    {
+        var cur = VehicleLightsApi.ReadHeadlights(c.Lights);
+        if (cur == wantMode) return;
+        try { VehicleLightsApi.ApplyHeadlights(c.Lights, wantMode); }
+        catch (Exception e)
+        {
+            Errors++;
+            if (Errors < 6) Plugin.L.LogWarning($"[RemoteWheels] ApplyHeadlights: {e.Message}");
+        }
+        // VehicleInput.HeadlightsMode is what the game actually drives on 26326013+ (self-test proved LC setter alone may no-op).
+        try
+        {
+            var vi = c.Lights.GetComponentInParent<VehicleInput>()
+                     ?? c.Lights.GetComponentInChildren<VehicleInput>();
+            if (vi != null) VehicleLightsApi.SetVehicleInput(vi, wantMode);
+        }
+        catch (Exception e)
+        {
+            Errors++;
+            if (Errors < 6) Plugin.L.LogWarning($"[RemoteWheels] SetVehicleInput: {e.Message}");
+        }
+        var now = VehicleLightsApi.ReadHeadlights(c.Lights);
+        if (now != cur || now == wantMode)
+        {
+            LightSets++;
+            c.Lit = VehicleLightLogic.IsOn(wantMode);
+        }
+    }
+
+    static void TryBrakeReverse(LightsController lc, bool wantBrake, bool wantRev)
+    {
+        try
+        {
+            if (lc.AreBrakingLightsOn != wantBrake) lc.AreBrakingLightsOn = wantBrake;
+            if (lc.AreReverseLightsOn != wantRev) lc.AreReverseLightsOn = wantRev;
+        }
+        catch (MissingMethodException e)
+        {
+            Errors++;
+            if (Errors < 4) Plugin.L.LogWarning($"[RemoteWheels] brake/reverse lights: {e.Message}");
+        }
     }
 
     static void ApplyWheelsStream(Car c, in StatePlayback.PlaybackResult sample, float t)

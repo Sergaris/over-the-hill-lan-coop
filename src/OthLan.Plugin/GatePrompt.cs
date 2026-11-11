@@ -9,9 +9,10 @@ using UnityEngine.UI;
 namespace OthLan;
 
 /// <summary>
-/// 0.2.6.1: Canvas gate dialog for Unverified (Ask) and a visible notice for Incompatible (Off).
-/// Buttons are built as plain Unity UI (Image + Button + TMP) so they always appear even when the
-/// main-menu UIButtonSelector template is not ready yet (cloning it alone left a dialog with no buttons).
+/// 0.2.6.1+: Canvas gate dialog for Unverified (Ask) and a visible notice for Incompatible (Off).
+/// Single UI owner for the Ask/Off prompts (decision stays in GateLogic/BuildGate). Overlay.GateDialog
+/// IMGUI is fallback only when this Canvas never opens. Buttons are plain Unity UI (Image + Button + TMP)
+/// so they always appear even when the main-menu UIButtonSelector template is not ready yet.
 /// </summary>
 internal static class GatePrompt
 {

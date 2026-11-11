@@ -21,7 +21,7 @@ namespace OthLan;
 /// </summary>
 internal static class NetTrace
 {
-    static StreamWriter _remote, _follow, _own;
+    static StreamWriter _remote, _follow, _own, _view;
     static bool _tried; static int _lines;
     const int MaxLines = 400000;
     static readonly CultureInfo Ci = CultureInfo.InvariantCulture;
@@ -44,6 +44,8 @@ internal static class NetTrace
             _follow.WriteLine("rt,frame,dt,slot,preX,preY,preZ,tgX,tgY,tgZ,err,errDeg,age,gap,contact,action,postX,postY,postZ,vx,vy,vz,cvx,cvy,cvz");
             _own = new StreamWriter(Path.Combine(Autopilot.OutDir, $"{Autopilot.Tag}-own.csv"), false, new UTF8Encoding(false));
             _own.WriteLine("rt,frame,kind,tick,capTick,n,serverTick,renderTime,x,y,z,rbx,rby,rbz,vx,vy,vz,a,b");
+            _view = new StreamWriter(Path.Combine(Autopilot.OutDir, $"{Autopilot.Tag}-view.csv"), false, new UTF8Encoding(false));
+            _view.WriteLine("rt,frame,dt,x,y,z,qx,qy,qz,qw,cx,cy,cz,cqx,cqy,cqz,cqw,resets,restores");
         }
         catch (Exception e) { Plugin.L.LogWarning($"[NetTrace] {e.Message}"); _remote = _follow = null; }
 #endif
@@ -82,7 +84,20 @@ internal static class NetTrace
             F(p.x), F(p.y), F(p.z), F(v.x), F(v.y), F(v.z), F(i.ClientVel.x), F(i.ClientVel.y), F(i.ClientVel.z)));
     }
 
-    public static void Flush() { try { _remote?.Flush(); _follow?.Flush(); _own?.Flush(); } catch { } }
+    public static void Flush() { try { _remote?.Flush(); _follow?.Flush(); _own?.Flush(); _view?.Flush(); } catch { } }
+
+    /// <summary>Own car as drawn and the camera that drew it, once per rendered frame: what the eye sees is the car
+    /// relative to the camera (position and rotation), not its world path. resets/restores: since the previous frame.</summary>
+    public static void View(float dt, Transform car, Transform cam, int resets, int restores)
+    {
+        if (!On || car == null || cam == null) return; Open(); if (_view == null || _lines++ > MaxLines) return;
+        Vector3 p = car.position, c = cam.position; Quaternion q = car.rotation, cq = cam.rotation;
+        _view.WriteLine(string.Join(",", Time.realtimeSinceStartup.ToString("0.0000", Ci), Time.frameCount.ToString(Ci), dt.ToString("0.00000", Ci),
+            F(p.x), F(p.y), F(p.z), Q(q.x), Q(q.y), Q(q.z), Q(q.w), F(c.x), F(c.y), F(c.z), Q(cq.x), Q(cq.y), Q(cq.z), Q(cq.w),
+            resets.ToString(Ci), restores.ToString(Ci)));
+    }
+
+    static string Q(float v) => v.ToString("0.000000", Ci);
 
     /// <summary>Own car, per event (reset/resim/restore/fwd tick) and per rendered frame. kind: R reset, S resim done,
     /// P restore, L late restore, F forward tick (BeforeTick), D drawn frame. a/b: kind-specific (hitch, err, ...).</summary>

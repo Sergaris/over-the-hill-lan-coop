@@ -32,7 +32,7 @@ public partial class Plugin
     internal static ConfigEntry<float> InputBufferSeconds;
     internal static ConfigEntry<bool> OwnFreezeSmoothing, OwnLocalClock, RemoteInterpolate, OwnLocalFreshInput;
     internal static ConfigEntry<string> ClientPhysicsMode, ContactAuthority, WorldWinchAuthority, ProxyBody;
-    internal static ConfigEntry<bool> RelayCarState;
+    internal static ConfigEntry<bool> RelayCarState, OwnResimSkip, CameraOnCarClock;
     internal static ConfigEntry<bool> SuspendOnContact, SuspendOnWinch;
     internal static ConfigEntry<float> SuspendResumeSeconds, SharedMinDwellSeconds, ServoSeconds;
     internal static ConfigEntry<float> OwnFreezeExtrapSeconds, OwnFreezeDecaySeconds, OwnFreezeSnapMeters;
@@ -145,6 +145,10 @@ public partial class Plugin
         NetStatsLog = cfg.Bind("Netcode", "StatsToLog", true, "Write network statistics (stalls, corrections, smoothness) to the log every 30 s of a session.");
         ClientPhysicsMode = cfg.Bind("Netcode", "ClientPhysicsMode", "Game",
             "Client only: Fusion ClientPhysicsSimulation. Game = leave the game's default (SimulateAlways; recommended). SimulateForward = Physics.Simulate only on forward ticks (less CPU on resim, but the own car bounces and ignores steering after prediction resets).");
+        OwnResimSkip = cfg.Bind("Netcode", "OwnResimSkip", true,
+            "Client, ping compensation on: when your car keeps its own state after a host snapshot anyway, Fusion's re-simulation runs empty (no scene physics, no vehicle step for your car). Saves several ms per snapshot at high ping. Needs RemoteInterpolate; applied at game start. If your car bounces or ignores steering after lag, turn this off.");
+        CameraOnCarClock = cfg.Bind("Netcode", "CameraOnCarClock", true,
+            "Client: the follow camera advances by the same real time your car is drawn with, not by the previous frame's length. Off = game default (camera shakes against the car when frame times are uneven).");
         ParkIdleCars = cfg.Bind("Netcode", "ParkIdleCars", true,
             "Host only: driverless cars standing still out of every player's winch reach are frozen, so their idle physics noise stops filling every network packet (fewer client freezes on lossy links). They wake as soon as a player car comes near.");
         ContactAuthority = cfg.Bind("Netcode", "ContactAuthority", "Owner",

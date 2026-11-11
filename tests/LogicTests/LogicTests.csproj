@@ -40,6 +40,7 @@
     <Compile Include="../../src/OthLan.Plugin/WheelVisualLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/VehicleLightLogic.cs" />
     <Compile Include="../../src/OthLan.Launch/HangLogic.cs" />
+    <Compile Include="../../src/OthLan.Installer/PayloadLogic.cs" />
     <EmbeddedResource Include="../../src/OthLan.Plugin/Lang/*.json" LogicalName="lang.%(Filename).json" />
     <Reference Include="$(BepInExCore)/Iced.dll" />
   </ItemGroup>

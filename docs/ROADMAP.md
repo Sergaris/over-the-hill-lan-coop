@@ -5,6 +5,9 @@ Thresholds below are **[estimate]** unless stated otherwise.
 
 ## Status
 
+- **0.2.7** — client: own-car re-simulation skipped when its result is discarded anyway (about 35–40% cheaper at high ping); follow camera on the car's draw clock (no shake on uneven frames).
+- **0.2.6.3** — installer: verified BepInEx payload (0.2.6.1/0.2.6.2 embedded a truncated zip).
+- **0.2.6.2** — remote headlights Off/Low/High on Steam build 26326013; single Continue/Disable dialog.
 - **0.2.6.1** — Steam build 26326013 Supported; Canvas Unverified dialog with Continue/Disable; VehicleInput optional signature; known issue: remote headlights not yet on that build.
 
 - **0.1.7** — ping colours and "no link" label, connection-loss compensation, client-authoritative own car, freeze

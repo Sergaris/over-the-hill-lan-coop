@@ -37,6 +37,7 @@ internal static class NetFrame
         if (f == _afterFusionFrame) return;
         _afterFusionFrame = f;
         try { OwnClock.FrameAfterFusion(); } catch (Exception e) { LogOnce("ownclock", e); }
+        try { OwnCamera.Frame(); } catch (Exception e) { LogOnce("owncamera", e); }
         // RemoteCarView must run AFTER NetworkRigidbody.Render (otherwise Fusion overwrites stream poses).
     }
 

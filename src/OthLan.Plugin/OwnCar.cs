@@ -319,22 +319,51 @@ internal static unsafe class OwnCar
     {
         var t0 = _runner != null && NetTrace.On ? _runner.Tick.Raw : 0;
         LastResimTicks = ticks;
-        using (FrameCost.Measure(FrameCost.Resim))
-            _rsOrig(self, ticks, mi);
+        var empty = false; var hostErr = 0.0; var hostDeg = 0.0;
+        try { empty = BeginEmptyResim(ticks, out hostErr, out hostDeg); }
+        catch (Exception e) { if (OwnResim.Loops == 0) Plugin.L.LogWarning($"[OwnResim] {e.Message}"); }
+        try
+        {
+            using (FrameCost.Measure(FrameCost.Resim))
+                _rsOrig(self, ticks, mi);
+        }
+        finally { if (empty) OwnResim.End(); }
         if (NetTrace.On && _runner != null && _rb != null) NetTrace.Own("S", _runner.Tick.Raw, _capTick, ticks, SrvTick(), RenderT(), _rb.position, _rb.position, _rb.linearVelocity, t0, _captured ? 1 : 0);
-        try { if (_captured && _rb != null && _runner != null) { ResimRestores++; AfterResim(); } }
+        try { if (_captured && _rb != null && _runner != null) { ResimRestores++; AfterResim(empty, hostErr, hostDeg); } }
         catch (Exception e) { _captured = false; Plugin.L.LogWarning($"[OwnCar] after resim: {e.Message}"); }
     }
 
-    /// <summary>The re-simulation from the host's state is done: compare, then keep our own state (or take the host's).</summary>
-    static void AfterResim()
+    /// <summary>Before the loop: the rigidbody holds the host pose at the snapshot tick; extrapolated over the loop it is
+    /// what the resimulation would compare against our state. Mutes the loop when phase 2 restores ours anyway.</summary>
+    static bool BeginEmptyResim(int ticks, out double hostErr, out double hostDeg)
+    {
+        hostErr = hostDeg = 0;
+        if (!OwnResim.Enabled || !_captured || _rb == null || _runner == null || _vb == null) return false;
+        var now = NetClock.Now;
+        var dt = _runner.DeltaTime > 0 ? _runner.DeltaTime : Time.fixedDeltaTime;
+        var p = _rb.position; var v = _rb.linearVelocity; var age = ticks * (double)dt;
+        var hp = new Vector3((float)CarSyncLogic.Extrapolate(p.x, v.x, age), (float)CarSyncLogic.Extrapolate(p.y, v.y, age), (float)CarSyncLogic.Extrapolate(p.z, v.z, age));
+        hostErr = Vector3.Distance(hp, _cp); hostDeg = Quaternion.Angle(_rb.rotation, _cq);
+        var phase2 = Phase2Active(now);
+        var check = new OwnCarLogic.EmptyResimCheck
+        {
+            Enabled = true, HookReady = OwnResim.HookOk, Phase2Active = phase2, Spawned = _spawned,
+            RemotesInterpolated = Plugin.RemoteInterpolate.Value, OwnStateCaptured = _vbN == VbWords && _nrbN > 0,
+            Ticks = ticks, Plan = phase2 ? Plan(now, hostErr) : OwnCarLogic.ResetAction.KeepHost,
+        };
+        return OwnCarLogic.CanRunEmptyResim(check) && OwnResim.Begin(_vb.Pointer, hostErr);
+    }
+
+    /// <summary>The re-simulation from the host's state is done: compare, then keep our own state (or take the host's).
+    /// After an empty loop the comparison uses the extrapolated host pose and there is no result worth keeping (no cheap skip).</summary>
+    static void AfterResim(bool emptyResim = false, double hostErr = 0, double hostDeg = 0)
     {
         {
             {
                 _captured = false;
                 var now = NetClock.Now;
                 var p = _rb.position; var q = _rb.rotation;
-                var err = Vector3.Distance(p, _cp); var errDeg = Quaternion.Angle(q, _cq);
+                var err = emptyResim ? hostErr : Vector3.Distance(p, _cp); var errDeg = emptyResim ? hostDeg : Quaternion.Angle(q, _cq);
                 LastErr = err; LastErrDeg = errDeg;
                 var spawnTransition = false;
                 if (!_spawned && err > Plugin.OwnAcceptMeters.Value)
@@ -345,7 +374,11 @@ internal static unsafe class OwnCar
                     try { CarStreamSender.BumpEpoch("spawn move"); } catch { }
                 }
                 var restoresBefore = Restores;
-                if (Phase2Active(now)) Decide(now, err, errDeg);
+                if (Phase2Active(now))
+                {
+                    var plan = Plan(now, err);
+                    Apply(emptyResim ? plan : OwnCarLogic.AfterResim(plan, err, errDeg), now, err);
+                }
                 var restoredOwn = Restores > restoresBefore;
                 if (OwnCarLogic.CountOwnCorrection(Phase2Active(now), restoredOwn, spawnTransition))
                 {
@@ -357,34 +390,42 @@ internal static unsafe class OwnCar
         }
     }
 
-    static void Decide(double now, double err, double errDeg)
+    /// <summary>Phase 2 decision from the state before the resimulation (<paramref name="err"/>: host pose vs ours).</summary>
+    static OwnCarLogic.ResetAction Plan(double now, double err) => OwnCarLogic.AfterReset(
+        AcceptRequests != _acceptSeen, now < _acceptUntil,
+        OwnCarLogic.OwnStateInvalid(_cp.x, _cp.y, _cp.z, _cv.magnitude, _ca.magnitude),
+        err, now - LastNoLinkAt(), Plugin.OwnAcceptMeters.Value, Plugin.OwnPostOutageSeconds.Value);
+
+    static void Apply(OwnCarLogic.ResetAction action, double now, double err)
     {
-        // Host asked us to take its pose (the game moved the car on the host: respawn, rescue, jack, reset upright).
-        if (AcceptRequests != _acceptSeen) { _acceptSeen = AcceptRequests; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; AcceptsOtac++; Plugin.L.LogInfo($"[OwnCar] host moved the car: accepting its pose for {Plugin.OwnAcceptSeconds.Value:0.0} s"); try { CarStreamSender.BumpEpoch("host moved"); } catch { } }
-        if (now < _acceptUntil) return;
-        // Physics blow-up on our side: never keep such a state.
-        var bad = !float.IsFinite(_cp.x) || !float.IsFinite(_cp.y) || !float.IsFinite(_cp.z) || _cv.magnitude > 150f || _ca.magnitude > 60f;
-        if (bad)
+        switch (action)
         {
-            Fallbacks++; _fallbackUntil = now + Plugin.OwnFallbackSeconds.Value;
-            Plugin.L.LogWarning($"[OwnCar] own physics state invalid (v {_cv.magnitude:0} m/s): host-authoritative (phase 1) for {Plugin.OwnFallbackSeconds.Value:0} s");
-            return;
+            case OwnCarLogic.ResetAction.AcceptOtac:
+                _acceptSeen = AcceptRequests; _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; AcceptsOtac++;
+                Plugin.L.LogInfo($"[OwnCar] host moved the car: accepting its pose for {Plugin.OwnAcceptSeconds.Value:0.0} s");
+                try { CarStreamSender.BumpEpoch("host moved"); } catch { }
+                return;
+            case OwnCarLogic.ResetAction.KeepHost:
+                return;
+            case OwnCarLogic.ResetAction.Fallback:
+                Fallbacks++; _fallbackUntil = now + Plugin.OwnFallbackSeconds.Value;
+                Plugin.L.LogWarning($"[OwnCar] own physics state invalid (v {_cv.magnitude:0} m/s): host-authoritative (phase 1) for {Plugin.OwnFallbackSeconds.Value:0} s");
+                return;
+            case OwnCarLogic.ResetAction.TakeHostFar:
+                _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; AcceptsDistance++;
+                Plugin.L.LogInfo($"[OwnCar] host pose {err:0.0} m away: taking it (teleport/rescue)");
+                return;
+            case OwnCarLogic.ResetAction.CheapPrevious:
+                // 0.2.6: still put Previous back, otherwise NRB draws host-old→resim (live-0251: sim-jump hitch after cheap skip).
+                CheapSkips++;
+                RestorePreviousOnly();
+                NetStats.OnOwnPoseCommitted();
+                break;
+            case OwnCarLogic.ResetAction.RestoreOwn:
+                Restore();
+                break;
         }
-        // Very far apart: a game teleport whose OTAC was lost. Not right after a link gap: then the host copy is simply
-        // behind (it braked / extrapolated) and converges to us; taking its pose would be exactly the rollback we avoid.
-        if (OwnCarLogic.TakeHostPose(err, now - LastNoLinkAt(), Plugin.OwnAcceptMeters.Value, Plugin.OwnPostOutageSeconds.Value))
-        { _acceptUntil = now + Plugin.OwnAcceptSeconds.Value; Accepts++; AcceptsDistance++; Plugin.L.LogInfo($"[OwnCar] host pose {err:0.0} m away: taking it (teleport/rescue)"); return; }
         if (err > Plugin.OwnAcceptMeters.Value) DistanceIgnoredAfterGap++;
-        // Late path especially: Fusion reset without resim every tick + full VPP restore = FPS death (live 0.2.5.1).
-        // 0.2.6: still put Previous back — otherwise NRB draws host-old→resim (live-0251: sim-jump hitch after cheap skip).
-        if (OwnCarLogic.SkipCheapRestore(err, errDeg, 0.05, 1.0))
-        {
-            CheapSkips++;
-            RestorePreviousOnly();
-            NetStats.OnOwnPoseCommitted();
-            return;
-        }
-        Restore();
     }
 
     /// <summary>Put our own (pre-reset) state back: rigidbody + transform, NetworkRigidbody3D words, VPP state.</summary>

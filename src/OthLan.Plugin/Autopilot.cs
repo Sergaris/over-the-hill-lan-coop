@@ -73,7 +73,7 @@ internal static unsafe class Autopilot
     static readonly List<(float t, float box)> ContactBoxes = new(); static int _nextBox;
     static float _hostJumpAt = -1;
     static float _ramFrom = -1, _ramTo = -1, _ramSteer, _ramDist = -1; static bool _ramming; public static int RamContacts; static float _nextRamScan; static FusionPlayer[] _ramCars = Array.Empty<FusionPlayer>();
-    static readonly List<(float t, bool on)> Lights = new(); static int _nextLight; public static int LightToggles, LightMismatches;
+    static readonly List<(float t, VehicleLightLogic.HeadlightMode mode)> Lights = new(); static int _nextLight; public static int LightToggles, LightMismatches;
     static readonly List<(float t, float v)> CpMins = new(); static int _nextCpMin;
     static float _winchAt = -1, _winchOffAt = -1, _winchCheckAt = -1; static bool _winchToCar, _winchUi, _winchBtn; static int _releaseWinchFrames;
     static int _prevSteerOff = -1, _outRefreshes; static float _outSteerMin, _outSteerMax; static float _winchPointsAt = -1, _winchUiCheckAt = -1;
@@ -187,13 +187,14 @@ internal static unsafe class Autopilot
         if (Arg("--othlan-winchpoints") is { } wpt) _winchPointsAt = float.Parse(wpt, ci);
         if (Arg("--othlan-hostjump") is { } hj) _hostJumpAt = float.Parse(hj, ci);
         if (Arg("--othlan-ram") is { } rm) { var rq = rm.Split(':'); _ramFrom = float.Parse(rq[0], ci); _ramTo = float.Parse(rq[1], ci); }
-        if (Arg("--othlan-lights") is { } lt)   // seconds:on|off,... (literal "t" is not a time — that killed Load with FormatException)
+        if (Arg("--othlan-lights") is { } lt)   // seconds:on|off|low|high,... (literal "t" is not a time — that killed Load with FormatException)
             foreach (var part in lt.Split(',', StringSplitOptions.RemoveEmptyEntries))
             {
                 var f = part.Split(':');
-                if (f.Length < 2 || !float.TryParse(f[0], NumberStyles.Float, ci, out var at))
-                { Plugin.L.LogWarning($"[Autopilot] --othlan-lights skip '{part}' (need seconds:on|off)"); continue; }
-                Lights.Add((at, f[1].Equals("on", StringComparison.OrdinalIgnoreCase)));
+                if (f.Length < 2 || !float.TryParse(f[0], NumberStyles.Float, ci, out var at)
+                    || !VehicleLightLogic.TryParseMode(f[1], out var mode))
+                { Plugin.L.LogWarning($"[Autopilot] --othlan-lights skip '{part}' (need seconds:on|off|low|high)"); continue; }
+                Lights.Add((at, mode));
             }
         Lights.Sort((a, b) => a.t.CompareTo(b.t));
         if (Arg("--othlan-contactbox") is { } cb)
@@ -471,19 +472,42 @@ internal static unsafe class Autopilot
         }
         while (_nextLight < Lights.Count && Lights[_nextLight].t <= t)
         {
-            var want = Lights[_nextLight++].on;
+            var want = Lights[_nextLight++].mode;
+            LightsController lc = null;
+            VehicleInput vi = null;
+            var cur = VehicleLightLogic.HeadlightMode.Off;
+            var now = cur;
             try
             {
-                var vi = _own?.GetComponentInChildren<VehicleInput>() ?? UnityEngine.Object.FindObjectOfType<VehicleInput>();
+                lc = _own?.GetComponentInChildren<LightsController>()
+                     ?? UnityEngine.Object.FindObjectOfType<LightsController>();
+                vi = _own?.GetComponentInChildren<VehicleInput>()
+                     ?? UnityEngine.Object.FindObjectOfType<VehicleInput>();
+                if (lc != null) cur = VehicleLightsApi.ReadHeadlights(lc);
+                else if (vi != null) cur = VehicleLightsApi.ReadVehicleInput(vi);
+            }
+            catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] headlights read: {e.Message}"); }
+            // LightsController is authoritative on 26326013+; never let VehicleInput abort apply.
+            if (cur != want)
+            {
+                if (lc != null)
+                {
+                    try { VehicleLightsApi.ApplyHeadlights(lc, want); LightToggles++; }
+                    catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] LightsController set: {e.Message}"); }
+                }
                 if (vi != null)
                 {
-                    var cur = vi.HeadlightsOn;
-                    if (cur != want) { vi.ToggleHeadlights(); LightToggles++; }
-                    Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s headlights want={want} was={cur} now={vi.HeadlightsOn}");
+                    try { VehicleLightsApi.SetVehicleInput(vi, want); }
+                    catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] VehicleInput set: {e.Message}"); }
                 }
-                else Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s headlights: no VehicleInput");
             }
-            catch (Exception e) { Plugin.L.LogWarning($"[Autopilot] headlights: {e.Message}"); }
+            try
+            {
+                now = lc != null ? VehicleLightsApi.ReadHeadlights(lc)
+                    : vi != null ? VehicleLightsApi.ReadVehicleInput(vi) : cur;
+            }
+            catch { now = cur; }
+            Plugin.L.LogWarning($"[Autopilot] t={t:0.0}s headlights want={want} was={cur} now={now} lc={(lc != null)} vi={(vi != null)}");
         }
         if (Lights.Count > 0) SampleRemoteLights(t);
         while (_nextCpMin < CpMins.Count && CpMins[_nextCpMin].t <= t)
@@ -1281,9 +1305,9 @@ internal static unsafe class Autopilot
             foreach (var fp in CarRegistry.Players)
             {
                 if (fp == null || fp.Object == null || fp.Object.HasInputAuthority) continue;
-                var want = fp.ButtonDown(NetworkInputData.VehicleButtons.Headlights);
                 var lc = fp.GetComponentInChildren<LightsController>();
-                var seen = lc != null && lc.AreHeadlightsOn;
+                var want = fp.ButtonDown(NetworkInputData.VehicleButtons.Headlights);
+                var seen = lc != null && VehicleLightLogic.IsOn(VehicleLightsApi.ReadHeadlights(lc));
                 if (want != seen)
                 {
                     LightMismatches++;

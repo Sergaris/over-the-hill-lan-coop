@@ -209,6 +209,7 @@ internal static class NetStats
                             $" sinceReset={(sinceReset >= 0 ? sinceReset * 1000 : -1):0}ms" +
                             $" nearReset={HitchKindLogic.NearReset(sinceReset)}");
                     }
+                    if (NetTrace.On) { try { var cam = Camera.main; NetTrace.View(dt, fp.transform, cam != null ? cam.transform : null, OwnCar.Resets - _lastResets, OwnCar.Restores - _lastRestores); } catch { } }
                     _lastResets = OwnCar.Resets; _lastRestores = OwnCar.Restores; _lastOwnPos = p; _hasOwnPos = true;
                 }
                 else
@@ -284,7 +285,7 @@ internal static class NetStats
             $"[NetStats] ({why}) {Describe()} | {FrameDescribe()} | {FrameCost.Describe()} | {CarRelay.Describe()}" +
             $" | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()}" +
             $" | winΔ localSteps={dLocal} restores={dRest} cheap={dCheap} cheapPrev={dCheapPrev} stepDenied={dDenied} resets={dResets}" +
-            $" | {RemoteSmooth.Describe()} | {RemoteWheelVisuals.Describe()} | {OwnCar.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()}");
+            $" | {RemoteSmooth.Describe()} | {RemoteWheelVisuals.Describe()} | {OwnCar.Describe()} | {OwnResim.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()} | {OwnCamera.Describe()}");
         FramesOver25ms = FramesOver50ms = 0; RemoteBelow = 0;
         RemoteCarView.StreamFrames = RemoteCarView.FusionFrames = RemoteCarView.Snaps = RemoteCarView.StaleFrames = RemoteCarView.ExtrapolatedFrames = RemoteCarView.SourceSwitches = RemoteCarView.RemoteBelow = 0;
         RemoteCarView.ClearAcceptWindow();

@@ -20,6 +20,8 @@ public static class CarWire
     public const byte FlagReverse = 1 << 3;
     public const byte FlagHandbrake = 1 << 4;
     public const byte FlagEngineOn = 1 << 5;
+    /// <summary>0.2.6.2: High beam when set with FlagHeadlights (absent on old peers → Low).</summary>
+    public const byte FlagHeadlightsHigh = 1 << 6;
 
     public const float SteerScale = 100f;       // i16 × 0.01 deg
     public const float SpinScale = 20f;         // i16 × 0.05 rad/s  (1/0.05)

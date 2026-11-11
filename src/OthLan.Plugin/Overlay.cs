@@ -149,8 +149,9 @@ public class Overlay : MonoBehaviour
             try { LinkLabels.OnGUI(); }
             catch (Exception e) { _carLabelsBroken = true; Plugin.L.LogWarning($"[UI] over-the-car link labels disabled: {e.Message}"); }
         }
-        // Canvas GatePrompt first; IMGUI only if the Canvas dialog has no answer buttons yet.
-        if (!_guiBroken && BuildGate.NeedsChoice && !(GatePrompt.Visible && GatePrompt.HasButtons))
+        // Single Ask decision (BuildGate/GateLogic). UI: Canvas GatePrompt is primary (0.2.6.1+).
+        // IMGUI GateDialog is last-resort only when Canvas never opened — not a second independent Ask.
+        if (!_guiBroken && BuildGate.NeedsChoice && !GatePrompt.Visible)
         {
             try { GateDialog(); }
             catch (Exception e) { _guiBroken = true; Plugin.L.LogWarning($"[UI] gate dialog unavailable ({e.Message}); answer in F7 / Safety.UnverifiedBuildChoices"); }

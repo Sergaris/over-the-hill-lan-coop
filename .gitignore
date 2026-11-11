@@ -8,3 +8,7 @@ bin/
 obj/
 /out/
 *.user
+
+# symlinks to local dumps/tooling (never commit)
+interop
+third_party
