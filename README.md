@@ -211,7 +211,8 @@ Only the host needs inbound UDP **27015** (game traffic) and **27016** (session 
 ## Known limits
 
 - Up to 4 players, the host included.
-- Tested mostly with scripted multi-instance runs on one PC plus a few real two-PC sessions. Expect rough edges with 3–4 players and high ping.
+- Tested in a real two-player session over a network (works well), and with scripted multi-instance runs on one PC. Expect rough edges with 3–4 players and high ping.
+- Any accessories hung on a car (a coiled rope, decorative lamp, antenna, and the like) jitter heavily when viewed as a client. They look fine from the host.
 - Client car positions are smoothed and compensated for packet loss by an optional sync layer (CarSync, on by default; see `docs/CAR-SYNC.md`). With high ping, cars can still slide or jump.
 - No NAT traversal: players must be able to reach the host's IP over UDP.
 - A game update can disable the mod until it is updated.
@@ -220,7 +221,8 @@ Only the host needs inbound UDP **27015** (game traffic) and **27016** (session 
 ## Известные ограничения
 
 - До 4 игроков, включая хоста.
-- Проверено в основном автоматическими прогонами нескольких копий игры на одном ПК и несколькими настоящими сессиями на двух ПК. С 3–4 игроками и высоким пингом возможны шероховатости.
+- Проверено в настоящей сессии двух игроков по сети (работает хорошо), а также автоматическими прогонами нескольких копий игры на одном ПК. С 3–4 игроками и высоким пингом возможны шероховатости.
+- Любые аксессуары, которые вешаются на машину (скрученная верёвка, декоративная лампа, антенна и тому подобное), сильно дёргаются, если смотреть от лица клиента. От лица хоста всё выглядит нормально.
 - Позиции машин клиентов сглаживаются и компенсируют потери пакетов необязательным слоем синхронизации (CarSync, по умолчанию включён; см. `docs/CAR-SYNC.md`). При высоком пинге машины всё равно могут скользить или прыгать.
 - Нет обхода NAT: IP хоста должен быть доступен игрокам по UDP.
 - Обновление игры может отключить мод, пока мод не обновят.
