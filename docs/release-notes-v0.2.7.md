@@ -76,14 +76,16 @@ From 0.1.8.1 / 0.1.9 / 0.1.9.1 / 0.1.9.2 / 0.1.9.3 / 0.2.0 / 0.2.1 / 0.2.2 / 0.2
 
 ## Known limits
 
-- Tested on one PC with two game instances and simulated lag and packet loss. Report issues with F7 → Save diagnostics.
+- Tested in a real two-player session over a network (works well), and with two game instances on one PC plus simulated lag and packet loss. Report issues with F7 → Save diagnostics.
+- Any accessories hung on a car (a coiled rope, decorative lamp, antenna, and the like) jitter heavily when viewed as a client. They look fine from the host.
 - If after a lag spike your car bounces or stops reacting to steering, set `OwnResimSkip = false` in `[Netcode]` of `BepInEx/config/dev.othlan.lan.cfg` and restart the game; please send diagnostics too.
 - A frozen abandoned car does not react to things other than player cars (for example a falling meteorite) until a player comes within winch reach. Switch it off with `ParkIdleCars = false` in `[Netcode]` of `BepInEx/config/dev.othlan.lan.cfg` on the host.
 - Third-party copies still need the same Fusion 2.1.2 and matching data layout; a broken or very old crack can still be refused as incompatible. Both sides must run 0.2.7 (older hosts do not advertise Fusion for cross-hash join).
 
 ## Известные ограничения
 
-- Проверено на одном ПК с двумя копиями игры и имитацией лага и потери пакетов. О проблемах — F7 → сохранить диагностику.
+- Проверено в настоящей сессии двух игроков по сети (работает хорошо), а также двумя копиями игры на одном ПК с имитацией лага и потери пакетов. О проблемах — F7 → сохранить диагностику.
+- Любые аксессуары, которые вешаются на машину (скрученная верёвка, декоративная лампа, антенна и тому подобное), сильно дёргаются, если смотреть от лица клиента. От лица хоста всё выглядит нормально.
 - Если после скачка пинга ваша машина подпрыгивает или перестаёт слушаться руля, поставьте `OwnResimSkip = false` в `[Netcode]` файла `BepInEx/config/dev.othlan.lan.cfg` и перезапустите игру; пришлите, пожалуйста, и диагностику.
 - Замороженная брошенная машина не реагирует ни на что, кроме машин игроков (например, на упавший метеорит), пока игрок не окажется в радиусе лебёдки. Отключается на хосте: `ParkIdleCars = false` в `[Netcode]` файла `BepInEx/config/dev.othlan.lan.cfg`.
 - Сторонней копии всё равно нужны Fusion 2.1.2 и совпадающая раскладка данных; сильно сломанный или старый репак по-прежнему может быть incompatible. С обеих сторон нужна 0.2.7 (старые хосты не сообщают Fusion для join с другим hash).
