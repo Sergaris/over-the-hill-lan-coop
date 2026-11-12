@@ -20,10 +20,45 @@ Thresholds below are **[estimate]** unless stated otherwise.
 
 - **0.1.9** — remote lights/wheels/liveries under interpolation; pre-join Modio livery download dialog;
   `OTH-LAN-Launch.exe` for InteropManager unity-libs hang; host PosePlayback; F7 no longer auto-opens on join.
+
+## Next (after 0.2.7)
+
+Source: code reading of 0.2.7, not reproduced in-game in that review, except the accessory symptom (confirmed in a real two-player session on 2026-11-12). **[code]** means it is visible in the source; **[hypothesis]** means a likely cause, not proven in-game here. Do not ship a fix without a live check.
+
+### Accessory jitter on the client — do this first
+
+- **Symptom:** any accessories hung on a car (a coiled rope, decorative lamp, antenna, and the like) jitter heavily when viewed as a client. They look fine from the host. Confirmed in a real two-player session (2026-11-12).
+- **Cause [code + hypothesis]:** the mod has no accessory handling (no rope / lamp / antenna / joint / cloth code). Those objects run on each PC's local physics or animation. On the client, another player's car root is written twice per frame with different poses:
+  - `RemoteCarView.PrePhysicsStep` → `ApplyProxyBody` moves the kinematic body to `SampleAt(stepEnd, delayOverride: 0)` with `MovePosition` (the freshest, often extrapolated pose);
+  - `DrawOne` in LateUpdate then overwrites the same root with `SampleAt(now)` and the jitter-buffer delay of 50–250 ms, via `root.SetPositionAndRotation`.
+  - The comment around `RemoteCarView.cs:34` says so directly: visual LateUpdate overwrites the same root transform.
+  At speed those two poses can be decimetres to metres apart, so anything hung on the car that is simulated or that follows frame-to-frame movement gets yanked between them every frame.
+  The client's own car also jumps outside the physics step (`OwnRender.Apply`, `BeforeSim` / `OwnLocal`, `OwnCar.Restore`); accessories are not in the snapshot. On the host there is one pose per frame (`HostFollower` keeps the proxies as dynamic bodies) plus the game's normal render interpolation, which matches "looks fine from the host".
+- **Accessory type [unverified]:** a rigidbody on a joint, Cloth, or a spring/jiggle script — in the game's assets, not in the mod.
+- **Fix direction:** one root pose per frame (move the visual delay onto a child visual transform, or drive the body and the visual from the same sample); and/or teleport or freeze child Rigidbody/Joint objects with the root (same delta, or make them kinematic and drive them visually).
+- **Live check:** the host hangs a rope / lamp / antenna; the client watches that car moving and at rest — no jitter, no worse than the host. No regression on the client's own car or on other cars (hitch, lights, wheels). Do not ship without a yes.
+
+### StatePlayback race
+
+- **Symptom [code, not caught in-game]:** `Push` runs on the receive thread (`CarRelay.OnClientPacket` / `OnPacket`, `HostFollower` paths marked as network thread), while `SampleAt` runs on the main thread, with no locks. Torn or reordered samples are possible, which would show up as rare one-frame pops on other players' cars. `CarRelay._lock` only protects the dictionary.
+- **Fix direction:** `Push` into a concurrent queue that the main thread drains before `PrePhysicsStep` and `DrawOne`. Also audit `HostFollower.OnPosePacket`, `OwnCar.OnAccept`, `LinkLabels.OnStatus`.
+
+### Slot rebinding via ping
+
+- **Symptom [code]:** `HostPings.SawClient` rebinds a slot's endpoint from any valid ping that carries that slot number, which can bypass `RelayLogic.Filter`. The side channel has no authentication or encryption. Fine for a trusted LAN; not fine on the open internet.
+- **Fix direction:** a session token handed out with the slot, binding the endpoint; HMAC on packets. Trusting a client for its own car pose stays a separate, deliberate compromise.
+
+### CI and `OwnResimSkip` after a lag spike
+
+- The `OwnResimSkip = false` workaround after a bounce / dead steering is still needed. The cheap-skip paths (`CheapPrevious` / `RestorePreviousOnly`, a stale capture, `Refused++` mid-loop) are a plausible risk; there is little test coverage of the spike itself. The "35–40% cheaper" figure is from a loopback changelog measurement, not a real network. The private repo has no CI.
+- **Fix direction:** CI with `LogicTests` and `EchoLoopback` under netem at 200/400 ms and 5–20% loss, plus an `OwnResimSkip` lag-spike scenario. Also fewer empty `catch` blocks and fewer leftover experimental flags.
+
+Order: accessory jitter first, then the receive-queue race, then the slot token and CI as needed. Fixing the double pose write will likely also remove some micro-jitter of other players' cars.
+
 ## 1. Still to verify in the real world
 
-- Sessions on two or more PCs over Radmin VPN / Hamachi / ZeroTier with real players (3–4 players, real ping
-  150–300 ms).
+- A real two-player session over a network already works well as of 2026-11-12. Still to verify: 3–4 players
+  over Radmin VPN / Hamachi / ZeroTier with real ping 150–300 ms.
 - Whether LAN broadcast discovery reaches other PCs over each VPN (directed `26.255.255.255` on Radmin,
   `255.255.255.255`, Radmin's neighbour table); behaviour when Radmin falls back to a relay/TCP connection.
   **Add by IP** is the fallback.
