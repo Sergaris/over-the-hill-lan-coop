@@ -1,9 +1,9 @@
 namespace OthLan;
 
 /// <summary>
-/// 0.2.8: which pose the client Late path draws for a remote car.
-/// PrePhysics already wrote delay-0 into Phys*; Late must reuse it when the stream is still fresh
-/// (no second SampleAt with jitter delay that fought the physics pose).
+/// 0.2.8 / 0.2.8.1: which pose the client Late path draws for a remote car.
+/// PrePhysics writes one jitter-delayed Hermite sample into Phys*; Late reuses it when the stream is fresh
+/// (no second SampleAt at a different play-time on the same root — that fought accessories in 0.2.7).
 /// </summary>
 public static class RemotePoseLogic
 {

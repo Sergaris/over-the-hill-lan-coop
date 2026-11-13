@@ -176,7 +176,7 @@ internal static unsafe class FusionHooks
                     LanState.UniqueId = *(long*)(args + FusionLayout.SgaPlayerUniqueId);
                     LanState.Pending = redirected;
                     LanState.LanRunner = runner; LanState.LanRunnerRole = redirected; LanState.LanSim = IntPtr.Zero;
-                    if (redirected == LanRole.Host) { LanState.SlotOwners.Clear(); LanState.Slots.Reset(LanState.EffectivePlayers); PublishHostInfo(args); }
+                    if (redirected == LanRole.Host) { LanState.SlotOwners.Clear(); LanState.Slots.Reset(LanState.FusionPlayerCount); PublishHostInfo(args); }
                     else
                     {
                         LanState.ClientSlot = LanState.AssignedSlot >= 0 ? LanState.AssignedSlot : PickClientSlot();
@@ -221,7 +221,7 @@ internal static unsafe class FusionHooks
         ushort port = 0;
         try
         {
-            var n = LanState.EffectivePlayers;
+            var n = LanState.FusionPlayerCount; // session humans + 1 unused seat (index 0)
             // Offsets resolved by name at start-up (FusionLayout); Nullable<T> = hasValue + value inside the field.
             *(byte*)(args + FusionLayout.IaPlayerCount + FusionLayout.IaPlayerCountHas) = 1;
             *(int*)(args + FusionLayout.IaPlayerCount + FusionLayout.IaPlayerCountVal) = n;
@@ -247,7 +247,7 @@ internal static unsafe class FusionHooks
             }
             LanState.ForceNullSocketPath = true;
             LanState.SwapSocket = true;
-            Plugin.L.LogInfo($"[LAN] Initialize as {role}: players={n} bind=0.0.0.0:{port}");
+            Plugin.L.LogInfo($"[LAN] Initialize as {role}: session={LanState.EffectivePlayers} fusionSeats={n} bind=0.0.0.0:{port}");
         }
         catch (Exception e)
         {
@@ -301,14 +301,15 @@ internal static unsafe class FusionHooks
 
     static bool IsLanRunner(IntPtr runner) => runner != IntPtr.Zero && runner == LanState.LanRunner && LanState.LanRunnerRole != LanRole.Off;
 
-    /// <summary>FALLBACK client slot (0.1.6: normally the host assigns it over UDP Port+1, see SlotAllocator): indices
-    /// 0..PlayerCount-1 minus the host's index 1, derived from the last octet of this PC's Radmin IP; also the hint the
+    /// <summary>FALLBACK client slot (0.1.6: normally the host assigns it over UDP Port+1, see SlotAllocator): Fusion
+    /// client indices minus host and unused 0, derived from the last octet of this PC's Radmin IP; also the hint the
     /// client sends with its slot request. Two fallback clients that collide are refused by the host (retry rerolls).</summary>
     static int _slotRetry;
     internal static int PickClientSlot()
     {
-        var n = LanState.EffectivePlayers;
-        var slots = Enumerable.Range(0, n).Where(i => i != LanState.HostIndex).ToArray();
+        var n = LanState.FusionPlayerCount;
+        var slots = Enumerable.Range(0, n).Where(i => SlotAllocator.IsClientSlot(i, LanState.HostIndex, n)).ToArray();
+        if (slots.Length == 0) return 2; // FusionSeats always leaves at least index 2
         int seed;
         var ip = NetInfo.RadminIp();
         if (ip != null && System.Net.IPAddress.TryParse(ip, out var a)) seed = a.GetAddressBytes()[3] + 7 * _slotRetry;
@@ -357,9 +358,9 @@ internal static unsafe class FusionHooks
                         var s = new Simulation(sim);
                         if (!s._uniqueIdPlayerRefMapping.ContainsKey(key))
                         {
-                            var n = LanState.EffectivePlayers;
+                            var n = LanState.FusionPlayerCount;
                             int slot = bytes[1] == LanState.UidMagic ? bytes[0] : -1;
-                            if (slot < 0 || slot >= n || slot == LanState.HostIndex)
+                            if (!SlotAllocator.IsClientSlot(slot, LanState.HostIndex, n))
                             {
                                 Plugin.L.LogWarning($"[LAN] refusing client: bad slot {slot} (different OTH-LAN version or PlayerCount?)");
                                 return Reply_Refuse;

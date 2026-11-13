@@ -29,7 +29,7 @@ internal static class RemoteCarView
         public bool ProxyEnsured;
         public StatePlayback.PlaybackResult LastSample;
         public bool HasSample;
-        /// <summary>Last pose written for physics (delay 0). Visual LateUpdate overwrites the same root transform.</summary>
+        /// <summary>Last pose written for physics (jitter-delayed Hermite). Late PreferPhys reuses it on the same root.</summary>
         public Vector3 PhysP;
         public Quaternion PhysQ = Quaternion.identity;
         public bool HasPhys;
@@ -233,7 +233,7 @@ internal static class RemoteCarView
             return;
         }
 
-        // 0.2.8: one pose per frame — same delay-0 / phys pose as PrePhysics (no 50–250 ms Late overwrite).
+        // 0.2.8.1: one pose per frame — same jitter-delayed Hermite sample as PrePhysics (no second play-time on root).
         var pb = CarRelay.PlaybackOf(e.Slot); // drains OTC3 queue — may be newer than PrePhysics
         var fresh = pb.Count > 0 && (now - pb.LastArrivalLocal) <= FreshAgeS;
         if (pb.ConsumeSnap()) Snaps++;
@@ -253,7 +253,8 @@ internal static class RemoteCarView
                 StreamFrames++;
                 break;
             case RemotePoseLogic.Source.StreamSample:
-                r = pb.SampleAt(now, delayOverride: 0);
+                // Same clock as PrePhysics: jitter delay + Hermite (not delayOverride:0).
+                r = pb.SampleAt(now);
                 stream = r.Ok && !r.Stale;
                 if (r.Ok && r.Stale) StaleFrames++;
                 NoteExtrapErr(pb, stream, r);
@@ -332,7 +333,8 @@ internal static class RemoteCarView
         sl.Oq = Quaternion.Slerp(Quaternion.identity, sl.Oq, keepQ);
     }
 
-    /// <summary>T3.7 / T4.0: before Physics.Simulate — remote bodies at SampleAt(stepEnd, delayOverride:0).</summary>
+    /// <summary>T3.7 / T4.0 / 0.2.8.1: before Physics.Simulate — remote bodies at SampleAt(stepEnd) with jitter delay
+    /// (one Hermite pose shared with Late PreferPhys; host follower keeps delayOverride:0 for contacts).</summary>
     public static void PrePhysicsStep(double stepEndLocal)
     {
         if (LanState.Active != LanRole.Client) return;
@@ -355,7 +357,7 @@ internal static class RemoteCarView
                     sl.HasPhys = false; sl.PhysFrame = -1;
                     continue;
                 }
-                var r = CarRelay.PlaybackOf(e.Slot).SampleAt(stepEndLocal, delayOverride: 0);
+                var r = CarRelay.PlaybackOf(e.Slot).SampleAt(stepEndLocal);
                 if (!r.Ok) { AbortPull(sl, stepEndLocal); sl.HasPhys = false; sl.PhysFrame = -1; continue; }
                 ApplyProxyBody(e, sl, in r, servo, tau, stepEndLocal);
             }

@@ -45,8 +45,11 @@ internal static class LanState
     public static string ClientId => SelfTestClientId ?? Plugin.ClientId.Value;
     public static string SelfTestClientId;                    // self-test: several clients share one config file
     public static readonly System.Collections.Generic.Dictionary<int, ulong> SlotOwners = new();
-    public static int HostPlayers;                            // client: PlayerCount reported by the host (0 = unknown)
+    public static int HostPlayers;                            // client: session size reported by the host (0 = unknown)
+    /// <summary>Humans in the session (lobby / discovery). Fusion seat count is <see cref="FusionPlayerCount"/>.</summary>
     public static int EffectivePlayers => Math.Max(2, HostPlayers > 0 ? HostPlayers : Plugin.PlayerCount.Value);
+    /// <summary>Fusion <c>PlayerCount</c>: one unused index 0 so clients never get <c>Player:0</c> (0.2.8.1).</summary>
+    public static int FusionPlayerCount => SlotAllocator.FusionSeats(EffectivePlayers);
     public const int HostIndex = 1;                           // what Fusion's own single-player path uses (raw 2)
     public const byte UidMagic = 0x4C;                        // 'L' in byte 1 of the connect uniqueId
     public static Msg LastStatus = new("status.idle");

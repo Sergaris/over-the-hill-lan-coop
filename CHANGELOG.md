@@ -2,6 +2,20 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.8.1
+
+Both players need 0.2.8.1. From 0.1.8.1+ the in-game updater offers this release.
+
+- Other players' cars move smoothly again (jitter buffer + Hermite on one shared pose; accessories stay calm).
+- Joining no longer lands on broken player slot 0 (empty world / no own car).
+
+## 0.2.8.1 — изменения
+
+У обоих игроков должна быть 0.2.8.1. С 0.1.8.1+ обновление предложит меню.
+
+- Чужие машины снова едут плавно (jitter-буфер + Hermite на одной общей позе; аксессуары не дёргаются).
+- Подключение больше не попадает на сломанный слот игрока 0 (пустой мир / нет своей машины).
+
 ## 0.2.8
 
 Both players need 0.2.8. From 0.1.8.1+ the in-game updater offers this release.

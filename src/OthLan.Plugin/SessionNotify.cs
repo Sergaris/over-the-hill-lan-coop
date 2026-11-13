@@ -97,7 +97,7 @@ internal static class SessionNotify
 
     static void TickPlayerPresence(NetworkRunner r)
     {
-        var n = Math.Min(_wasPresent.Length, Math.Max(LanState.EffectivePlayers, 2));
+        var n = Math.Min(_wasPresent.Length, LanState.FusionPlayerCount);
         for (var i = 0; i < n; i++)
         {
             if (i == LanState.HostIndex) { _wasPresent[i] = true; continue; }

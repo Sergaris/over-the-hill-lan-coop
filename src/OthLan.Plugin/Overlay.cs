@@ -115,7 +115,7 @@ public class Overlay : MonoBehaviour
         if (r == null || !r.IsRunning) return;
         var released = LanState.Slots.Sync(i => r.IsPlayerValid(Fusion.PlayerRef.FromIndex(i)), NetClock.Now);
         int cur = 0;
-        for (int i = 0; i < Math.Max(LanState.EffectivePlayers, 2); i++) if (r.IsPlayerValid(Fusion.PlayerRef.FromIndex(i))) cur++;
+        for (int i = 0; i < LanState.FusionPlayerCount; i++) if (r.IsPlayerValid(Fusion.PlayerRef.FromIndex(i))) cur++;
         HostInfo.CurPlayers = Math.Max(1, cur);
         foreach (var sl in released) Plugin.L.LogInfo($"[LAN] player slot {sl} released (player left) [{LanState.Slots.Describe()}]");
         try { SessionNotify.OnSlotsReleased(released); } catch (Exception e) { LogOnce("sessionnotify-leave", e); }

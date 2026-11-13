@@ -71,11 +71,17 @@ static class Gate016
         Eq(GateLogic.CompatibleSession("26062472", "abc", "ga:025e", "025e…", "2.1.2.0", null), false, "missing my Fusion falls back to SameBuild (fail)");
         Eq(GateLogic.CompatibleSession("26062472", "abc", "ga:x", "ABC", null, "2.1.2.0"), true, "same hash still wins without Fusion");
 
-        // ---- slot allocator (players 4, host index 1 => client slots 0, 2, 3) ----
-        var a = new SlotAllocator(4, 1);
+        // ---- slot allocator (0.2.8.1: FusionSeats(4)=5, host 1 => client slots 2, 3, 4; never 0) ----
+        Eq(SlotAllocator.FusionSeats(4), 5, "fusion-seats: 4 humans -> 5 Fusion seats");
+        Eq(SlotAllocator.FusionSeats(2), 3, "fusion-seats: 2 humans -> 3 Fusion seats");
+        Eq(SlotAllocator.IsClientSlot(0, 1, 5), false, "client-slot: 0 unused");
+        Eq(SlotAllocator.IsClientSlot(1, 1, 5), false, "client-slot: host");
+        Eq(SlotAllocator.IsClientSlot(2, 1, 5), true, "client-slot: 2 ok");
+        var seats = SlotAllocator.FusionSeats(4);
+        var a = new SlotAllocator(seats, 1);
         Eq(a.Request("A", 2, 0), 2, "slot: hint honoured when free");
-        Eq(a.Request("B", 2, 1), 0, "slot: taken hint => lowest free");
-        Eq(a.Request("C", 0, 2), 3, "slot: third client gets the last one");
+        Eq(a.Request("B", 2, 1), 3, "slot: taken hint => lowest free client (not 0)");
+        Eq(a.Request("C", 0, 2), 4, "slot: third client gets the last one");
         Eq(a.Request("D", 0, 3), -1, "slot: full => -1");
         Eq(a.Request("A", 0, 4), 2, "slot: same id gets the same reservation again");
         Eq(a.Request("", 0, 4), -1, "slot: empty id refused");
@@ -85,6 +91,7 @@ static class Gate016
         Eq(a.Admit(2, tB, 5, out var why), false, "admit: reserved slot, wrong tag refused");
         Eq(why.Contains("reserved"), true, "admit: says reserved");
         Eq(a.Admit(1, tA, 5, out _), false, "admit: host slot refused");
+        Eq(a.Admit(0, tA, 5, out _), false, "admit: unused index 0 refused");
         Eq(a.Admit(7, tA, 5, out _), false, "admit: out of range refused");
         Eq(a.Admit(2, 0, 5, out _), false, "admit: untagged client cannot take a reservation");
         // A connects; B and C never connect
@@ -102,45 +109,50 @@ static class Gate016
         Eq(a.Request("A", 0, 63), 2, "slot: reconnect gets the same slot (preference kept)");
         valid.Add(2); a.Sync(i => valid.Contains(i), 64);
         // A's slot taken by E while A is away, then A comes back
-        var b = new SlotAllocator(4, 1);
-        Eq(b.Request("A", 0, 0), 0, "slot2: A -> 0");
-        b.Sync(i => i == 0, 1);
+        var b = new SlotAllocator(seats, 1);
+        Eq(b.Request("A", 2, 0), 2, "slot2: A -> 2");
+        b.Sync(i => i == 2, 1);
         b.Sync(i => false, 2);               // A left
-        Eq(b.Request("E", 0, 3), 0, "slot2: E may take the free slot 0");
-        Eq(b.Request("A", 0, 4), 2, "slot2: A gets another free slot, not a duplicate");
+        Eq(b.Request("E", 2, 3), 2, "slot2: E may take the free slot 2");
+        Eq(b.Request("A", 2, 4), 3, "slot2: A gets another free slot, not a duplicate");
         // fallback (IP-derived) clients
-        var f = new SlotAllocator(4, 1);
+        var f = new SlotAllocator(seats, 1);
         Eq(f.Admit(3, tC, 0, out _), true, "fallback: free unreserved slot admitted");
         Eq(f.Admit(3, tB, 1, out _), false, "fallback: second client on the same slot refused");
-        Eq(f.Request("B", 3, 2), 0, "fallback slot counts as taken for requests");
+        Eq(f.Request("B", 3, 2), 2, "fallback slot counts as taken for requests");
         Eq(f.Admit(3, tC, 3, out _), true, "fallback: same client retrying is admitted");
         // session reset
-        f.Reset(4); Eq(f.Count, 0, "reset clears reservations");
-        Eq(f.Request("B", 3, 4), 0, "reset keeps the id preference");
-        f.Reset(2); Eq(f.Request("B", 0, 5), 0, "2-player session: only slot 0");
+        f.Reset(seats); Eq(f.Count, 0, "reset clears reservations");
+        Eq(f.Request("B", 3, 4), 2, "reset keeps the id preference (B last had 2)");
+        // 2 humans → FusionSeats 3 → only client index 2
+        f.Reset(SlotAllocator.FusionSeats(2));
+        Eq(f.Request("B", 0, 5), 2, "2-player session: only slot 2 (not 0)");
         Eq(f.Request("Z", 0, 5), -1, "2-player session: second client full");
+        // legacy id stuck on unused 0 is remapped
+        var leg = new SlotAllocator(seats, 1);
+        Eq(leg.Admit(0, tA, 0, out _), false, "legacy: cannot admit 0");
         // 3 clients joining at once with the same IP-derived hint (the 0.1.5 collision case)
-        var g = new SlotAllocator(4, 1);
+        var g = new SlotAllocator(seats, 1);
         var got = new[] { g.Request("p1", 3, 0), g.Request("p2", 3, 0), g.Request("p3", 3, 0) };
-        Eq(string.Join(",", got.OrderBy(x => x)), "0,2,3", "3 clients, same hint => 3 distinct slots");
-        // randomized: never two ids on one slot, never the host slot
+        Eq(string.Join(",", got.OrderBy(x => x)), "2,3,4", "3 clients, same hint => 3 distinct slots (no 0)");
+        // randomized: never two ids on one slot, never host / unused 0
         var rnd = new Random(1);
-        var h = new SlotAllocator(4, 1); var conn = new HashSet<int>(); var ok = true; double now = 0;
+        var h = new SlotAllocator(seats, 1); var conn = new HashSet<int>(); var ok = true; double now = 0;
         for (int i = 0; i < 5000; i++)
         {
             now += rnd.NextDouble() * 5;
             var id = "c" + rnd.Next(6);
-            var s = h.Request(id, rnd.Next(4), now);
-            if (s == 1) ok = false;
+            var s = h.Request(id, rnd.Next(seats), now);
+            if (s == 1 || s == 0) ok = false;
             if (s >= 0 && rnd.Next(3) == 0 && h.Admit(s, SlotAllocator.Tag(id), now, out _)) conn.Add(s);
-            if (rnd.Next(10) == 0) conn.Remove(rnd.Next(4));
+            if (rnd.Next(10) == 0) conn.Remove(rnd.Next(seats));
             h.Sync(x => conn.Contains(x), now);
             var desc = h.Describe().Split(' ', StringSplitOptions.RemoveEmptyEntries);
             var ids = desc.Select(d => d.Split(':')[2]).ToList();
             if (ids.Count != ids.Distinct().Count()) ok = false;
-            if (desc.Any(d => d.StartsWith("1:"))) ok = false;
+            if (desc.Any(d => d.StartsWith("1:") || d.StartsWith("0:"))) ok = false;
         }
-        Eq(ok, true, "randomized 5000 steps: no duplicate id, no host slot");
+        Eq(ok, true, "randomized 5000 steps: no duplicate id, no host/unused slot");
 
         // ---- code signatures ----
         var x1 = new byte[] { 0xE8, 1, 2, 3, 4, 0x48, 0x8B, 0x05, 9, 9, 9, 9, 0x74, 0x10, 0x48, 0x8B, 0x41, 0x78, 0xC3 };

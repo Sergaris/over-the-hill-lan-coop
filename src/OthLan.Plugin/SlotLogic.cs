@@ -12,9 +12,14 @@ namespace OthLan;
 /// reserved for the same tag. A reservation that never connects expires; a slot whose player left is released.
 /// The same client id gets the same slot back on reconnect (if nobody else took it meanwhile).
 /// Clients that got no answer fall back to the 0.1.5 IP-derived pick and are admitted into free, unreserved slots.
+/// 0.2.8.1: never assign index 0 — OTH does not spawn a car for <c>Player:0</c> (RuntimePlayer never reaches the host).
+/// Fusion seat count is <see cref="FusionSeats"/> so session size N still fits on host + clients without 0.
 /// </summary>
 public sealed class SlotAllocator
 {
+    /// <summary>Fusion PlayerRef index the game never spawns for (seen empty-world on 0.2.8 live).</summary>
+    public const int UnusedIndex = 0;
+
     sealed class Entry { public string Id; public uint Tag; public double Expires; public bool Connected, Stale; public double StaleSince; }
     readonly List<int> _kick = new();
     readonly object _lock = new();
@@ -25,6 +30,18 @@ public sealed class SlotAllocator
     public double ReserveSeconds { get; set; } = 45;
 
     public SlotAllocator(int players, int hostIndex) { Players = players; HostIndex = hostIndex; }
+
+    /// <summary>Fusion <c>PlayerCount</c> for a session of <paramref name="sessionPlayers"/> humans:
+    /// one unused seat at <see cref="UnusedIndex"/> so clients never need index 0.</summary>
+    public static int FusionSeats(int sessionPlayers)
+    {
+        var n = Math.Max(2, sessionPlayers);
+        return n + 1;
+    }
+
+    /// <summary>True when <paramref name="slot"/> may be given to a LAN client (not host, not unused 0).</summary>
+    public static bool IsClientSlot(int slot, int hostIndex, int fusionPlayers) =>
+        slot >= 0 && slot < fusionPlayers && slot != hostIndex && slot != UnusedIndex;
 
     public static uint Tag(string clientId)
     {
@@ -39,7 +56,7 @@ public sealed class SlotAllocator
         lock (_lock) { if (players != Players) _last.Clear(); Players = players; _slots.Clear(); }
     }
 
-    IEnumerable<int> Candidates() => Enumerable.Range(0, Players).Where(i => i != HostIndex);
+    IEnumerable<int> Candidates() => Enumerable.Range(0, Players).Where(i => IsClientSlot(i, HostIndex, Players));
 
     void Expire(double now)
     {
@@ -53,9 +70,12 @@ public sealed class SlotAllocator
         lock (_lock)
         {
             Expire(now);
+            int? dropLegacy = null;
             foreach (var kv in _slots)
                 if (kv.Value.Id == clientId)
                 {
+                    // 0.2.8.1: legacy reservation on UnusedIndex → drop and re-pick a free client slot.
+                    if (!IsClientSlot(kv.Key, HostIndex, Players)) { dropLegacy = kv.Key; break; }
                     // 0.1.8: the same client asks again while its old connection is still in the session (it crashed, lost
                     // the link or rejoined before the host noticed). Fusion would give the new connection no state (seen in
                     // the self-test: tick stuck at 0 until the old one timed out after 30 s), so the old one is dropped.
@@ -63,6 +83,7 @@ public sealed class SlotAllocator
                     kv.Value.Expires = now + ReserveSeconds;
                     return kv.Key;
                 }
+            if (dropLegacy is int bad) _slots.Remove(bad);
             var free = Candidates().Where(i => !_slots.ContainsKey(i)).ToList();
             if (free.Count == 0) return -1;
             int pick = _last.TryGetValue(clientId, out var l) && free.Contains(l) ? l : free.Contains(hint) ? hint : free[0];
@@ -80,7 +101,7 @@ public sealed class SlotAllocator
         lock (_lock)
         {
             Expire(now);
-            if (slot < 0 || slot >= Players || slot == HostIndex) { why = $"bad slot {slot}"; return false; }
+            if (!IsClientSlot(slot, HostIndex, Players)) { why = $"bad slot {slot}"; return false; }
             if (_slots.TryGetValue(slot, out var e))
             {
                 if (tag != 0 && e.Tag == tag) { if (!e.Connected) e.Expires = now + ReserveSeconds; return true; }

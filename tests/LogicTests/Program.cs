@@ -1021,7 +1021,7 @@ static class Program
         Eq(RemotePoseLogic.Pick(false, false), RemotePoseLogic.Source.Fusion, "pose-pick: stale -> Fusion");
         Eq(RemotePoseLogic.Pick(false, true), RemotePoseLogic.Source.Fusion, "pose-pick: stale ignores phys-this-frame");
         Eq(RemotePoseLogic.Pick(true, true), RemotePoseLogic.Source.Phys, "pose-pick: fresh+phys-this-frame -> Phys");
-        Eq(RemotePoseLogic.Pick(true, false), RemotePoseLogic.Source.StreamSample, "pose-pick: fresh no phys-this-frame -> SampleAt0");
+        Eq(RemotePoseLogic.Pick(true, false), RemotePoseLogic.Source.StreamSample, "pose-pick: fresh no phys-this-frame -> SampleAt(delay)");
     }
 
     // ---------- 0.2.5.4 clear networked WinchPointsDisabled after detach ----------
