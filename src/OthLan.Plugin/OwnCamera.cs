@@ -9,6 +9,7 @@ namespace OthLan;
 /// camera under- then overshoots the car every few frames (live 0.2.7 lowoff: camera step / car step tracked
 /// prevFrame/thisFrame with corr 0.83, slope 0.95; car vs camera p95 6-11 cm, car in world &lt;1 cm).
 /// Single player keeps both on Unity time, so it is client only.
+/// Do not call Brain.ManualUpdate from Late: that double-steps damping when LateUpdate already ran (0.2.8 regression).
 /// </summary>
 internal static class OwnCamera
 {

@@ -33,6 +33,9 @@ internal static class RemoteCarView
         public Vector3 PhysP;
         public Quaternion PhysQ = Quaternion.identity;
         public bool HasPhys;
+        /// <summary>Unity frame when PhysP was last written. Late PreferPhys only if this matches Time.frameCount
+        /// (OTC3 may Drain after PrePhysics — stale PhysP must not win over a newer stream).</summary>
+        public int PhysFrame = -1;
         public bool ServoPending; // PrePhysics set velocities; PostPhysicsStep stores pose after Simulate
         public double PullSince = -1; // proxyPull open timer (AcceptMetricsLogic)
     }
@@ -230,22 +233,46 @@ internal static class RemoteCarView
             return;
         }
 
-        var pb = CarRelay.PlaybackOf(e.Slot);
+        // 0.2.8: one pose per frame — same delay-0 / phys pose as PrePhysics (no 50–250 ms Late overwrite).
+        var pb = CarRelay.PlaybackOf(e.Slot); // drains OTC3 queue — may be newer than PrePhysics
         var fresh = pb.Count > 0 && (now - pb.LastArrivalLocal) <= FreshAgeS;
-        var r = fresh ? pb.SampleAt(now) : default;
-        var stream = fresh && r.Ok && !r.Stale;
-        if (fresh && r.Ok && r.Stale) StaleFrames++;
-        NoteExtrapErr(pb, stream, r);
+        if (pb.ConsumeSnap()) Snaps++;
+
+        StatePlayback.PlaybackResult r = default;
+        Vector3 targetP;
+        Quaternion targetQ;
+        bool stream;
+        var physThisFrame = sl.HasPhys && sl.PhysFrame == Time.frameCount;
+        switch (RemotePoseLogic.Pick(fresh, physThisFrame))
+        {
+            case RemotePoseLogic.Source.Phys:
+                targetP = sl.PhysP;
+                targetQ = sl.PhysQ;
+                stream = true;
+                if (sl.HasSample) r = sl.LastSample;
+                StreamFrames++;
+                break;
+            case RemotePoseLogic.Source.StreamSample:
+                r = pb.SampleAt(now, delayOverride: 0);
+                stream = r.Ok && !r.Stale;
+                if (r.Ok && r.Stale) StaleFrames++;
+                NoteExtrapErr(pb, stream, r);
+                ResolveTarget(root, sl, stream, r, out targetP, out targetQ);
+                break;
+            default:
+                stream = false;
+                ResolveTarget(root, sl, false, default, out targetP, out targetQ);
+                break;
+        }
 
         var src = stream ? Src.Stream : Src.Fusion;
-        ResolveTarget(root, sl, stream, r, out var targetP, out var targetQ);
         BlendFromSource(sl, src, stream, r, targetP, targetQ, dt);
 
         var drawnP = new Vector3(targetP.x + (float)sl.Ox, targetP.y + (float)sl.Oy, targetP.z + (float)sl.Oz);
         var drawnQ = sl.Oq * targetQ;
         if (drawnP.y < targetP.y - 0.3f) RemoteBelow++;
 
-        // Visual root only — kinematic body is owned by PrePhysicsStep (delay 0).
+        // Rewrite root after Fusion NetworkRigidbody.Render (same phys pose — accessories stay on one transform).
         if (stream || Math.Abs(sl.Ox) + Math.Abs(sl.Oy) + Math.Abs(sl.Oz) > 1e-4 || Quaternion.Angle(sl.Oq, Quaternion.identity) > 1e-2f)
             root.SetPositionAndRotation(drawnP, drawnQ);
 
@@ -273,7 +300,6 @@ internal static class RemoteCarView
             targetQ = new Quaternion(r.Qx, r.Qy, r.Qz, r.Qw);
             sl.LastSample = r;
             sl.HasSample = true;
-            if (r.Snap) Snaps++;
             StreamFrames++;
             return;
         }
@@ -281,6 +307,7 @@ internal static class RemoteCarView
         targetQ = root.rotation;
         sl.HasSample = false;
         sl.HasPhys = false;
+        sl.PhysFrame = -1;
         sl.ServoPending = false;
         FusionFrames++;
     }
@@ -320,9 +347,16 @@ internal static class RemoteCarView
             {
                 if (e.IsOwn || e.Rb == null || e.Slot < 0) continue;
                 if (!_slots.TryGetValue(e.Slot, out var sl)) _slots[e.Slot] = sl = new Slot();
-                if (!HasFreshStream(e.Slot, stepEndLocal)) { AbortPull(sl, stepEndLocal); continue; }
+                if (!HasFreshStream(e.Slot, stepEndLocal))
+                {
+                    AbortPull(sl, stepEndLocal);
+                    // 0.2.8: do not keep a stale PhysP — Late PreferPhys would freeze the body while OTC3 moves
+                    // (client saw host accessories jiggle on a parked hull).
+                    sl.HasPhys = false; sl.PhysFrame = -1;
+                    continue;
+                }
                 var r = CarRelay.PlaybackOf(e.Slot).SampleAt(stepEndLocal, delayOverride: 0);
-                if (!r.Ok) { AbortPull(sl, stepEndLocal); continue; }
+                if (!r.Ok) { AbortPull(sl, stepEndLocal); sl.HasPhys = false; sl.PhysFrame = -1; continue; }
                 ApplyProxyBody(e, sl, in r, servo, tau, stepEndLocal);
             }
             catch { }
@@ -352,13 +386,21 @@ internal static class RemoteCarView
             return;
         }
 
+        sl.LastSample = r;
+        sl.HasSample = true;
         if (!servo || e.Rb.isKinematic)
         {
             AbortPull(sl, now); // proxyPull is Servo-only
-            if (!e.Rb.isKinematic) return;
+            // Kinematic policy: Fusion may flip the proxy to dynamic; old code returned here and left HasPhys
+            // stuck on the last Move* pose → Late drew a frozen hull while the stream kept moving.
+            if (!e.Rb.isKinematic)
+            {
+                try { e.Rb.isKinematic = true; }
+                catch { sl.HasPhys = false; sl.PhysFrame = -1; return; }
+            }
             e.Rb.MovePosition(p);
             e.Rb.MoveRotation(q);
-            sl.PhysP = p; sl.PhysQ = q; sl.HasPhys = true;
+            NotePhys(sl, p, q);
             return;
         }
         // Servo: stream velocity + pull; PhysP is captured in PostPhysicsStep after Simulate.
@@ -404,8 +446,14 @@ internal static class RemoteCarView
             rb.rotation = q;
         }
         try { rb.linearVelocity = Vector3.zero; rb.angularVelocity = Vector3.zero; } catch { }
-        sl.PhysP = p; sl.PhysQ = q; sl.HasPhys = true;
+        NotePhys(sl, p, q);
         sl.ServoPending = false;
+        // LastSample already set in ApplyProxyBody before HoldProxyZeroVel.
+    }
+
+    static void NotePhys(Slot sl, Vector3 p, Quaternion q)
+    {
+        sl.PhysP = p; sl.PhysQ = q; sl.HasPhys = true; sl.PhysFrame = Time.frameCount;
     }
 
     /// <summary>After Physics.Simulate: remember dynamic (Servo) body pose so the next step does not rewind it.</summary>
@@ -418,9 +466,7 @@ internal static class RemoteCarView
             {
                 if (e.IsOwn || e.Rb == null || e.Slot < 0) continue;
                 if (!_slots.TryGetValue(e.Slot, out var sl) || !sl.ServoPending) continue;
-                sl.PhysP = e.Rb.position;
-                sl.PhysQ = e.Rb.rotation;
-                sl.HasPhys = true;
+                NotePhys(sl, e.Rb.position, e.Rb.rotation);
                 sl.ServoPending = false;
             }
             catch { }

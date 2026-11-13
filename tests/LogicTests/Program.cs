@@ -681,6 +681,7 @@ static class Program
         WheelSpin();
         UiModal();
         WinchKind();
+        RemotePosePick();
         WinchReleaseClear();
         ParkLogicTests();
         CarWireTests();
@@ -967,6 +968,60 @@ static class Program
         Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.World), "world", "winch: tag world");
         Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.Car, 2), "car:2", "winch: tag car slot");
         Eq(WinchKindLogic.LogTag(WinchKindLogic.Kind.None), "none", "winch: tag none");
+        // 0.2.8 hold: none↔car chatter must not flap for HoldSeconds
+        var st = default(WinchKindLogic.HoldState);
+        var k = WinchKindLogic.Hold(WinchKindLogic.Kind.Car, 1, 1.0, 0.35, ref st, out var slot);
+        Eq(k == WinchKindLogic.Kind.Car && slot == 1, true, "winch-hold: arm car:1");
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.None, -1, 1.10, 0.35, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.Car && slot == 1, true, "winch-hold: keeps car during window");
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.None, -1, 1.40, 0.35, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.None && slot < 0, true, "winch-hold: expires after HoldSeconds");
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.World, -1, 2.0, 0.35, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.World, true, "winch-hold: re-arm world");
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.Car, 3, 2.05, 0.35, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.Car && slot == 3, true, "winch-hold: non-None replaces held");
+        // chatter: None pulses inside the window must not drop HostShared / WantShared
+        st = default;
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.Car, 2, 10.0, 0.35, ref st, out slot);
+        var ic = new InteractionLogic.Cfg();
+        for (var t = 10.05; t < 10.30; t += 0.05)
+        {
+            k = WinchKindLogic.Hold(WinchKindLogic.Kind.None, -1, t, 0.35, ref st, out slot);
+            Eq(k == WinchKindLogic.Kind.Car && slot == 2, true, $"winch-hold: chatter keep at t={t:F2}");
+            Eq(InteractionLogic.WantShared(false, false, k, WinchKindLogic.Kind.None, ic), true,
+                $"winch-hold: WantShared stable at t={t:F2}");
+        }
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.Car, 2, 10.15, 0.35, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.Car && slot == 2, true, "winch-hold: re-arm extends Until");
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.None, -1, 10.45, 0.35, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.Car, true, "winch-hold: still held after extend");
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.None, -1, 10.55, 0.35, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.None, true, "winch-hold: expires after extended window");
+        // boundary: now == Until drops (strict <)
+        st = default;
+        WinchKindLogic.Hold(WinchKindLogic.Kind.World, -1, 1.0, 0.35, ref st, out _);
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.None, -1, 1.35, 0.35, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.None && slot < 0, true, "winch-hold: now==Until expires");
+        // holdS<=0: next None clears immediately
+        st = default;
+        WinchKindLogic.Hold(WinchKindLogic.Kind.Car, 1, 1.0, 0, ref st, out _);
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.None, -1, 1.0, 0, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.None && slot < 0, true, "winch-hold: holdS=0 no linger");
+        // world→None→expire, slot stays -1 while held
+        st = default;
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.World, -1, 5.0, 0.35, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.World && slot < 0, true, "winch-hold: world slot -1");
+        k = WinchKindLogic.Hold(WinchKindLogic.Kind.None, -1, 5.1, 0.35, ref st, out slot);
+        Eq(k == WinchKindLogic.Kind.World && slot < 0, true, "winch-hold: world held");
+    }
+
+    // ---------- 0.2.8 client Late: one pose (phys over delayed SampleAt) ----------
+    static void RemotePosePick()
+    {
+        Eq(RemotePoseLogic.Pick(false, false), RemotePoseLogic.Source.Fusion, "pose-pick: stale -> Fusion");
+        Eq(RemotePoseLogic.Pick(false, true), RemotePoseLogic.Source.Fusion, "pose-pick: stale ignores phys-this-frame");
+        Eq(RemotePoseLogic.Pick(true, true), RemotePoseLogic.Source.Phys, "pose-pick: fresh+phys-this-frame -> Phys");
+        Eq(RemotePoseLogic.Pick(true, false), RemotePoseLogic.Source.StreamSample, "pose-pick: fresh no phys-this-frame -> SampleAt0");
     }
 
     // ---------- 0.2.5.4 clear networked WinchPointsDisabled after detach ----------
@@ -1317,6 +1372,18 @@ static class Program
         var stale = pb.SampleAt(2.05 + 0.30);
         Eq(stale.Ok && stale.Stale, true, "stream: Stale after MaxExtrap");
         Eq(stale.Vx == 0 && stale.Vy == 0 && stale.Vz == 0, true, "stream: Stale freezes linear vel");
+        // 0.2.8 ConsumeSnap: client Late uses phys pose and must clear pending without SampleAt(now)
+        Eq(pb.ConsumeSnap(), false, "stream: ConsumeSnap empty is false");
+        pb.Push(Mk(3, 3.0, 20, 0, 10, 0, epoch: 3), 3.05);
+        Eq(pb.SampleAt(3.05, delayOverride: 0).Snap, true, "stream: phys SampleAt sees Snap");
+        Eq(pb.SampleAt(3.05, delayOverride: 0).Snap, true, "stream: phys SampleAt does not consume");
+        Eq(pb.ConsumeSnap(), true, "stream: ConsumeSnap clears without render SampleAt");
+        Eq(pb.ConsumeSnap(), false, "stream: ConsumeSnap idempotent");
+        Eq(pb.SampleAt(3.06).Snap, false, "stream: no Snap after ConsumeSnap");
+        // epoch again: ConsumeSnap alone (DrawOne path when HasPhys) clears pending
+        pb.Push(Mk(4, 4.0, 21, 0, 10, 0, epoch: 4), 4.05);
+        Eq(pb.ConsumeSnap(), true, "stream: ConsumeSnap alone clears new epoch");
+        Eq(pb.SampleAt(4.06).Snap, false, "stream: render after ConsumeSnap alone has no Snap");
         // 30% loss uniform stream: no huge jumps when sampling mid-gap
         pb = new StatePlayback(new StatePlayback.Cfg { MinDelayS = 0.05, MaxDelayS = 0.1, DelayEwma = 0.5, SendHz = 30, MaxExtrapS = 0.25 });
         double t = 0; float x = 0; var rng = new Random(42);
@@ -1820,6 +1887,23 @@ static class Program
         Eq(VehicleLightLogic.WantBrake(0.11f), true, "lights: brake above min");
         Eq(VehicleLightLogic.WantBrake(0.1f), false, "lights: brake at min not over");
         Eq(VehicleLightLogic.WantBrake(0.05f), false, "lights: brake was Fusion-only 0.05 — now unified 0.1");
+        // 0.2.8 latch: micro pulses must not arm; real press arms after EnterSeconds
+        Eq(VehicleLightLogic.WantBrake(0.20f, false), false, "lights: level hyst off at 0.20 < OnMin");
+        Eq(VehicleLightLogic.WantBrake(0.40f, false), true, "lights: level hyst enters above OnMin");
+        Eq(VehicleLightLogic.WantBrake(0.20f, true), true, "lights: level hyst stays on at 0.20");
+        Eq(VehicleLightLogic.WantBrake(0.05f, true), false, "lights: level hyst leaves below OffMax");
+        var until = 0.0; var above = 0.0;
+        Eq(VehicleLightLogic.WantBrakeLatched(0.50f, false, 1.00, ref above, ref until), false, "lights: latch arming");
+        Eq(VehicleLightLogic.WantBrakeLatched(0.50f, false, 1.09, ref above, ref until), true, "lights: latch enters");
+        Eq(VehicleLightLogic.WantBrakeLatched(0.00f, true, 1.10, ref above, ref until), true, "lights: latch hold");
+        Eq(VehicleLightLogic.WantBrakeLatched(0.00f, true, 1.50, ref above, ref until), false, "lights: latch expires");
+        above = 0; until = 0;
+        Eq(VehicleLightLogic.WantBrakeLatched(0.50f, false, 2.00, ref above, ref until), false, "lights: spike start");
+        Eq(VehicleLightLogic.WantBrakeLatched(0.00f, false, 2.02, ref above, ref until), false, "lights: spike ignored");
+        until = 0;
+        Eq(VehicleLightLogic.HoldSignal(true, 1.0, 0.35, ref until), true, "lights: hold arms");
+        Eq(VehicleLightLogic.HoldSignal(false, 1.20, 0.35, ref until), true, "lights: hold keeps");
+        Eq(VehicleLightLogic.HoldSignal(false, 1.40, 0.35, ref until), false, "lights: hold expires");
         Eq(VehicleLightLogic.HeadlightModeFromFlags(0), VehicleLightLogic.HeadlightMode.Off, "lights: flags empty => Off");
         Eq(VehicleLightLogic.HeadlightModeFromFlags(CarWire.FlagHeadlights), VehicleLightLogic.HeadlightMode.Low, "lights: FlagHeadlights alone => Low (old peer)");
         Eq(VehicleLightLogic.HeadlightModeFromFlags((byte)(CarWire.FlagHeadlights | CarWire.FlagHeadlightsHigh)), VehicleLightLogic.HeadlightMode.High, "lights: both bits => High");

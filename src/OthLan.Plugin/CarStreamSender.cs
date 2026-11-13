@@ -32,6 +32,8 @@ internal static class CarStreamSender
     static readonly bool[] _restPosOk = new bool[CarWire.MaxWheels];
     static readonly float[] _rollDeg = new float[CarWire.MaxWheels];
     static double _lastSampleT = -1;
+    static bool _brakeLit;
+    static double _brakeAboveSince, _brakeLitUntil; // VehicleLightLogic.WantBrakeLatched
     public static int SuspFromTransform, WheelsIntegrated;
 
     public static void Reset()
@@ -39,6 +41,7 @@ internal static class CarStreamSender
         _histN = 0; _seq = 0; _epoch = 0; _nextSend = 0; _hasLastP = false; Sent = EpochBumps = 0;
         LastSeq = 0; LastPx = LastPy = LastPz = 0; HasLastSample = false;
         _wheels = Array.Empty<WheelTransformUpdater>(); _wheelFp = IntPtr.Zero; _lastSampleT = -1;
+        _brakeLit = false; _brakeAboveSince = 0; _brakeLitUntil = 0;
         SuspFromTransform = WheelsIntegrated = 0;
         for (var i = 0; i < CarWire.MaxWheels; i++) { _restPosOk[i] = false; _rollDeg[i] = 0; }
         SyncProbe.Reset();
@@ -112,7 +115,9 @@ internal static class CarStreamSender
                 var inp = fp.CurrentFrameInput;
                 steer = inp.Steering * 45f;
                 throttle = inp.Throttle;
-                if (VehicleLightLogic.WantBrake(inp.Brake)) flags |= CarWire.FlagBrake;
+                _brakeLit = VehicleLightLogic.WantBrakeLatched(inp.Brake, _brakeLit, NetClock.Now,
+                    ref _brakeAboveSince, ref _brakeLitUntil);
+                if (_brakeLit) flags |= CarWire.FlagBrake;
                 var headMode = VehicleLightsApi.SampleOwnerMode(fp);
                 flags = VehicleLightLogic.WithHeadlightMode(flags, headMode);
                 try

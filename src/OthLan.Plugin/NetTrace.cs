@@ -38,13 +38,18 @@ internal static class NetTrace
         try
         {
             Directory.CreateDirectory(Autopilot.OutDir);
-            _remote = new StreamWriter(Path.Combine(Autopilot.OutDir, $"{Autopilot.Tag}-remote.csv"), false, new UTF8Encoding(false));
+            static StreamWriter Open(string path)
+            {
+                var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+                return new StreamWriter(fs, new UTF8Encoding(false));
+            }
+            _remote = Open(Path.Combine(Autopilot.OutDir, $"{Autopilot.Tag}-remote.csv"));
             _remote.WriteLine("rt,frame,dt,car,dx,dy,dz,bx,by,bz,hitch,speed,smooth,offX,offY,offZ,snapAge,serverTick,tick,remoteRT,alpha");
-            _follow = new StreamWriter(Path.Combine(Autopilot.OutDir, $"{Autopilot.Tag}-follow.csv"), false, new UTF8Encoding(false));
+            _follow = Open(Path.Combine(Autopilot.OutDir, $"{Autopilot.Tag}-follow.csv"));
             _follow.WriteLine("rt,frame,dt,slot,preX,preY,preZ,tgX,tgY,tgZ,err,errDeg,age,gap,contact,action,postX,postY,postZ,vx,vy,vz,cvx,cvy,cvz");
-            _own = new StreamWriter(Path.Combine(Autopilot.OutDir, $"{Autopilot.Tag}-own.csv"), false, new UTF8Encoding(false));
+            _own = Open(Path.Combine(Autopilot.OutDir, $"{Autopilot.Tag}-own.csv"));
             _own.WriteLine("rt,frame,kind,tick,capTick,n,serverTick,renderTime,x,y,z,rbx,rby,rbz,vx,vy,vz,a,b");
-            _view = new StreamWriter(Path.Combine(Autopilot.OutDir, $"{Autopilot.Tag}-view.csv"), false, new UTF8Encoding(false));
+            _view = Open(Path.Combine(Autopilot.OutDir, $"{Autopilot.Tag}-view.csv"));
             _view.WriteLine("rt,frame,dt,x,y,z,qx,qy,qz,qw,cx,cy,cz,cqx,cqy,cqz,cqw,resets,restores");
         }
         catch (Exception e) { Plugin.L.LogWarning($"[NetTrace] {e.Message}"); _remote = _follow = null; }

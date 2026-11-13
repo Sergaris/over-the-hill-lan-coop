@@ -74,7 +74,19 @@ internal static unsafe class OwnRender
         else Forget();
     }
 
-    public static void Forget() { OwnNrb = IntPtr.Zero; _lastTick = int.MinValue; _hasShown = false; _wasFrozen = false; _applied = false; _carryP = Vector3.zero; _carryQ = Quaternion.identity; _frame = -1; }
+    /// <summary>Detach from the own NRB (car lost / role off). Clears the pointer so Apply stops.</summary>
+    public static void Forget() { OwnNrb = IntPtr.Zero; ResetVisual(); }
+
+    /// <summary>
+    /// 0.2.8: drop freeze-smooth carry without clearing <see cref="OwnNrb"/>.
+    /// HostShared enter/exit used to call <see cref="Forget"/> and leave OwnNrb=0 for the rest of the session
+    /// (own-car on-screen hitch up to ~2 m in the 26489201 loopback diag while sim stayed &lt;1 m).
+    /// </summary>
+    public static void ResetVisual()
+    {
+        _lastTick = int.MinValue; _hasShown = false; _wasFrozen = false; _applied = false;
+        _carryP = Vector3.zero; _carryQ = Quaternion.identity; _frame = -1;
+    }
 
     /// <summary>OwnCar (any tick of the own car / prediction reset): physics must never see a drawn pose.</summary>
     public static void BeforeSim(Transform root, Rigidbody rb)

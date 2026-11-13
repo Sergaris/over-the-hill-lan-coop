@@ -29,6 +29,7 @@
     <Compile Include="../../src/OthLan.Plugin/UiModalLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/CoopSessionLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/WinchKindLogic.cs" />
+    <Compile Include="../../src/OthLan.Plugin/RemotePoseLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/WinchReleaseLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/ParkLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/CarWire.cs" />

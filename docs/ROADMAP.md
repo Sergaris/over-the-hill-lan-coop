@@ -5,6 +5,7 @@ Thresholds below are **[estimate]** unless stated otherwise.
 
 ## Status
 
+- **0.2.8** — Steam build 26489201 Supported; smoother remote cars and winch; host brake lights no longer flicker; camera stays steady.
 - **0.2.7** — client: own-car re-simulation skipped when its result is discarded anyway (about 35–40% cheaper at high ping); follow camera on the car's draw clock (no shake on uneven frames).
 - **0.2.6.3** — installer: verified BepInEx payload (0.2.6.1/0.2.6.2 embedded a truncated zip).
 - **0.2.6.2** — remote headlights Off/Low/High on Steam build 26326013; single Continue/Disable dialog.

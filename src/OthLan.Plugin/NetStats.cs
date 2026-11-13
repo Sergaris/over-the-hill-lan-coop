@@ -285,7 +285,7 @@ internal static class NetStats
             $"[NetStats] ({why}) {Describe()} | {FrameDescribe()} | {FrameCost.Describe()} | {CarRelay.Describe()}" +
             $" | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()}" +
             $" | winΔ localSteps={dLocal} restores={dRest} cheap={dCheap} cheapPrev={dCheapPrev} stepDenied={dDenied} resets={dResets}" +
-            $" | {RemoteSmooth.Describe()} | {RemoteWheelVisuals.Describe()} | {OwnCar.Describe()} | {OwnResim.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()} | {OwnCamera.Describe()}");
+            $" | {RemoteSmooth.Describe()} | {RemoteWheelVisuals.Describe()} | {OwnCar.Describe()} | {OwnResim.Describe()} | {WinchResim.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()} | {OwnCamera.Describe()}");
         FramesOver25ms = FramesOver50ms = 0; RemoteBelow = 0;
         RemoteCarView.StreamFrames = RemoteCarView.FusionFrames = RemoteCarView.Snaps = RemoteCarView.StaleFrames = RemoteCarView.ExtrapolatedFrames = RemoteCarView.SourceSwitches = RemoteCarView.RemoteBelow = 0;
         RemoteCarView.ClearAcceptWindow();

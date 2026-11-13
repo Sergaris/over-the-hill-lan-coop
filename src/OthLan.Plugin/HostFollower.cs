@@ -116,6 +116,7 @@ internal static class HostFollower
         _out.Clear();
         _mode.Clear(); _lastCheckpoint.Clear(); _softUntil.Clear(); _lastContact.Clear(); _lastHost.Clear();
         _selfMoveUntil.Clear(); _jumpHoldUntil.Clear(); HostStats.Clear(); Metrics.Clear(); LastAction.Clear(); _winchTags.Clear();
+        _winchHold.Clear();
     }
     static readonly Dictionary<int, string> _winchTags = new();
 
@@ -140,6 +141,9 @@ internal static class HostFollower
 
     public static bool WinchInvolved(FusionPlayer car, PlayerRef pref) => WinchKindOf(car, pref) != WinchKindLogic.Kind.None;
 
+    // 0.2.8: per-car hold of Classify (sensor chatter none↔car must not flap HostShared / flags).
+    static readonly System.Collections.Generic.Dictionary<int, WinchKindLogic.HoldState> _winchHold = new();
+
     public static WinchKindLogic.Kind WinchKindOf(FusionPlayer car, PlayerRef pref, out int otherSlot)
     {
         otherSlot = -1;
@@ -147,6 +151,7 @@ internal static class HostFollower
         {
             var ws = _winches; var ps = _players;
             bool ownRope = false, ownToPlayer = false, towed = false;
+            var rawSlot = -1;
             for (int i = 0; i < ps.Length && i < ws.Length; i++)
             {
                 var w = ws[i]; if (w == null || ps[i] == null) continue;
@@ -157,17 +162,30 @@ internal static class HostFollower
                     try
                     {
                         var wr = w.WinchedCarPlayerRef;
-                        if (wr.IsRealPlayer) { ownToPlayer = true; otherSlot = wr.PlayerId; }
+                        if (wr.IsRealPlayer) { ownToPlayer = true; rawSlot = wr.PlayerId; }
                     }
                     catch { }
                 }
-                else if (w.WinchedCarPlayerRef == pref)
+                else
                 {
-                    towed = true;
-                    try { otherSlot = ps[i].Object != null ? ps[i].Object.InputAuthority.PlayerId : i; } catch { otherSlot = i; }
+                    // Do not let a bad WinchedCarPlayerRef wipe an already-found ownRope/towed.
+                    try
+                    {
+                        if (w.WinchedCarPlayerRef == pref)
+                        {
+                            towed = true;
+                            try { rawSlot = ps[i].Object != null ? ps[i].Object.InputAuthority.PlayerId : i; } catch { rawSlot = i; }
+                        }
+                    }
+                    catch { }
                 }
             }
-            return WinchKindLogic.Classify(ownRope, ownToPlayer, towed);
+            var raw = WinchKindLogic.Classify(ownRope, ownToPlayer, towed);
+            var id = car != null ? car.GetInstanceID() : 0;
+            if (!_winchHold.TryGetValue(id, out var held)) held = default;
+            var kind = WinchKindLogic.Hold(raw, rawSlot, NetClock.Now, WinchKindLogic.HoldSeconds, ref held, out otherSlot);
+            _winchHold[id] = held;
+            return kind;
         }
         catch { }
         return WinchKindLogic.Kind.None;

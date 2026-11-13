@@ -1,27 +1,44 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
+using System.Threading;
 
 namespace OthLan;
 
 /// <summary>
 /// 0.2.0 T3.3: host OTC3 relay + per-slot StatePlayback for HostFollower / observers.
+/// 0.2.8: network threads only enqueue; <see cref="StatePlayback.Push"/> runs on the main thread via
+/// <see cref="PlaybackOf"/> / <see cref="InjectHost"/> drain (arrival time still from receive).
 /// </summary>
 internal static class CarRelay
 {
+    struct Incoming
+    {
+        public int Slot;
+        public CarWire.CarStatePacket Pkt;
+        public double Arrival;
+    }
+
     static readonly Dictionary<int, StatePlayback> _play = new();
     static readonly object _lock = new();
-    public static int Accepted, Relayed, Dropped, Injected;
-    public static string Describe() => $"relay accept={Accepted} relayed={Relayed} drop={Dropped} inject={Injected}";
+    static readonly ConcurrentQueue<Incoming> _incoming = new();
+    static int _draining;
+    public static int Accepted, Relayed, Dropped, Injected, Drained;
+    public static string Describe() =>
+        $"relay accept={Accepted} relayed={Relayed} drop={Dropped} inject={Injected} drained={Drained}";
 
     public static void Reset()
     {
-        lock (_lock) { _play.Clear(); Accepted = Relayed = Dropped = Injected = 0; }
+        while (_incoming.TryDequeue(out _)) { }
+        lock (_lock) { _play.Clear(); Accepted = Relayed = Dropped = Injected = Drained = 0; }
         SyncProbe.Reset();
     }
 
+    /// <summary>Main-thread entry: drain network queue, then return (or create) the slot buffer.</summary>
     public static StatePlayback PlaybackOf(int slot)
     {
+        Drain();
         lock (_lock)
         {
             if (!_play.TryGetValue(slot, out var pb)) _play[slot] = pb = new StatePlayback();
@@ -42,7 +59,7 @@ internal static class CarRelay
         var dec = RelayLogic.Filter(slot, ep != null, ep != null && EndpointsEqual(ep, from));
         if (dec != RelayLogic.Decision.Accept) { Dropped++; return; }
         Accepted++;
-        PushPlayback(slot, pkt, arrivalLocal);
+        Enqueue(slot, in pkt, arrivalLocal);
         HostPings.BroadcastExcept(d, len, from);
         Relayed++;
     }
@@ -53,7 +70,8 @@ internal static class CarRelay
         if (!Enabled) return;
         Injected++;
         var slot = pkt.Slot;
-        PushPlayback(slot, pkt, NetClock.Now);
+        Enqueue(slot, in pkt, NetClock.Now);
+        Drain();
         var buf = new byte[CarWire.MaxPacketBytes];
         var n = CarWire.Encode(pkt, buf);
         if (n > 0) HostPings.Broadcast(Trim(buf, n));
@@ -66,12 +84,33 @@ internal static class CarRelay
         if (d == null || len < CarWire.HeaderSize) return;
         if (!CarWire.TryDecode(d.AsSpan(0, len), out var pkt)) return;
         if (OwnCar.OwnSlot >= 0 && pkt.Slot == OwnCar.OwnSlot) return;
-        PushPlayback(pkt.Slot, pkt, arrivalLocal);
+        Enqueue(pkt.Slot, in pkt, arrivalLocal);
+    }
+
+    static void Enqueue(int slot, in CarWire.CarStatePacket pkt, double arrivalLocal)
+        => _incoming.Enqueue(new Incoming { Slot = slot, Pkt = pkt, Arrival = arrivalLocal });
+
+    static void Drain()
+    {
+        if (Interlocked.CompareExchange(ref _draining, 1, 0) != 0) return;
+        try
+        {
+            while (_incoming.TryDequeue(out var x))
+            {
+                PushPlayback(x.Slot, in x.Pkt, x.Arrival);
+                Drained++;
+            }
+        }
+        finally { Interlocked.Exchange(ref _draining, 0); }
     }
 
     static void PushPlayback(int slot, in CarWire.CarStatePacket pkt, double arrivalLocal)
     {
-        var pb = PlaybackOf(slot);
+        StatePlayback pb;
+        lock (_lock)
+        {
+            if (!_play.TryGetValue(slot, out pb)) _play[slot] = pb = new StatePlayback();
+        }
         for (var i = 0; i < pkt.Count; i++)
         {
             var s = pkt.StateAt(i);

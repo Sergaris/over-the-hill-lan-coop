@@ -41,7 +41,7 @@ tmp = dest + ".partial"
 try:
     if os.path.exists(tmp):
         os.remove(tmp)
-    req = urllib.request.Request(url, headers={"User-Agent": "OTH-LAN-ensure-third-party/0.2.7"})
+    req = urllib.request.Request(url, headers={"User-Agent": "OTH-LAN-ensure-third-party/0.2.8"})
     with urllib.request.urlopen(req, timeout=300) as r, open(tmp, "wb") as out:
         while True:
             chunk = r.read(1024 * 1024)

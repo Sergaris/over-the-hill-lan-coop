@@ -28,6 +28,8 @@ internal static class RemoteWheelVisuals
         public Vector3 LastPos;
         public bool HasPos;
         public bool Lit;
+        public double BrakeLitUntil, RevLitUntil; // VehicleLightLogic.HoldSignal for stream/Fusion flags
+        public bool BrakeWasOn; // Fusion WantBrake hysteresis latch
         public long AppliedLiveryId = long.MinValue;
         public int AppliedLiverySub = int.MinValue;
         public bool WtuDisabled;
@@ -188,7 +190,12 @@ internal static class RemoteWheelVisuals
         if (c.Lights == null || c.Lights.WasCollected) return;
         var wantMode = VehicleLightLogic.HeadlightModeFromFlags(flags);
         ApplyWantMode(c, wantMode);
-        TryBrakeReverse(c.Lights, (flags & CarWire.FlagBrake) != 0, (flags & CarWire.FlagReverse) != 0);
+        var now = NetClock.Now;
+        var brake = VehicleLightLogic.HoldSignal((flags & CarWire.FlagBrake) != 0, now,
+            VehicleLightLogic.BrakeHoldSeconds, ref c.BrakeLitUntil);
+        var rev = VehicleLightLogic.HoldSignal((flags & CarWire.FlagReverse) != 0, now,
+            VehicleLightLogic.BrakeHoldSeconds, ref c.RevLitUntil);
+        TryBrakeReverse(c.Lights, brake, rev);
     }
 
     static void ApplyLightsFusion(FusionPlayer fp, Car c)
@@ -198,9 +205,14 @@ internal static class RemoteWheelVisuals
         var wantMode = VehicleLightsApi.ResolveModeFromPlayer(fp);
         ApplyWantMode(c, wantMode);
         var inp = fp.CurrentFrameInput;
-        var wantBrake = VehicleLightLogic.WantBrake(inp.Brake);
+        c.BrakeWasOn = VehicleLightLogic.WantBrake(inp.Brake, c.BrakeWasOn);
+        var now = NetClock.Now;
+        var wantBrake = VehicleLightLogic.HoldSignal(c.BrakeWasOn, now,
+            VehicleLightLogic.BrakeHoldSeconds, ref c.BrakeLitUntil);
         var speed = ForwardSpeedMs(fp, c, 0f);
-        var reverse = VehicleLightLogic.WantReverse(speed, inp.Throttle);
+        var reverse = VehicleLightLogic.HoldSignal(
+            VehicleLightLogic.WantReverse(speed, inp.Throttle), now,
+            VehicleLightLogic.BrakeHoldSeconds, ref c.RevLitUntil);
         TryBrakeReverse(c.Lights, wantBrake, reverse);
     }
 
@@ -238,8 +250,9 @@ internal static class RemoteWheelVisuals
     {
         try
         {
-            if (lc.AreBrakingLightsOn != wantBrake) lc.AreBrakingLightsOn = wantBrake;
-            if (lc.AreReverseLightsOn != wantRev) lc.AreReverseLightsOn = wantRev;
+            // Always write: VPVisualEffects / networked input may clear the flags between LateUpdates.
+            lc.AreBrakingLightsOn = wantBrake;
+            lc.AreReverseLightsOn = wantRev;
         }
         catch (MissingMethodException e)
         {

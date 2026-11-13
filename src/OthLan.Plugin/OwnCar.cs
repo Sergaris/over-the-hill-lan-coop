@@ -104,6 +104,8 @@ internal static unsafe class OwnCar
     public static int CheapSkips;   // AfterResim cleared capture without full Restore (err within noise)
     /// <summary>0.2.6: ticks argument of the last RunClientSideResimulationLoop (-1 if none).</summary>
     public static int LastResimTicks = -1;
+    /// <summary>0.2.8: true while <see cref="ResimDetour"/> is inside the original resim loop (WinchResim skips FUN).</summary>
+    public static bool InClientResim;
     /// <summary>0.2.6: Previous restored on a cheap skip (without VPP RestoreSnapshot).</summary>
     public static int CheapPrevRestores;
     const string K_Br = "FusionPlayer::BeforeClientPredictionReset()";
@@ -324,10 +326,15 @@ internal static unsafe class OwnCar
         catch (Exception e) { if (OwnResim.Loops == 0) Plugin.L.LogWarning($"[OwnResim] {e.Message}"); }
         try
         {
+            InClientResim = true;
             using (FrameCost.Measure(FrameCost.Resim))
                 _rsOrig(self, ticks, mi);
         }
-        finally { if (empty) OwnResim.End(); }
+        finally
+        {
+            InClientResim = false;
+            if (empty) OwnResim.End();
+        }
         if (NetTrace.On && _runner != null && _rb != null) NetTrace.Own("S", _runner.Tick.Raw, _capTick, ticks, SrvTick(), RenderT(), _rb.position, _rb.position, _rb.linearVelocity, t0, _captured ? 1 : 0);
         try { if (_captured && _rb != null && _runner != null) { ResimRestores++; AfterResim(empty, hostErr, hostDeg); } }
         catch (Exception e) { _captured = false; Plugin.L.LogWarning($"[OwnCar] after resim: {e.Message}"); }
@@ -556,12 +563,13 @@ internal static unsafe class OwnCar
         if (InteractionSuspended && !was)
         {
             Suspends++;
-            try { OwnLocal.RestoreSkip(); OwnLocal.Forget(); OwnRender.Forget(); } catch { }
+            // Reset visual carry / local clock; keep OwnNrb so freeze-smooth + camera clock stay hooked.
+            try { OwnLocal.RestoreSkip(); OwnLocal.Forget(); OwnRender.ResetVisual(); } catch { }
             Plugin.L.LogInfo($"[OwnCar] HostShared (winch={winchTag} contact={localC}/{CarSync.HostSuspendContact})");
         }
         else if (!InteractionSuspended && was)
         {
-            try { OwnLocal.Forget(); OwnRender.Forget(); } catch { }
+            try { OwnLocal.Forget(); OwnRender.ResetVisual(); } catch { }
             Plugin.L.LogInfo("[OwnCar] Owner mode after HostShared");
         }
     }

@@ -2,6 +2,25 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.8
+
+Both players need 0.2.8. From 0.1.8.1+ the in-game updater offers this release.
+
+- Works with the latest Steam game update (13 Nov 2026).
+- After winch, your own car no longer jumps or hitch on screen.
+- Other players' cars look smoother: the body no longer freezes while accessories keep moving.
+- Host brake lights no longer flicker when coasting.
+- Camera stays steady (same as 0.2.7).
+
+## 0.2.8 — изменения
+
+У обоих игроков должна быть 0.2.8. С 0.1.8.1+ обновление предложит меню.
+
+- Работает с последним обновлением игры в Steam (13.11.2026).
+- После лебёдки своя машина больше не дёргается и не прыгает на экране.
+- Чужие машины выглядят ровнее: кузов больше не «замирает», пока аксессуары продолжают двигаться.
+- Стоп-сигналы хоста больше не мерцают накатом.
+- Камера остаётся стабильной (как в 0.2.7).
 ## 0.2.7
 
 Both players need 0.2.7. From 0.1.8.1+ the in-game updater offers this release.

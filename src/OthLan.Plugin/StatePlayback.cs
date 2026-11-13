@@ -82,6 +82,14 @@ public sealed class StatePlayback
     public double DelayS => _delay;
     public double OffsetS => double.IsNaN(_off) ? 0 : _off;
 
+    /// <summary>0.2.8: clear pending epoch snap without sampling (client Late uses phys pose; must not leave Snap stuck).</summary>
+    public bool ConsumeSnap()
+    {
+        if (!_pendingSnap) return false;
+        _pendingSnap = false;
+        return true;
+    }
+
     /// <summary>Newest buffered sample (no Hermite / extrap). For §5.2 extrapErr vs SampleAt.</summary>
     public bool TryNewest(out Sample s)
     {

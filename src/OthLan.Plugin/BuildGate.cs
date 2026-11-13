@@ -136,6 +136,7 @@ internal static unsafe class BuildGate
         try { OwnCar.Install(); } catch (Exception e) { Plugin.L.LogError($"[OwnCar] install: {e}"); }
         try { OwnRender.Install(); } catch (Exception e) { Plugin.L.LogError($"[OwnRender] install: {e}"); }
         try { OwnResim.Install(); } catch (Exception e) { Plugin.L.LogError($"[OwnResim] install: {e}"); }
+        try { WinchResim.Install(); } catch (Exception e) { Plugin.L.LogError($"[WinchResim] install: {e}"); }
     }
 
     /// <summary>The dialog's buttons (and F7's "enable anyway"). Persists the answer for this GameAssembly hash.</summary>

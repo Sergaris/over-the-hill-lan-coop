@@ -163,6 +163,14 @@ internal static unsafe class Autopilot
         Active = true;
         var ci = CultureInfo.InvariantCulture;
         Tag = Arg("--othlan-tag") ?? Tag;
+        // Two instances with --othlan-auto and default tag "solo" both open selftest/solo-metrics.csv exclusively →
+        // the second Load() died (no Overlay / Local Co-op). Derive a tag from mode when the caller left the default.
+        if (Tag == "solo")
+        {
+            if (Mode.Equals("host", StringComparison.OrdinalIgnoreCase)) Tag = "host";
+            else if (Mode.StartsWith("join", StringComparison.OrdinalIgnoreCase)) Tag = "client";
+            else Tag = Mode.Replace(':', '_').Replace('.', '_');
+        }
         OutDir = Arg("--othlan-out") ?? Path.Combine(BepInEx.Paths.BepInExRootPath, "selftest");
         Area = Arg("--othlan-area") ?? Area;
         if (Arg("--othlan-delay") is { } d) Delay = float.Parse(d, ci);
@@ -247,13 +255,20 @@ internal static unsafe class Autopilot
             foreach (var part in sh.Split(',', StringSplitOptions.RemoveEmptyEntries)) Shots.Add(float.Parse(part, ci));
         Shots.Sort(); Netem.Sort((a, b) => a.t.CompareTo(b.t));
         Directory.CreateDirectory(OutDir);
-        _log = new StreamWriter(Path.Combine(OutDir, $"{Tag}-metrics.csv"), false, new UTF8Encoding(false)) { AutoFlush = true };
+        _log = OpenCsv(Path.Combine(OutDir, $"{Tag}-metrics.csv"));
         _log.WriteLine("t,csLocal,csHostFlag,csEnabled,csApply,posesSent,posesRecv,posesRejected,teleportsIgnored,cfgEnabled,role,label,level,anchor,lx,ly,lw,lh,ix,iy,iw,ih,iconActive,screenW,screenH,echoMs,timedOut,loss,fusionRtt,netemRtt,netemLoss,carX,carY,carZ,speedKmh,driving,csSlot,csMode,csRtt,csErrM,csErrDeg,csPoseAge,snaps,blends,switches,hostPingsEchoed,softSnaps,cpSkipped,contactPauses,lastAction,contactBox,winchPauses,hostJumps");
-        _trace = new StreamWriter(Path.Combine(OutDir, $"{Tag}-trace.csv"), false, new UTF8Encoding(false));
+        _trace = OpenCsv(Path.Combine(OutDir, $"{Tag}-trace.csv"));
         _trace.WriteLine("t,rt,outage,role,running,tick,players,ownX,ownY,ownZ,ownKmh,ownState,resets,restores,accepts,lastErr,lastErrDeg,echoMs,timedOut,label,carsyncEnabled,hostFlag," +
                          "rSlot,rX,rY,rZ,rKmh,rSteer,rThrottle,rBrake,rInTick,csMode,csErr,csAction,snaps,blends,droppedOut,droppedIn");
         Plugin.L.LogWarning($"[Autopilot] ACTIVE tag={Tag} mode={Mode} out={OutDir} drive={DriveS}s quit={QuitS}s carsync={CarSyncMode ?? "config"} netem={Netem.Count} steps shots={Shots.Count}");
         try { InstallHooks(); } catch (Exception e) { Plugin.L.LogError($"[Autopilot] hooks failed (saves NOT suppressed -> aborting autopilot): {e}"); Active = false; Mode = null; }
+    }
+
+    /// <summary>Truncate + write, but allow another process to open the same path (loopback host+client).</summary>
+    static StreamWriter OpenCsv(string path)
+    {
+        var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+        return new StreamWriter(fs, new UTF8Encoding(false)) { AutoFlush = true };
     }
 
     // ---------------- hooks (dev only) ----------------

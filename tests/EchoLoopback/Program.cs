@@ -10,7 +10,7 @@ namespace OthLan
     class Cfg<T> { public T Value; }
     static class Plugin
     {
-        public const string Version = "0.2.7";
+        public const string Version = "0.2.8";
         public static Cfg<int> Port = new() { Value = 27315 };
         public static Cfg<string> ClientId = new() { Value = "echotest" };
         public static Cfg<int> PlayerCount = new() { Value = 4 };
@@ -21,8 +21,8 @@ namespace OthLan
             public static void LogError(string s) => Console.WriteLine(s);
         }
     }
-    static class BuildLock { public static string CurrentBuildId = "26136884"; }
-    static class BuildGate { public static string BuildKey = "26136884"; public static string GaHash = ""; }
+    static class BuildLock { public static string CurrentBuildId = "26489201"; }
+    static class BuildGate { public static string BuildKey = "26489201"; public static string GaHash = ""; }
     static class OutageSim
     {
         public const bool Active = false;

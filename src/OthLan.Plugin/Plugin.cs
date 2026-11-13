@@ -12,7 +12,7 @@ public partial class Plugin : BasePlugin
 {
     public const string Guid = "dev.othlan.lan";
     public const string Name = "OTH-LAN";
-    public const string Version = "0.2.7";
+    public const string Version = "0.2.8";
 
     internal static ManualLogSource L;
 
@@ -30,7 +30,10 @@ public partial class Plugin : BasePlugin
         Config.SettingChanged += OnConfigChanged;
         try { LangWatch.Init(); } catch (Exception e) { L.LogWarning($"[Lang] init: {e.Message}"); }
         BuildGate.Run();     // tiers: supported / unverified (one-time warning) / incompatible; applies the detours if allowed
-        Autopilot.Init();    // dev self-test; inert without --othlan-auto on the command line (compiled out of public builds)
+        // Autopilot must never abort the plugin: two loopback instances used to race on selftest/solo-metrics.csv and
+        // throw IOException here → no Overlay / no Local Co-op on the second process.
+        try { Autopilot.Init(); }
+        catch (Exception e) { L.LogError($"[Autopilot] init failed (plugin continues without autopilot): {e.Message}"); }
         ClassInjector.RegisterTypeInIl2Cpp<Overlay>();
         AddComponent<Overlay>();
         try { Updater.Init(); } catch (Exception e) { L.LogWarning($"[Update] init: {e.Message}"); }
