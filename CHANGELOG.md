@@ -8,6 +8,7 @@ Both players need 0.2.8.1. From 0.1.8.1+ the in-game updater offers this release
 
 - Other players' cars move smoothly again (jitter buffer + Hermite on one shared pose; accessories stay calm).
 - Joining no longer lands on broken player slot 0 (empty world / no own car).
+- Abandoned / evacuate cars towed on the winch move smoothly on clients (dense host pose stream).
 
 ## 0.2.8.1 — изменения
 
@@ -15,6 +16,7 @@ Both players need 0.2.8.1. From 0.1.8.1+ the in-game updater offers this release
 
 - Чужие машины снова едут плавно (jitter-буфер + Hermite на одной общей позе; аксессуары не дёргаются).
 - Подключение больше не попадает на сломанный слот игрока 0 (пустой мир / нет своей машины).
+- Брошенные / эвакуируемые машины на лебёдке едут плавно у клиентов (плотный поток поз с хоста).
 
 ## 0.2.8
 

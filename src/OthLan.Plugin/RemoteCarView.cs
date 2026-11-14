@@ -434,7 +434,7 @@ internal static class RemoteCarView
         sl.ServoPending = true;
     }
 
-    /// <summary>T4.0 Stale: keep newest pose, freeze linear/angular velocity.</summary>
+    /// <summary>T4.0 Stale: keep newest pose, freeze linear/angular velocity (dynamic only — Unity warns if velocity is set on kinematic).</summary>
     static void HoldProxyZeroVel(Rigidbody rb, Slot sl, Vector3 p, Quaternion q)
     {
         if (rb.isKinematic)
@@ -446,8 +446,8 @@ internal static class RemoteCarView
         {
             rb.position = p;
             rb.rotation = q;
+            try { rb.linearVelocity = Vector3.zero; rb.angularVelocity = Vector3.zero; } catch { }
         }
-        try { rb.linearVelocity = Vector3.zero; rb.angularVelocity = Vector3.zero; } catch { }
         NotePhys(sl, p, q);
         sl.ServoPending = false;
         // LastSample already set in ApplyProxyBody before HoldProxyZeroVel.

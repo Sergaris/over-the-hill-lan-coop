@@ -14,10 +14,10 @@ Under **Assets** below, click **`OTH-LAN-0.2.8.1.zip`** (not "Source code").
 
 | File | What it is | Size | SHA-256 |
 |---|---|---|---|
-| `OTH-LAN-0.2.8.1.zip` | Installer (recommended) | 130274023 B | `7ebb7e89c17c28c520a25d332bf58f3c5e9c1adece523a212d24499be8c6e547` |
-| `OTH-LAN-0.2.8.1-manual.zip` | Manual install without the installer | 34606255 B | `3c698fdeef874f44bc5e1fa4291d14d86a13ac6eabea54567b0bf7f5aeb02d38` |
+| `OTH-LAN-0.2.8.1.zip` | Installer (recommended) | 130277140 B | `55f571f91484fceb69b465fb5e3f3ecd3af43e65dfe35403efc7e5aee96a0e30` |
+| `OTH-LAN-0.2.8.1-manual.zip` | Manual install without the installer | 34610656 B | `75fb545f21fb9b36c5b09b3bbd68dd6a844cc6422a95afbf5454076038c7c3dd` |
 
-Plugin `OthLan.dll` sha256 `341d00df41a12104bc4495ab8d60c6b28ff7b05bfeefc7ce4cb878d9a9f3d5b0`. All checksums are also in `SHA256SUMS.txt`. Optional asset `6000.0.75.zip` (`53c15d574b129486f71f93825677983787e7242aed98d083d3db93b87a985655`) is the offline Unity base libraries pack used by `OTH-LAN-Launch.exe` if BepInEx hangs on first download.
+Plugin `OthLan.dll` sha256 `0459dfcfb3ca72d096ec44bc737e601d0435ded1bbf3ee1ae083b406ae3340bb`. All checksums are also in `SHA256SUMS.txt`. Optional asset `6000.0.75.zip` (`53c15d574b129486f71f93825677983787e7242aed98d083d3db93b87a985655`) is the offline Unity base libraries pack used by `OTH-LAN-Launch.exe` if BepInEx hangs on first download.
 
 ## Скачать
 
@@ -25,10 +25,10 @@ Plugin `OthLan.dll` sha256 `341d00df41a12104bc4495ab8d60c6b28ff7b05bfeefc7ce4cb8
 
 | Файл | Что это | Размер | SHA-256 |
 |---|---|---|---|
-| `OTH-LAN-0.2.8.1.zip` | Установщик (рекомендуется) | 130274023 Б | `7ebb7e89c17c28c520a25d332bf58f3c5e9c1adece523a212d24499be8c6e547` |
-| `OTH-LAN-0.2.8.1-manual.zip` | Ручная установка без установщика | 34606255 Б | `3c698fdeef874f44bc5e1fa4291d14d86a13ac6eabea54567b0bf7f5aeb02d38` |
+| `OTH-LAN-0.2.8.1.zip` | Установщик (рекомендуется) | 130277140 Б | `55f571f91484fceb69b465fb5e3f3ecd3af43e65dfe35403efc7e5aee96a0e30` |
+| `OTH-LAN-0.2.8.1-manual.zip` | Ручная установка без установщика | 34610656 Б | `75fb545f21fb9b36c5b09b3bbd68dd6a844cc6422a95afbf5454076038c7c3dd` |
 
-Плагин `OthLan.dll` sha256 `341d00df41a12104bc4495ab8d60c6b28ff7b05bfeefc7ce4cb878d9a9f3d5b0`. Все контрольные суммы есть также в `SHA256SUMS.txt`. Опциональный файл `6000.0.75.zip` (`53c15d574b129486f71f93825677983787e7242aed98d083d3db93b87a985655`) — офлайн-пакет Unity base libraries для `OTH-LAN-Launch.exe`, если BepInEx зависает при первой загрузке.
+Плагин `OthLan.dll` sha256 `0459dfcfb3ca72d096ec44bc737e601d0435ded1bbf3ee1ae083b406ae3340bb`. Все контрольные суммы есть также в `SHA256SUMS.txt`. Опциональный файл `6000.0.75.zip` (`53c15d574b129486f71f93825677983787e7242aed98d083d3db93b87a985655`) — офлайн-пакет Unity base libraries для `OTH-LAN-Launch.exe`, если BepInEx зависает при первой загрузке.
 
 ---
 
@@ -66,11 +66,13 @@ From 0.1.8.1 / 0.1.9 / 0.1.9.1 / 0.1.9.2 / 0.1.9.3 / 0.2.0 / 0.2.1 / 0.2.2 / 0.2
 
 - Other players' cars move smoothly again (shared jitter-buffer pose; accessories stay calm).
 - Joining no longer lands on broken player slot 0 (empty world / no own car).
+- Abandoned / evacuate cars on the winch move smoothly for clients (dense host→client pose stream).
 
 ## Что нового в 0.2.8.1
 
 - Чужие машины снова едут плавно (общая поза из jitter-буфера; аксессуары не дёргаются).
 - Подключение больше не попадает на сломанный слот игрока 0 (пустой мир / нет своей машины).
+- Брошенные / эвакуируемые машины на лебёдке едут плавно у клиентов (плотный поток поз хост→клиент).
 
 ---
 

@@ -136,8 +136,8 @@ internal static class NetStats
             catch { }
         }
         if (Plugin.NetStatsLog.Value && Time.realtimeSinceStartup >= _nextLog) { _nextLog = Time.realtimeSinceStartup + 30f; Log("30 s"); OwnWindow.Reset(); RemoteWindow.Reset(); NetTrace.Flush(); }
-        // T4.4: every 5 s — one [Sync] line per car this PC is showing (owner = last send; remotes = stream sample).
-        if (Plugin.NetStatsLog.Value && Time.realtimeSinceStartup >= _nextSync)
+        // T4.4: [Sync] pose dumps pair host/client samples in self-tests. Quiet in normal play (StatsToLog still drives the 30 s summary).
+        if (Autopilot.Active && Plugin.NetStatsLog.Value && Time.realtimeSinceStartup >= _nextSync)
         {
             _nextSync = Time.realtimeSinceStartup + 5f;
             LogSync();
@@ -285,7 +285,7 @@ internal static class NetStats
             $"[NetStats] ({why}) {Describe()} | {FrameDescribe()} | {FrameCost.Describe()} | {CarRelay.Describe()}" +
             $" | last 30 s own: {OwnWindow.Describe()} | last 30 s remote: {RemoteWindow.Describe()}" +
             $" | winΔ localSteps={dLocal} restores={dRest} cheap={dCheap} cheapPrev={dCheapPrev} stepDenied={dDenied} resets={dResets}" +
-            $" | {RemoteSmooth.Describe()} | {RemoteWheelVisuals.Describe()} | {OwnCar.Describe()} | {OwnResim.Describe()} | {WinchResim.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()} | {OwnCamera.Describe()}");
+            $" | {RemoteSmooth.Describe()} | {RemoteWheelVisuals.Describe()} | {WorldCarStream.Describe()} | {WorldCarView.Describe()} | {OwnCar.Describe()} | {OwnResim.Describe()} | {WinchResim.Describe()} | {OwnRender.Describe()} | {OwnLocal.Describe()} | {OwnCamera.Describe()}");
         FramesOver25ms = FramesOver50ms = 0; RemoteBelow = 0;
         RemoteCarView.StreamFrames = RemoteCarView.FusionFrames = RemoteCarView.Snaps = RemoteCarView.StaleFrames = RemoteCarView.ExtrapolatedFrames = RemoteCarView.SourceSwitches = RemoteCarView.RemoteBelow = 0;
         RemoteCarView.ClearAcceptWindow();

@@ -50,6 +50,19 @@ internal static class ParkedCars
     public static int ParkedNow { get { var n = 0; foreach (var c in _cars.Values) if (c.Parked) n++; return n; } }
     public static string Describe() => $"parked={ParkedNow}/{_cars.Count} parks={Parks} wakes={Wakes} wakeM={_wakeM:0}";
 
+    /// <summary>Host: awake (not parked) world cars for <see cref="WorldCarStream"/>. Cleared list is filled in place.</summary>
+    public static void CollectAwake(List<(uint Id, Rigidbody Rb)> dst)
+    {
+        if (dst == null) return;
+        foreach (var kv in _cars)
+        {
+            var c = kv.Value;
+            if (c.Parked) continue;
+            if (c.Rb == null || c.Rb.WasCollected || c.O == null || c.O.WasCollected) continue;
+            dst.Add((kv.Key, c.Rb));
+        }
+    }
+
     /// <summary>Main thread, every frame (NetFrame).</summary>
     public static void Tick()
     {

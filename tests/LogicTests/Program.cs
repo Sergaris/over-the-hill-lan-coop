@@ -685,6 +685,7 @@ static class Program
         WinchReleaseClear();
         ParkLogicTests();
         CarWireTests();
+        WorldCarWireTests();
         StatePlaybackTests();
         RelayLogicTests();
         StreamEdge();
@@ -955,6 +956,55 @@ static class Program
         var badCount = p; badCount.Count = 0;
         Eq(CarWire.Encode(badCount, buf), -1, "carwire: count 0 rejected");
         Eq(CarWire.QuantSpin(2000f), CarWire.QuantSpin(1600f), "carwire: QuantSpin clips");
+    }
+
+    // ---------- OTW1 world-car wire (host→client evacuate stream) ----------
+    static void WorldCarWireTests()
+    {
+        Eq(WorldCarWire.Magic, 0x3157544Fu, "worldwire: magic OTW1");
+        Eq(WorldCarWire.HeaderSize, 11, "worldwire: header");
+        Eq(WorldCarWire.StateBytes, 64, "worldwire: state size");
+        Eq(WorldCarWire.PacketBytes(1), 75, "worldwire: 1-state packet");
+        Eq(WorldCarWire.PacketBytes(3), 203, "worldwire: 3-state packet");
+        Eq(WorldCarWire.PacketBytes(0), -1, "worldwire: count 0 invalid");
+
+        var s = new WorldCarWire.PoseSample
+        {
+            Seq = 9, SendTime = 42.5,
+            Px = 1, Py = 2, Pz = 3, Qx = 0, Qy = 0, Qz = 0, Qw = 1,
+            Vx = 4, Vy = 0, Vz = -1, Wx = 0.1f, Wy = 0, Wz = -0.2f,
+        };
+        var p = new WorldCarWire.Packet { NetworkId = 0xABCDEF01u, Epoch = 3, Count = 1 };
+        p.SetState(0, s);
+        var buf = new byte[WorldCarWire.MaxPacketBytes];
+        var n = WorldCarWire.Encode(p, buf);
+        Eq(n == 75, true, $"worldwire: encode size ({n})");
+        Eq(WorldCarWire.TryDecode(buf.AsSpan(0, n), out var d), true, "worldwire: decode ok");
+        Eq(d.NetworkId, 0xABCDEF01u, "worldwire: networkId");
+        Eq(d.Epoch, (byte)3, "worldwire: epoch");
+        Eq(d.Count, (byte)1, "worldwire: count");
+        Eq(d.S0.Seq, 9u, "worldwire: seq");
+        Eq(Math.Abs(d.S0.SendTime - 42.5) < 1e-9, true, "worldwire: sendTime");
+        Eq(Math.Abs(d.S0.Px - 1) < 1e-5 && Math.Abs(d.S0.Vx - 4) < 1e-5, true, "worldwire: pos/vel");
+
+        var s1 = s; s1.Seq = 8; s1.Px = 0.5f;
+        var s2 = s; s2.Seq = 7; s2.Px = 0;
+        var p3 = new WorldCarWire.Packet { NetworkId = 1, Epoch = 1, Count = 3 };
+        p3.SetState(0, s); p3.SetState(1, s1); p3.SetState(2, s2);
+        n = WorldCarWire.Encode(p3, buf);
+        Eq(n == 203, true, $"worldwire: 3-state size ({n})");
+        Eq(WorldCarWire.TryDecode(buf.AsSpan(0, n), out d) && d.S0.Seq == 9 && d.S2.Seq == 7, true, "worldwire: 3-state roundtrip");
+
+        Eq(WorldCarWire.TryDecode(buf.AsSpan(0, n / 2), out _), false, "worldwire: truncated rejected");
+        buf[0] ^= 1;
+        Eq(WorldCarWire.TryDecode(buf.AsSpan(0, n), out _), false, "worldwire: bad magic rejected");
+        buf[0] ^= 1;
+        var nanP = p; nanP.S0.Px = float.NaN;
+        Eq(WorldCarWire.Encode(nanP, buf), -1, "worldwire: NaN encode rejected");
+        var bad = p; bad.Count = 0;
+        Eq(WorldCarWire.Encode(bad, buf), -1, "worldwire: count 0 encode rejected");
+        // OTW1 must not collide with OTC3
+        Eq(WorldCarWire.Magic != CarWire.Magic, true, "worldwire: distinct from OTC3");
     }
 
     // ---------- 0.2.0 T1.4 winch world vs car ----------

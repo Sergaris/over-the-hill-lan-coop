@@ -21,6 +21,7 @@ internal static class NetFrame
         try { OwnCar.Tick(); } catch (Exception e) { LogOnce("owncar", e); }
         try { WinchRelease.Tick(); } catch (Exception e) { LogOnce("winchrelease", e); }
         try { ParkedCars.Tick(); } catch (Exception e) { LogOnce("parked", e); }
+        try { WorldCarStream.Tick(); } catch (Exception e) { LogOnce("worldstream", e); }
         try { FreezeWatch.Tick(); } catch (Exception e) { LogOnce("freeze", e); }
         try { ClientPhysics.Tick(); } catch (Exception e) { LogOnce("clientphys", e); }
         try { Diagnostics.Tick(); } catch (Exception e) { LogOnce("diag", e); }
@@ -56,6 +57,8 @@ internal static class NetFrame
         // Capture Servo body pose after Physics.Simulate and before visual overwrite of the same root.
         try { RemoteCarView.PostPhysicsStep(); } catch (Exception e) { LogOnce("remotepost", e); }
         try { RemoteCarView.AfterFusionRender(); } catch (Exception e) { LogOnce("remoteview", e); }
+        // World / evacuate cars: buffer Fusion NRB pose, then one delayed Hermite write (not player remotes).
+        try { WorldCarView.Late(); } catch (Exception e) { LogOnce("worldview", e); }
         try { RemoteSmooth.LateTick(); } catch (Exception e) { LogOnce("remotesmooth", e); }
         try { RemoteWheelVisuals.LateTick(); } catch (Exception e) { LogOnce("RemoteWheelVisuals", e); }
     }
