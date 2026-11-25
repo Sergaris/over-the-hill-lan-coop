@@ -57,7 +57,7 @@ namespace OthLan;
 ///   --othlan-census t,...                 log networked object sizes and per-tick state changes (StateCensus)
 ///   --othlan-park-visit t                 host: visit the nearest parked car, check it wakes, moves and parks again
 ///   (always) {tag}-trace.csv at 20 Hz: outage state, own car, rollback, the host's view of client cars and their inputs
-/// While active it also: sets Application.runInBackground, suppresses the game's own save writes (OverlandSaver.SaveGame,
+/// While active it also: sets Application.runInBackground, suppresses the game's own save writes (OverlandSaver.SaveGame(bool),
 /// SaveSettings, SaveJson, FogOfWarManager.SaveFogOfWarTexture) so two instances never touch the real profile, and does
 /// not persist JoinAddress to the shared config.
 /// </summary>
@@ -274,10 +274,13 @@ internal static unsafe class Autopilot
     // ---------------- hooks (dev only) ----------------
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void OnInputFn(IntPtr self, IntPtr runner, IntPtr input, IntPtr mi);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void StaticVoidFn(IntPtr mi);
+    /// <summary>0.2.9: OverlandSaver.SaveGame(bool suppressLastPlayed) — IL2CPP passes bool as a byte.</summary>
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void SaveGameBoolFn(byte suppressLastPlayed, IntPtr mi);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void InstVoidFn(IntPtr self, IntPtr mi);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void SaveJsonFn(IntPtr a, IntPtr b, IntPtr mi);
     static OnInputFn _inOrig, _inHook;
-    static StaticVoidFn _sgOrig, _sgHook, _ssOrig, _ssHook;
+    static SaveGameBoolFn _sgOrig, _sgHook;
+    static StaticVoidFn _ssOrig, _ssHook;
     static InstVoidFn _fowOrig, _fowHook;
     static SaveJsonFn _sjOrig, _sjHook;
     static INativeDetour[] _detours;
@@ -296,12 +299,13 @@ internal static unsafe class Autopilot
     static void InstallHooks()
     {
         var pIn = Fn(typeof(VehicleInput), "NativeMethodInfoPtr_Fusion_INetworkRunnerCallbacks_OnInput_Private_Virtual_Final_New_Void_NetworkRunner_NetworkInput_0", "VehicleInput::OnInput(NetworkRunner,NetworkInput)");
-        var pSg = Fn(typeof(OverlandSaver), "NativeMethodInfoPtr_SaveGame_Public_Static_Void_0", "OverlandSaver::SaveGame()");
+        // 0.2.9 / Steam 26790649: SaveGame gained bool suppressLastPlayed (was parameterless).
+        var pSg = Fn(typeof(OverlandSaver), "NativeMethodInfoPtr_SaveGame_Public_Static_Void_Boolean_0", "OverlandSaver::SaveGame(bool)");
         var pSs = Fn(typeof(OverlandSaver), "NativeMethodInfoPtr_SaveSettings_Public_Static_Void_0", "OverlandSaver::SaveSettings()");
         var pSj = Fn(typeof(OverlandSaver), "NativeMethodInfoPtr_SaveJson_Private_Static_Void_String_String_0", "OverlandSaver::SaveJson(string,string)");
         var pFow = Fn(typeof(FogOfWarManager), "NativeMethodInfoPtr_SaveFogOfWarTexture_Public_Void_0", "FogOfWarManager::SaveFogOfWarTexture()");
         _inHook = OnInputDetour;
-        _sgHook = mi => { SavesSuppressed++; };
+        _sgHook = (_, __) => { SavesSuppressed++; };
         _ssHook = mi => { SavesSuppressed++; };
         _sjHook = (a, b, mi) => { SavesSuppressed++; };
         _fowHook = (s, mi) => { SavesSuppressed++; };

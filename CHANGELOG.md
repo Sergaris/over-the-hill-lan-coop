@@ -2,6 +2,17 @@
 
 All notable changes. Versions follow `MAJOR.MINOR.PATCH`; host and clients must run the same version.
 
+## 0.2.9
+
+Both players need 0.2.9. From 0.1.8.1+ the in-game updater offers this release.
+
+- Works with the Steam Save Data Migration Update (build 26790649, 24 Nov 2026).
+
+## 0.2.9 — изменения
+
+У обоих игроков должна быть 0.2.9. С 0.1.8.1+ обновление предложит меню.
+
+- Работает с обновлением Steam Save Data Migration (сборка 26790649, 24.11.2026).
 ## 0.2.8.1
 
 Both players need 0.2.8.1. From 0.1.8.1+ the in-game updater offers this release.

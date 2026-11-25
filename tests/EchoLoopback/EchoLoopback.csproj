@@ -18,6 +18,7 @@
     <Compile Include="../../src/OthLan.Plugin/SlotLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/GateLogic.cs" />
     <Compile Include="../../src/OthLan.Plugin/CarWire.cs" />
+    <Compile Include="../../src/OthLan.Plugin/WorldCarWire.cs" />
     <Compile Include="../../src/OthLan.Plugin/CoopSessionLogic.cs" />
   </ItemGroup>
 </Project>
